@@ -119,8 +119,25 @@
 | ---- | ----------- |
 | 普通删除（`mode=with_emby/local_only`, `cascade_depth=1`） | 该用户为 PARENT 的所有边删掉，子节点晋升为新树根；该用户为 CHILD 的边一并删掉 |
 | 级联删除（`mode=with_emby/local_only`, `cascade_depth>=2` 或 `=0`） | 先 BFS 收集 N 层 UID，再按叶子→根顺序逐个走「普通删除」 |
-| 仅停用（`active=false`） | 邀请关系完全不变；重新启用即可恢复访问 |
+| 仅停用 / 启用（`cascade_depth=1`） | 邀请关系完全不变；重新启用即可恢复访问 |
+| 级联禁用 / 启用（`cascade_depth>=2` 或 `=0`） | 仅翻转 `ACTIVE_STATUS` 并同步 Emby；邀请关系完全不动；其他管理员账号自动跳过 |
 | `mode=emby_only`（任意 `cascade_depth`） | 仅删 Emby 账号；本地账号、上下级、邀请码全部保留 |
+
+#### 启停级联
+
+`POST /admin/users/<uid>/disable` 与 `/enable` 请求体：
+
+```json
+{
+  "cascade_depth": 1,
+  "reason": "可选，仅 disable 使用"
+}
+```
+
+* `cascade_depth` 语义与删除接口一致（`1`=仅本人，`N`=本人+下 N-1 层，`0`/`>=999`=整棵子树）。
+* 已经处于目标状态的用户会被记入 `skipped`。
+* 不会翻动其他管理员账号（除非当前管理员就是被操作者本人）。
+* 返回结构：`{ affected: [uid], skipped: [{uid, reason}], failed: [{uid, reason}], cascade_depth, enable }`。
 
 ---
 

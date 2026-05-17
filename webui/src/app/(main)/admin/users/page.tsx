@@ -91,10 +91,12 @@ export default function AdminUsersPage() {
   const [cascadeDepth, setCascadeDepth] = useState<number>(1);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // 禁用对话框（提示禁用不会影响邀请树结构）
+  // 禁用/启用对话框（支持邀请树级联）
   const [toggleOpen, setToggleOpen] = useState(false);
   const [toggleTarget, setToggleTarget] = useState<UserInfo | null>(null);
   const [isToggling, setIsToggling] = useState(false);
+  const [toggleCascadeDepth, setToggleCascadeDepth] = useState<number>(1);
+  const [toggleReason, setToggleReason] = useState<string>("");
 
   // 强制重置 Emby 密码（按 Emby 用户名）
   const [forcePwdOpen, setForcePwdOpen] = useState(false);
@@ -277,6 +279,8 @@ export default function AdminUsersPage() {
 
   const handleToggleActive = (user: UserInfo) => {
     setToggleTarget(user);
+    setToggleCascadeDepth(1);
+    setToggleReason("");
     setToggleOpen(true);
   };
 
@@ -284,9 +288,19 @@ export default function AdminUsersPage() {
     if (!toggleTarget) return;
     setIsToggling(true);
     try {
-      const res = await api.updateUser(toggleTarget.uid, { active: !toggleTarget.active });
+      const res = await api.toggleUserActive(toggleTarget.uid, {
+        enable: !toggleTarget.active,
+        cascadeDepth: toggleCascadeDepth,
+        reason: toggleReason.trim() || undefined,
+      });
       if (res.success) {
-        toast({ title: toggleTarget.active ? "已禁用" : "已启用", variant: "success" });
+        const action = toggleTarget.active ? "禁用" : "启用";
+        const affected = res.data?.affected?.length ?? 0;
+        const skipped = res.data?.skipped?.length ?? 0;
+        const desc = toggleCascadeDepth !== 1
+          ? `成功 ${affected}，跳过 ${skipped}（层级 ${toggleCascadeDepth === 0 ? "整棵子树" : toggleCascadeDepth}）`
+          : undefined;
+        toast({ title: `已${action}`, description: desc, variant: "success" });
         invalidateUsersCache();
         loadUsers();
         setToggleOpen(false);
@@ -1218,7 +1232,7 @@ export default function AdminUsersPage() {
         </DialogContent>
       </Dialog>
 
-      {/* 启停（提示邀请树不受影响） */}
+      {/* 启停（支持邀请树级联） */}
       <Dialog open={toggleOpen} onOpenChange={setToggleOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
@@ -1227,10 +1241,90 @@ export default function AdminUsersPage() {
             </DialogTitle>
             <DialogDescription>
               {toggleTarget?.active
-                ? "禁用后用户将无法登录系统与 Emby，但邀请树结构（上下级关系、已发出邀请码）不变。重新启用即可恢复访问。"
+                ? "禁用后用户将无法登录系统与 Emby，但邀请树结构（上下级关系、已发出邀请码）完全不变；重新启用即可恢复访问。"
                 : "启用后用户可以重新登录系统与 Emby。"}
             </DialogDescription>
           </DialogHeader>
+
+          <div className="space-y-3 text-sm">
+            {toggleTarget?.active && (
+              <div className="space-y-1.5">
+                <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                  原因（可选）
+                </Label>
+                <Input
+                  value={toggleReason}
+                  onChange={(e) => setToggleReason(e.target.value)}
+                  placeholder="将记入操作日志，留空也可"
+                  maxLength={200}
+                />
+              </div>
+            )}
+
+            <div className="space-y-2 rounded-md border bg-muted/30 p-3">
+              <div className="flex items-center justify-between gap-2">
+                <Label className="text-xs uppercase tracking-wider text-muted-foreground">
+                  邀请树级联深度
+                </Label>
+                <span className="text-[10px] text-muted-foreground">
+                  当前：{toggleCascadeDepth === 0 ? "整棵子树" : `${toggleCascadeDepth} 层`}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-1.5">
+                {[1, 2, 3, 5, 0].map((preset) => (
+                  <Button
+                    key={preset}
+                    type="button"
+                    size="sm"
+                    variant={toggleCascadeDepth === preset ? "default" : "outline"}
+                    className="h-7 px-2 text-[11px]"
+                    onClick={() => setToggleCascadeDepth(preset)}
+                  >
+                    {preset === 0 ? "全部" : `${preset} 层`}
+                  </Button>
+                ))}
+              </div>
+
+              <Input
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={999}
+                value={toggleCascadeDepth}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (Number.isNaN(v)) {
+                    setToggleCascadeDepth(1);
+                  } else {
+                    setToggleCascadeDepth(Math.max(0, Math.min(999, v)));
+                  }
+                }}
+                placeholder="自定义层级，输入 0 表示整棵子树"
+                className="h-9"
+              />
+
+              <p className="text-[11px] text-muted-foreground leading-relaxed">
+                {toggleCascadeDepth === 1 ? (
+                  <>仅处理该用户本人；下级账号不受影响。</>
+                ) : toggleCascadeDepth === 0 ? (
+                  <>
+                    将
+                    <span className="font-semibold text-foreground">
+                      {toggleTarget?.active ? "禁用" : "启用"}
+                    </span>
+                    该用户及其全部后代（沿邀请关系递归）。已经处于目标状态的会被跳过。
+                  </>
+                ) : (
+                  <>
+                    将{toggleTarget?.active ? "禁用" : "启用"}该用户及向下 {toggleCascadeDepth - 1} 层的所有下级；
+                    其他管理员账号会被跳过。
+                  </>
+                )}
+              </p>
+            </div>
+          </div>
+
           <DialogFooter>
             <Button variant="outline" onClick={() => setToggleOpen(false)} disabled={isToggling}>
               取消

@@ -1049,6 +1049,34 @@ class ApiClient {
   }
 
   /**
+   * 邀请树级联的禁用/启用。
+   * cascadeDepth：1=仅本人；N=本人+下 N-1 层；0=整棵子树。
+   * - 不会翻动其他管理员账号
+   * - 不会改邀请关系，只改 ACTIVE_STATUS + 同步 Emby
+   */
+  async toggleUserActive(uid: number, options: {
+    enable: boolean;
+    cascadeDepth?: number;
+    reason?: string;
+  }) {
+    const cascadeDepth = Math.max(0, Math.floor(options.cascadeDepth ?? 1));
+    const path = options.enable ? "enable" : "disable";
+    return this.request<{
+      affected: number[];
+      skipped: Array<{ uid: number; reason: string }>;
+      failed: Array<{ uid: number; reason: string }>;
+      cascade_depth: number | string;
+      enable: boolean;
+    }>(`/admin/users/${uid}/${path}`, {
+      method: "POST",
+      body: JSON.stringify({
+        cascade_depth: cascadeDepth,
+        ...(options.reason ? { reason: options.reason } : {}),
+      }),
+    });
+  }
+
+  /**
    * 扩展用户删除：支持邀请树级联，且三种 mode 均可级联。
    * - mode = with_emby：本地 + Emby
    * - mode = local_only：仅本地（保留 Emby）

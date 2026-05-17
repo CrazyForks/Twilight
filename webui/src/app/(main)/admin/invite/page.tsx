@@ -16,11 +16,11 @@ import {
   Loader2,
   RefreshCw,
   Network,
-  X,
   Crown,
   Ban,
   Trash2,
   AlertTriangle,
+  ShieldCheck,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -198,6 +198,53 @@ export default function AdminInviteTreePage() {
     }));
     if (res.success) {
       toast({ title: "已断开上级关系" });
+      await reload();
+    } else {
+      toast({ title: "操作失败", description: res.message, variant: "destructive" });
+    }
+  };
+
+  const handleCascadeToggle = async (enable: boolean) => {
+    if (!selected) return;
+    const action = enable ? "启用" : "禁用";
+    const cascadeRaw = window.prompt(
+      `请输入级联${action}层级：\n  1 = 仅本人（默认）\n  N = 本人 + 下 N-1 层\n  0 = 整棵子树（不限层级）`,
+      "1",
+    );
+    if (cascadeRaw === null) return;
+    const parsed = parseInt(cascadeRaw, 10);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      toast({ title: "请输入 ≥ 0 的整数", variant: "destructive" });
+      return;
+    }
+    const ok = await confirm({
+      title: parsed === 0 ? `整棵子树都${action}？` : `级联${action} ${parsed} 层？`,
+      description:
+        parsed === 1
+          ? `仅${action}本用户，下级账号不受影响。`
+          : parsed === 0
+            ? `沿邀请关系递归${action}该用户与全部后代账号。`
+            : `${action}该用户与向下 ${parsed - 1} 层的所有下级账号。`,
+      tone: enable ? "warning" : "danger",
+      confirmLabel: `确认${action}`,
+    });
+    if (!ok) return;
+    const res = await api.toggleUserActive(selected.uid, {
+      enable,
+      cascadeDepth: parsed,
+    }).catch((err) => ({
+      success: false,
+      message: err instanceof Error ? err.message : "请求异常",
+      data: null,
+    }));
+    if (res.success) {
+      const affected = res.data?.affected?.length ?? 0;
+      const skipped = res.data?.skipped?.length ?? 0;
+      toast({
+        title: `${action}完成`,
+        description: `成功 ${affected}，跳过 ${skipped}`,
+        variant: "success",
+      });
       await reload();
     } else {
       toast({ title: "操作失败", description: res.message, variant: "destructive" });
@@ -477,6 +524,14 @@ export default function AdminInviteTreePage() {
               <Button variant="outline" size="sm" onClick={handleDetach} disabled={selected.is_root}>
                 <Ban className="mr-2 h-4 w-4" />
                 {selected.is_root ? "已是树根" : "断开上级"}
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => handleCascadeToggle(false)}>
+                <Ban className="mr-2 h-4 w-4" />
+                级联禁用（自定义层级）
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => handleCascadeToggle(true)}>
+                <ShieldCheck className="mr-2 h-4 w-4" />
+                级联启用（自定义层级）
               </Button>
               <Button variant="destructive" size="sm" onClick={handleCascadeDelete}>
                 <Trash2 className="mr-2 h-4 w-4" />

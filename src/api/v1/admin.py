@@ -150,40 +150,143 @@ async def get_user(uid: int):
     return api_response(True, "获取成功", user_info)
 
 
+async def _cascade_toggle_active(
+    *,
+    root_uid: int,
+    enable: bool,
+    cascade_depth_raw: int,
+    reason: str = "",
+) -> tuple[bool, str, dict]:
+    """通用启停级联实现。
+
+    - ``cascade_depth_raw <= 0 or >= 999``：整棵子树（不限层级）。
+    - ``cascade_depth_raw == 1``：仅本人，等同旧 ``disable_user/enable_user``。
+    - 否则：本人 + 向下 N-1 层。
+    - 不会影响其它管理员账号（除非当前管理员就是被操作者本人）。
+    - 邀请树结构完全不变，只翻转 ``ACTIVE_STATUS`` 并同步 Emby。
+    """
+    from src.services import InviteService
+
+    root_user = await UserOperate.get_user_by_uid(root_uid)
+    if not root_user:
+        return False, "用户不存在", {'code': 404}
+
+    if cascade_depth_raw <= 0 or cascade_depth_raw >= 999:
+        cascade_depth: int | None = None
+    else:
+        cascade_depth = max(1, cascade_depth_raw)
+
+    if cascade_depth == 1:
+        target_uids = [root_uid]
+    else:
+        target_uids = await InviteService.collect_uids_to_delete(
+            root_uid, cascade_depth if cascade_depth is not None else 9999,
+        )
+
+    # 保护：除非当前管理员主动操作自己，否则不要把自己卷进去
+    safe_targets: list[int] = []
+    for tid in target_uids:
+        if tid == g.current_user.UID and root_uid != g.current_user.UID:
+            continue
+        safe_targets.append(tid)
+
+    affected: list[int] = []
+    skipped: list[dict] = []
+    failed: list[dict] = []
+
+    for tid in safe_targets:
+        target = await UserOperate.get_user_by_uid(tid)
+        if not target:
+            continue
+        # 不要级联翻动其他管理员
+        if target.ROLE == Role.ADMIN.value and target.UID != g.current_user.UID and tid != root_uid:
+            skipped.append({'uid': tid, 'reason': '管理员账户不可被级联启停'})
+            continue
+        # 已是目标状态：跳过但不算失败
+        if bool(target.ACTIVE_STATUS) == enable:
+            skipped.append({'uid': tid, 'reason': f"已经处于{'启用' if enable else '禁用'}状态"})
+            continue
+
+        if enable:
+            ok, msg = await UserService.enable_user(target)
+        else:
+            ok, msg = await UserService.disable_user(target, reason)
+
+        if ok:
+            affected.append(tid)
+        else:
+            failed.append({'uid': tid, 'reason': msg})
+
+    action = "启用" if enable else "禁用"
+    if len(safe_targets) <= 1:
+        prefix = f"{action}完成"
+    else:
+        prefix = f"{action}级联完成"
+    cascade_display = "整棵子树" if cascade_depth is None else cascade_depth
+    return True, (
+        f"{prefix}：成功 {len(affected)}，跳过 {len(skipped)}，失败 {len(failed)}"
+    ), {
+        'affected': affected,
+        'skipped': skipped,
+        'failed': failed,
+        'cascade_depth': cascade_display,
+        'enable': enable,
+    }
+
+
 @admin_bp.route('/users/<int:uid>/disable', methods=['POST'])
 @require_auth
 @require_admin
 async def disable_user(uid: int):
+    """禁用用户（支持邀请树级联）。
+
+    Request body:
+        reason: str - 可选，禁用原因
+        cascade_depth: int - 邀请树级联层级，默认 1（仅本人）。
+            1 = 仅本人；2 = 本人 + 直接下级；N = 本人 + 下 N-1 层；
+            0 或 >= 999 = 整棵子树。
     """
-    禁用用户
-    
-    Request:
-        {
-            "reason": "违规操作"
-        }
-    """
-    user = await UserOperate.get_user_by_uid(uid)
-    if not user:
-        return api_response(False, "用户不存在", code=404)
-    
-    data = request.get_json() or {}
+    data = request.get_json(silent=True) or {}
     reason = data.get('reason', '')
-    
-    success, message = await UserService.disable_user(user, reason)
-    return api_response(success, message)
+    try:
+        cascade_depth_raw = int(data.get('cascade_depth', request.args.get('cascade_depth', 1)))
+    except (TypeError, ValueError):
+        cascade_depth_raw = 1
+
+    ok, message, payload = await _cascade_toggle_active(
+        root_uid=uid,
+        enable=False,
+        cascade_depth_raw=cascade_depth_raw,
+        reason=reason,
+    )
+    if not ok:
+        return api_response(False, message, code=int(payload.get('code', 400)))
+    return api_response(True, message, payload)
 
 
 @admin_bp.route('/users/<int:uid>/enable', methods=['POST'])
 @require_auth
 @require_admin
 async def enable_user(uid: int):
-    """启用用户"""
-    user = await UserOperate.get_user_by_uid(uid)
-    if not user:
-        return api_response(False, "用户不存在", code=404)
-    
-    success, message = await UserService.enable_user(user)
-    return api_response(success, message)
+    """启用用户（支持邀请树级联）。
+
+    Request body:
+        cascade_depth: int - 同 `/disable`。
+    """
+    data = request.get_json(silent=True) or {}
+    try:
+        cascade_depth_raw = int(data.get('cascade_depth', request.args.get('cascade_depth', 1)))
+    except (TypeError, ValueError):
+        cascade_depth_raw = 1
+
+    ok, message, payload = await _cascade_toggle_active(
+        root_uid=uid,
+        enable=True,
+        cascade_depth_raw=cascade_depth_raw,
+    )
+    if not ok:
+        return api_response(False, message, code=int(payload.get('code', 400)))
+    return api_response(True, message, payload)
 
 
 @admin_bp.route('/users/<int:uid>', methods=['PUT'])
