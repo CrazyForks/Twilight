@@ -79,19 +79,25 @@ class TelegramMembershipService:
         telegram_id: int,
         *,
         strict: bool = True,
+        sync_roster: bool = False,
     ) -> Tuple[bool, List[MissingGroup]]:
         """检查 Telegram 用户是否在全部必需群组内。
 
         :param telegram_id: 待检查的用户 ID。
         :param strict: True 时网络异常/Bot 异常视为「不在群」（拦截更紧）；
                        False 时网络异常视为「未知」放行（定时任务建议 False 避免误封）。
+        :param sync_roster: True 时把每次探测到的成员状态顺手同步进花名册
+                            （在群 → upsert，离群/被踢 → mark_left）。/bind 等
+                            主动入口适合开启，定时任务保持默认 False 即可。
         :return: ``(ok, missing_groups)`` —— ``ok`` 为 True 表示通过；
                  ``missing_groups`` 是用户未加入的群组明细。
         """
         if not telegram_id:
             return False, []
 
-        result = await TelegramMembershipService.check_users_in_groups([telegram_id], strict=strict)
+        result = await TelegramMembershipService.check_users_in_groups(
+            [telegram_id], strict=strict, sync_roster=sync_roster,
+        )
         missing = result.get(int(telegram_id), [])
         return (len(missing) == 0), missing
 
@@ -100,6 +106,7 @@ class TelegramMembershipService:
         telegram_ids: List[int],
         *,
         strict: bool = False,
+        sync_roster: bool = False,
     ) -> Dict[int, List[MissingGroup]]:
         """按系统内已绑定用户的 telegram_id 列表批量校验成员资格。
 
@@ -147,6 +154,15 @@ class TelegramMembershipService:
                     chat = None
                 group_meta[str(gid)] = chat
 
+            roster_writer = None
+            if sync_roster:
+                try:
+                    from src.db.telegram_roster import TelegramRosterOperate as _Roster
+                    roster_writer = _Roster
+                except Exception as exc:  # pragma: no cover - import safety
+                    logger.warning(f"加载 TelegramRosterOperate 失败，跳过花名册同步: {exc}")
+                    roster_writer = None
+
             semaphore = asyncio.Semaphore(24)
 
             async def _probe_one(tg_id: int, gid: Union[int, str]) -> Optional[MissingGroup]:
@@ -155,12 +171,27 @@ class TelegramMembershipService:
                     try:
                         member = await bot.get_chat_member(gid, tg_id)
                         status = str(getattr(member, "status", "") or "").lower()
+                        is_bot = bool(getattr(getattr(member, "user", None), "is_bot", False))
                         if status in ("left", "kicked"):
+                            if roster_writer is not None:
+                                try:
+                                    await roster_writer.mark_left(gid, tg_id, status=status)
+                                except Exception as exc:  # pragma: no cover
+                                    logger.debug(f"花名册 mark_left 失败 (chat={gid}, tg={tg_id}): {exc}")
                             return MissingGroup(
                                 id=str(gid),
                                 title=getattr(chat, "title", None) if chat else None,
                                 url=_build_invite_url(gid, chat),
                             )
+                        if roster_writer is not None:
+                            try:
+                                await roster_writer.upsert_member(
+                                    gid, tg_id,
+                                    status=status or "member",
+                                    is_bot=is_bot,
+                                )
+                            except Exception as exc:  # pragma: no cover
+                                logger.debug(f"花名册 upsert 失败 (chat={gid}, tg={tg_id}): {exc}")
                         return None
                     except BadRequest as exc:
                         msg = str(exc).lower()
@@ -251,6 +282,119 @@ class TelegramMembershipService:
             else:
                 lines.append(f"• {label}")
         return "\n".join(lines)
+
+    @staticmethod
+    async def build_unbound_kick_plan(chat_id: Union[int, str]) -> Dict[str, object]:
+        """按 Sakura_EmbyBoss 思路构建群里"该被踢"的 TG ID 计划。
+
+        以群组花名册（Bot 被动观察）为基准，逐个反查 ``users`` 表：
+
+        - 不在 ``users`` 表 / 角色为 UNRECOGNIZED → ``no_account``，踢
+        - 角色为 ADMIN/WHITE_LIST → 保留并加入排除集
+        - ACTIVE_STATUS=False → ``disabled``，踢
+        - EMBYID 为空（含 PENDING_EMBY=True 的待激活） → ``no_emby``，踢
+        - 已绑 Emby 且账号有效 → 保留并加入排除集
+
+        Bot 自身、群管理员、TelegramConfig.ADMIN_ID 也会被加进 ``excluded_ids``。
+        返回结构：
+            {
+                'chat_id': str,
+                'roster_size': int,
+                'bots_in_roster': int,
+                'targets': list[int],             # 候选 TG ID（去掉了 bot/管理员）
+                'excluded_ids': set[int],
+                'reasons': dict[int, str],        # tg_id → kick 原因 ('no_account'|'no_emby'|'disabled')
+                'preserved_bound': int,           # 系统内活跃且绑了 Emby 的人数
+                'group_admin_ids': set[int],
+            }
+        """
+        from sqlalchemy import select as _select
+        from src.config import TelegramConfig
+        from src.db.telegram_roster import TelegramRosterOperate
+        from src.db.user import (
+            Role, UserModel, UsersSessionFactory,
+        )
+
+        plan: Dict[str, object] = {
+            'chat_id': str(chat_id),
+            'roster_size': 0,
+            'bots_in_roster': 0,
+            'targets': [],
+            'excluded_ids': set(),
+            'reasons': {},
+            'preserved_bound': 0,
+            'group_admin_ids': set(),
+        }
+
+        roster_rows = await TelegramRosterOperate.list_active_telegram_ids(chat_id)
+        plan['roster_size'] = len(roster_rows)
+        roster_human_ids: set[int] = set()
+        excluded_ids: set[int] = set()
+        for tg_int, is_bot in roster_rows:
+            if is_bot:
+                plan['bots_in_roster'] = int(plan['bots_in_roster']) + 1
+                excluded_ids.add(tg_int)
+                continue
+            roster_human_ids.add(tg_int)
+
+        # 一次性反查 users 表
+        user_map: Dict[int, UserModel] = {}
+        if roster_human_ids:
+            async with UsersSessionFactory() as session:
+                rows = (await session.execute(
+                    _select(UserModel).where(UserModel.TELEGRAM_ID.in_(list(roster_human_ids)))
+                )).scalars().all()
+                for u in rows:
+                    try:
+                        user_map[int(u.TELEGRAM_ID)] = u
+                    except (TypeError, ValueError):
+                        continue
+
+        reasons: Dict[int, str] = {}
+        preserved_bound = 0
+        for tg_id in roster_human_ids:
+            user = user_map.get(tg_id)
+            if user is None or user.ROLE == Role.UNRECOGNIZED.value:
+                reasons[tg_id] = 'no_account'
+                continue
+            if user.ROLE in (Role.ADMIN.value, Role.WHITE_LIST.value):
+                excluded_ids.add(tg_id)
+                preserved_bound += 1
+                continue
+            if not bool(user.ACTIVE_STATUS):
+                reasons[tg_id] = 'disabled'
+                continue
+            if not user.EMBYID:
+                reasons[tg_id] = 'no_emby'
+                continue
+            # 系统账号正常 + 已绑 Emby → 留人
+            excluded_ids.add(tg_id)
+            preserved_bound += 1
+
+        # 配置里静态指定的 TG 管理员一并排除（同时从 reasons 里撤销）
+        raw_admin = TelegramConfig.ADMIN_ID
+        admin_seq = raw_admin if isinstance(raw_admin, (list, tuple)) else [raw_admin]
+        for raw in admin_seq:
+            try:
+                aid = int(raw)
+            except (TypeError, ValueError):
+                continue
+            excluded_ids.add(aid)
+            reasons.pop(aid, None)
+
+        # 群管理员/群主
+        group_admin_ids = await TelegramMembershipService.fetch_group_admin_ids(chat_id)
+        excluded_ids.update(group_admin_ids)
+        for aid in group_admin_ids:
+            reasons.pop(aid, None)
+
+        targets = sorted(tid for tid in reasons.keys() if tid not in excluded_ids)
+        plan['excluded_ids'] = excluded_ids
+        plan['group_admin_ids'] = group_admin_ids
+        plan['reasons'] = reasons
+        plan['preserved_bound'] = preserved_bound
+        plan['targets'] = targets
+        return plan
 
     @staticmethod
     async def fetch_group_admin_ids(chat_id: Union[int, str]) -> set[int]:

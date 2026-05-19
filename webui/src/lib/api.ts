@@ -558,9 +558,21 @@ class ApiClient {
     });
   }
 
-  async resetPassword(uid: number) {
-    return this.request<{ new_password: string }>(`/admin/users/${uid}/reset-password`, {
+  async resetPassword(
+    uid: number,
+    opts?: { scope?: "system" | "emby" | "both"; password?: string },
+  ) {
+    const body: Record<string, unknown> = {
+      scope: opts?.scope || "both",
+    };
+    if (opts?.password) body.password = opts.password;
+    return this.request<{
+      scope: "system" | "emby" | "both";
+      new_password: string;
+      auto_generated: boolean;
+    }>(`/admin/users/${uid}/reset-password`, {
       method: "POST",
+      body: JSON.stringify(body),
     });
   }
 
@@ -642,10 +654,16 @@ class ApiClient {
     return this.request<{ jobs: SchedulerJobItem[] }>(`/admin/scheduler/jobs`);
   }
 
-  async triggerSchedulerJob(jobId: string) {
+  async triggerSchedulerJob(
+    jobId: string,
+    params?: Record<string, unknown>,
+  ) {
     return this.request<{ job_id: string; last_run: SchedulerJobRun | null }>(
       `/admin/scheduler/jobs/${encodeURIComponent(jobId)}/run`,
-      { method: "POST" },
+      {
+        method: "POST",
+        body: JSON.stringify(params ? { params } : {}),
+      },
     );
   }
 
@@ -797,13 +815,15 @@ class ApiClient {
     if (!opts.dryRun) body.confirm = "KICK_UNBOUND_OK";
     return this.request<{
       chat_id: string;
-      candidates_total: number;
-      bound_users: number;
       roster_size: number;
-      roster_added: number;
+      bots_in_roster: number;
+      preserved_bound: number;
       admins_excluded: number;
       excluded_total: number;
       targets: number;
+      reason_no_account: number;
+      reason_no_emby: number;
+      reason_disabled: number;
       dry_run: boolean;
       max_per_run: number;
       kicked: number;
@@ -811,7 +831,7 @@ class ApiClient {
       failed: number;
       not_in_group: number;
       scanned: number;
-      preview_targets?: number[];
+      preview_targets?: Array<{ tg_id: number; reason: string }>;
     }>("/admin/telegram/kick-unbound", {
       method: "POST",
       body: JSON.stringify(body),
@@ -835,9 +855,20 @@ class ApiClient {
     });
   }
 
-  async kickNoEmbyUsers(opts?: { dryRun?: boolean; confirm?: string }) {
+  async kickNoEmbyUsers(opts?: {
+    dryRun?: boolean;
+    confirm?: string;
+    minDays?: number;
+    preservePendingRegister?: boolean | null;
+  }) {
     const dryRun = Boolean(opts?.dryRun);
-    const body: Record<string, unknown> = { dry_run: dryRun };
+    const body: Record<string, unknown> = {
+      dry_run: dryRun,
+      min_days: opts?.minDays ?? 0,
+    };
+    if (opts?.preservePendingRegister !== undefined) {
+      body.preserve_pending_register = opts.preservePendingRegister;
+    }
     if (!dryRun) {
       body.confirm = opts?.confirm || "KICK_NO_EMBY_OK";
     }
@@ -847,6 +878,7 @@ class ApiClient {
         username: string;
         role: number;
         register_time: number | null;
+        has_telegram: boolean;
         pending_emby: boolean;
       }>;
       candidate_count: number;
@@ -855,6 +887,11 @@ class ApiClient {
       skipped_admins: number;
       skipped_whitelist: number;
       skipped_unrecognized: number;
+      skipped_pending_register: number;
+      skipped_too_recent: number;
+      skipped_in_queue: number;
+      min_days: number;
+      preserve_pending_register: boolean;
       dry_run: boolean;
     }>("/admin/users/kick-no-emby", {
       method: "POST",

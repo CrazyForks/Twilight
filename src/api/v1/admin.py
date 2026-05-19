@@ -613,7 +613,17 @@ async def admin_force_set_emby_password():
 @require_auth
 @require_admin
 async def reset_user_password(uid: int):
-    """重置用户密码并返回新密码（管理员）。"""
+    """重置用户密码（管理员）。
+
+    Request body (全部可选)：
+        {
+            "scope": "system" | "emby" | "both",  // 默认 both，保持向后兼容
+            "password": "Custom1234"               // 可选，省略时自动生成 12 位强密码
+        }
+
+    Response data：
+        {"scope": "...", "new_password": "...", "auto_generated": true/false}
+    """
     user = await UserOperate.get_user_by_uid(uid)
     if not user:
         return api_response(False, "用户不存在", code=404)
@@ -622,12 +632,31 @@ async def reset_user_password(uid: int):
     if user.ROLE == Role.ADMIN.value and user.UID != g.current_user.UID:
         return api_response(False, "不允许重置其他管理员密码", code=403)
 
-    success, message, new_password = await UserService.reset_password(user)
+    data = request.get_json(silent=True) or {}
+    scope = (data.get('scope') or 'both').strip().lower()
+    if scope not in ('system', 'emby', 'both'):
+        return api_response(False, "scope 必须是 system / emby / both", code=400)
+
+    custom_password = data.get('password')
+    if custom_password is not None and not isinstance(custom_password, str):
+        return api_response(False, "password 必须是字符串", code=400)
+    custom_password = (custom_password or '').strip() or None
+    auto_generated = custom_password is None
+
+    success, message, new_password = await UserService.reset_password(
+        user, scope=scope, custom_password=custom_password,
+    )
     if not success:
         return api_response(False, message, code=400)
 
+    logger.warning(
+        "管理员 %s 重置用户密码: uid=%d username=%s scope=%s auto=%s",
+        g.current_user.USERNAME, user.UID, user.USERNAME, scope, auto_generated,
+    )
     return api_response(True, message, {
+        'scope': scope,
         'new_password': new_password,
+        'auto_generated': auto_generated,
     })
 
 
@@ -1925,35 +1954,43 @@ async def cleanup_invalid_users():
 @require_auth
 @require_admin
 async def admin_kick_no_emby_users():
-    """一键踢出所有未绑定 Emby 的系统账号（无视注册时间）。
+    """一键踢出所有未绑定 Emby 的系统账号。
 
     与 ``/users/cleanup-invalid`` 的区别：
       - 不要求"同时无 TG 绑定"，只看 ``EMBYID`` 是否为空（兼顾 PENDING_EMBY=True 的待激活账号）。
-      - 不看注册时间长短，即注/即清都行。
-      - 管理员 / 白名单 / 未识别角色 强制跳过，避免误伤；操作者自身也强制跳过。
+      - 默认不看注册时间长短，可选传 ``min_days`` 限定"注册超过 N 天"才清理。
+      - 管理员 / 白名单 / 未识别角色 强制跳过；操作者自身也强制跳过。
+      - 可选 ``preserve_pending_register`` 保留"已绑 TG 但还没补建 Emby"的待激活账号，
+        他们在前端 Modal 仍可自助补建（默认沿用 ``EMBY_DIRECT_REGISTER_ENABLED``）。
+      - 在 Emby 注册队列里"还没拿到 Emby ID"的 UID 强制排除，避免临界窗口误删。
 
     Request:
         {
-            "dry_run": false,             // true 时只返回候选列表，不实际删除
-            "confirm": "KICK_NO_EMBY_OK"  // 实际删除时必填确认串
-        }
-
-    Response data:
-        {
-            "candidates": [{uid, username, role, register_time}, ...],
-            "candidate_count": <int>,
-            "deleted_count": <int>,
-            "failed": [{uid, username, error}, ...],
-            "skipped_admins": <int>,
-            "skipped_whitelist": <int>,
-            "skipped_unrecognized": <int>,
-            "dry_run": bool
+            "dry_run": false,
+            "min_days": 0,                          // 0 = 不卡注册时间
+            "preserve_pending_register": null,      // null 表示沿用配置默认
+            "confirm": "KICK_NO_EMBY_OK"
         }
     """
+    import time as _time
     from src.core.utils import rate_limit_check
+    from src.config import RegisterConfig
+    from src.services.emby_register_queue import EmbyRegisterQueueService
 
     data = request.get_json(silent=True) or {}
     dry_run = bool(data.get('dry_run', False))
+
+    try:
+        min_days = int(data.get('min_days', 0) or 0)
+    except (TypeError, ValueError):
+        min_days = 0
+    min_days = max(0, min(min_days, 3650))
+
+    preserve_raw = data.get('preserve_pending_register')
+    if preserve_raw is None:
+        preserve_pending_register = bool(RegisterConfig.EMBY_DIRECT_REGISTER_ENABLED)
+    else:
+        preserve_pending_register = bool(preserve_raw)
 
     if not dry_run:
         confirm = (data.get('confirm') or '').strip()
@@ -1976,8 +2013,12 @@ async def admin_kick_no_emby_users():
             code=429,
         )
 
-    # 拉全量用户后筛 EMBYID 为空 / PENDING_EMBY=True 的；这里不带分页
-    # 配合上限保护以免单次清扫数据库爆炸
+    try:
+        pending_register_uids = EmbyRegisterQueueService.pending_uids()
+    except Exception:
+        pending_register_uids = set()
+
+    # 拉全量用户后筛 EMBYID 为空 / PENDING_EMBY=True 的
     all_users, _ = await UserOperate.get_all_users(
         include_inactive=True,
         has_emby=False,  # 仓库层直接过滤 EMBYID is None
@@ -1985,13 +2026,17 @@ async def admin_kick_no_emby_users():
         offset=0,
     )
 
+    threshold_ts = (int(_time.time()) - min_days * 86400) if min_days > 0 else None
+
     skipped_admins = 0
     skipped_whitelist = 0
     skipped_unrecognized = 0
+    skipped_pending_register = 0
+    skipped_too_recent = 0
+    skipped_in_queue = 0
     candidates: list[UserModel] = []
     for u in all_users:
         if u.UID == g.current_user.UID:
-            # 自己永远不能踢自己
             skipped_admins += 1
             continue
         if u.ROLE == Role.ADMIN.value:
@@ -2001,13 +2046,24 @@ async def admin_kick_no_emby_users():
             skipped_whitelist += 1
             continue
         if u.ROLE == Role.UNRECOGNIZED.value:
-            # 未识别角色保留人工核对，避免一刀切
             skipped_unrecognized += 1
             continue
-        # 双重保险：has_emby=False 已经过滤过 EMBYID 是 None 的，但还可能存在
+        # 双重保险：has_emby=False 已经过滤过 EMBYID is None 的，但还可能存在
         # EMBYID 为空字符串等历史脏数据，这里再判一次
         if u.EMBYID:
             continue
+        if int(u.UID) in pending_register_uids:
+            skipped_in_queue += 1
+            continue
+        if preserve_pending_register and u.TELEGRAM_ID:
+            # 已绑 TG 且 PENDING_EMBY，前端仍可自助补建 → 保留
+            skipped_pending_register += 1
+            continue
+        if threshold_ts is not None:
+            reg_time = u.REGISTER_TIME or u.CREATE_AT or 0
+            if reg_time > threshold_ts:
+                skipped_too_recent += 1
+                continue
         candidates.append(u)
 
     candidate_view = [
@@ -2016,10 +2072,22 @@ async def admin_kick_no_emby_users():
             'username': u.USERNAME,
             'role': u.ROLE,
             'register_time': u.REGISTER_TIME,
+            'has_telegram': bool(u.TELEGRAM_ID),
             'pending_emby': bool(getattr(u, 'PENDING_EMBY', False)),
         }
         for u in candidates
     ]
+
+    summary_skips = {
+        'skipped_admins': skipped_admins,
+        'skipped_whitelist': skipped_whitelist,
+        'skipped_unrecognized': skipped_unrecognized,
+        'skipped_pending_register': skipped_pending_register,
+        'skipped_too_recent': skipped_too_recent,
+        'skipped_in_queue': skipped_in_queue,
+        'min_days': min_days,
+        'preserve_pending_register': preserve_pending_register,
+    }
 
     if dry_run:
         return api_response(True, f"干跑结束：匹配 {len(candidates)} 个未绑 Emby 账号", {
@@ -2027,10 +2095,8 @@ async def admin_kick_no_emby_users():
             'candidate_count': len(candidates),
             'deleted_count': 0,
             'failed': [],
-            'skipped_admins': skipped_admins,
-            'skipped_whitelist': skipped_whitelist,
-            'skipped_unrecognized': skipped_unrecognized,
             'dry_run': True,
+            **summary_skips,
         })
 
     if not candidates:
@@ -2039,17 +2105,14 @@ async def admin_kick_no_emby_users():
             'candidate_count': 0,
             'deleted_count': 0,
             'failed': [],
-            'skipped_admins': skipped_admins,
-            'skipped_whitelist': skipped_whitelist,
-            'skipped_unrecognized': skipped_unrecognized,
             'dry_run': False,
+            **summary_skips,
         })
 
     deleted_count = 0
     failed: list[dict] = []
     for u in candidates:
         try:
-            # delete_emby=False：本就没绑 Emby，避免无谓的 Emby API 调用
             success, msg = await UserService.delete_user(u, delete_emby=False)
             if success:
                 deleted_count += 1
@@ -2063,9 +2126,11 @@ async def admin_kick_no_emby_users():
 
     logger.warning(
         "管理员 %s 一键踢出未绑 Emby 账号: 候选=%d 已删除=%d 失败=%d "
-        "(skip admin=%d white=%d unknown=%d)",
+        "(min_days=%d preserve_pending=%s skip admin=%d white=%d unknown=%d pending=%d recent=%d queue=%d)",
         g.current_user.USERNAME, len(candidates), deleted_count, len(failed),
+        min_days, preserve_pending_register,
         skipped_admins, skipped_whitelist, skipped_unrecognized,
+        skipped_pending_register, skipped_too_recent, skipped_in_queue,
     )
 
     return api_response(True, f"已删除 {deleted_count} 个未绑 Emby 的系统账号", {
@@ -2073,10 +2138,8 @@ async def admin_kick_no_emby_users():
         'candidate_count': len(candidates),
         'deleted_count': deleted_count,
         'failed': failed,
-        'skipped_admins': skipped_admins,
-        'skipped_whitelist': skipped_whitelist,
-        'skipped_unrecognized': skipped_unrecognized,
         'dry_run': False,
+        **summary_skips,
     })
 
 
@@ -2324,12 +2387,22 @@ async def admin_list_scheduler_jobs():
 @require_auth
 @require_admin
 async def admin_trigger_scheduler_job(job_id: str):
-    """立即手动触发一次指定定时任务。任务在后台执行，本接口立即返回。"""
+    """立即手动触发一次指定定时任务。任务在后台执行，本接口立即返回。
+
+    Request body 可选携带 ``params``（dict），任务自己识别。例如：
+        cleanup_no_emby: ``{"days": 14, "preserve_tg_bound": true, "ignore_enabled_flag": true}``
+        kick_unknown_group_members: ``{"dry_run": true, "max_per_run": 50}``
+    """
     from src.services.scheduler_service import SchedulerService
 
-    ok, message, record = await SchedulerService.trigger_job(job_id)
+    data = request.get_json(silent=True) or {}
+    raw_params = data.get('params')
+    params = raw_params if isinstance(raw_params, dict) else None
+
+    ok, message, record = await SchedulerService.trigger_job(job_id, params=params)
     logger.info(
-        f"管理员 {g.current_user.USERNAME} 手动触发定时任务: {job_id} -> ok={ok} message={message}"
+        f"管理员 {g.current_user.USERNAME} 手动触发定时任务: {job_id} -> "
+        f"ok={ok} message={message} params={params}"
     )
     return api_response(ok, message, {
         'job_id': job_id,
@@ -2658,13 +2731,7 @@ async def admin_telegram_kick_unbound():
         - dry_run=true 时 ``scanned/kicked/skipped`` 全为 0，仅返回 ``targets`` 计数
     """
     from src.core.utils import rate_limit_check
-    from src.config import TelegramConfig
     from src.services.telegram_membership import TelegramMembershipService
-    from src.db.user import (
-        UserModel, Role, TelegramBindCodeModel, UsersSessionFactory,
-    )
-    from src.db.telegram_roster import TelegramRosterOperate
-    from sqlalchemy import select as _select
 
     data = request.get_json(silent=True) or {}
     dry_run = bool(data.get('dry_run', False))
@@ -2701,73 +2768,27 @@ async def admin_telegram_kick_unbound():
         return api_response(False, "未配置 TelegramConfig.GROUP_ID", code=400)
     chat_id = group_ids[0]
 
-    # 候选集合 & 排除集合：与调度任务保持一致
-    candidate_ids: set[int] = set()
-    excluded_ids: set[int] = set()
-    bound_ids: set[int] = set()
-    async with UsersSessionFactory() as session:
-        user_rows = (await session.execute(
-            _select(UserModel.TELEGRAM_ID, UserModel.ACTIVE_STATUS, UserModel.ROLE)
-            .where(UserModel.TELEGRAM_ID.isnot(None))
-        )).all()
-        for tg_id, active, role in user_rows:
-            if tg_id is None:
-                continue
-            try:
-                tg_int = int(tg_id)
-            except (TypeError, ValueError):
-                continue
-            candidate_ids.add(tg_int)
-            bound_ids.add(tg_int)
-            if role in (Role.ADMIN.value, Role.WHITE_LIST.value):
-                excluded_ids.add(tg_int)
-            elif bool(active) and role != Role.UNRECOGNIZED.value:
-                excluded_ids.add(tg_int)
+    # Sakura_EmbyBoss 风格：以群组花名册为基准反查 users 表，确定踢人原因
+    plan = await TelegramMembershipService.build_unbound_kick_plan(chat_id)
+    reasons: dict[int, str] = plan['reasons']  # type: ignore[assignment]
+    targets: list[int] = plan['targets']  # type: ignore[assignment]
+    excluded_ids: set[int] = plan['excluded_ids']  # type: ignore[assignment]
 
-        bind_rows = (await session.execute(
-            _select(TelegramBindCodeModel.CONFIRMED_TELEGRAM_ID)
-            .where(TelegramBindCodeModel.CONFIRMED_TELEGRAM_ID.isnot(None))
-        )).all()
-        for (tg_id,) in bind_rows:
-            if tg_id is None:
-                continue
-            try:
-                candidate_ids.add(int(tg_id))
-            except (TypeError, ValueError):
-                continue
+    reason_counts = {'no_account': 0, 'no_emby': 0, 'disabled': 0}
+    for r in reasons.values():
+        reason_counts[r] = reason_counts.get(r, 0) + 1
 
-    # 花名册补充
-    roster_rows = await TelegramRosterOperate.list_active_telegram_ids(chat_id)
-    roster_added = 0
-    for tg_int, is_bot in roster_rows:
-        if is_bot:
-            excluded_ids.add(tg_int)
-            continue
-        if tg_int not in candidate_ids:
-            roster_added += 1
-        candidate_ids.add(tg_int)
-
-    raw_admin = TelegramConfig.ADMIN_ID
-    admin_seq = raw_admin if isinstance(raw_admin, (list, tuple)) else [raw_admin]
-    for raw in admin_seq:
-        try:
-            excluded_ids.add(int(raw))
-        except (TypeError, ValueError):
-            continue
-
-    group_admin_ids = await TelegramMembershipService.fetch_group_admin_ids(chat_id)
-    excluded_ids.update(group_admin_ids)
-
-    targets = [tid for tid in candidate_ids if tid not in excluded_ids]
     summary = {
         'chat_id': str(chat_id),
-        'candidates_total': len(candidate_ids),
-        'bound_users': len(bound_ids),
-        'roster_size': len(roster_rows),
-        'roster_added': roster_added,
-        'admins_excluded': len(group_admin_ids),
+        'roster_size': plan['roster_size'],
+        'bots_in_roster': plan['bots_in_roster'],
+        'preserved_bound': plan['preserved_bound'],
+        'admins_excluded': len(plan['group_admin_ids']),  # type: ignore[arg-type]
         'excluded_total': len(excluded_ids),
         'targets': len(targets),
+        'reason_no_account': reason_counts['no_account'],
+        'reason_no_emby': reason_counts['no_emby'],
+        'reason_disabled': reason_counts['disabled'],
         'dry_run': dry_run,
         'max_per_run': max_per_run,
         'kicked': 0,
@@ -2778,8 +2799,12 @@ async def admin_telegram_kick_unbound():
     }
 
     if dry_run:
-        # 只返回前 50 个 target ID 给前端展示，避免过大
-        summary['preview_targets'] = sorted(targets)[:50]
+        # 返回前 50 个 target + 原因供前端预览
+        preview = [
+            {'tg_id': tid, 'reason': reasons.get(tid, 'unknown')}
+            for tid in targets[:50]
+        ]
+        summary['preview_targets'] = preview
         return api_response(True, "干跑结束（未实际踢人）", summary)
 
     if not targets:
@@ -2795,9 +2820,11 @@ async def admin_telegram_kick_unbound():
         summary[key] = int(result.get(key, 0) or 0)
 
     logger.warning(
-        "管理员 %s 触发一键踢未绑成员: chat=%s targets=%d kicked=%d failed=%d",
+        "管理员 %s 触发一键踢未绑成员: chat=%s targets=%d kicked=%d failed=%d "
+        "(no_account=%d no_emby=%d disabled=%d)",
         g.current_user.USERNAME, chat_id, len(targets),
         summary['kicked'], summary['failed'],
+        reason_counts['no_account'], reason_counts['no_emby'], reason_counts['disabled'],
     )
     return api_response(True, f"已踢出 {summary['kicked']} 个未绑账号", summary)
 

@@ -1036,32 +1036,71 @@ class UserService:
         return False, "未知的注册码/续期码类型", None
 
     @staticmethod
-    async def reset_password(user: UserModel) -> Tuple[bool, str, Optional[str]]:
+    async def reset_password(
+        user: UserModel,
+        *,
+        scope: str = "both",
+        custom_password: Optional[str] = None,
+    ) -> Tuple[bool, str, Optional[str]]:
+        """管理员重置用户密码，可按作用域拆分系统密码 / Emby 密码。
+
+        :param scope: 取值 ``system`` / ``emby`` / ``both``。
+            - ``system``：仅重置本站登录密码，不触碰 Emby；用户没绑 Emby 时也能用。
+            - ``emby``：仅重置 Emby 密码，本站登录密码保持不变；前提是用户有 EMBYID。
+            - ``both``（默认，保持向后兼容）：两边都重置成同一个密码。
+        :param custom_password: 管理员显式指定的新密码；为空时自动生成 12 位强密码。
+            指定时需通过 ``validate_password_strength`` 校验。
+        :return: ``(success, message, new_password)``；
+            ``new_password`` 是本次实际写入的明文（自动生成时返回给前端展示一次）。
         """
-        重置用户密码
-        
-        :return: (成功, 消息, 新密码)
-        """
-        if not user.EMBYID:
-            return False, "用户没有关联的 Emby 账户", None
-        
-        try:
-            emby = get_emby_client()
+        scope = (scope or "both").strip().lower()
+        if scope not in ("system", "emby", "both"):
+            return False, f"不支持的 scope: {scope}", None
+
+        if scope in ("emby", "both") and not user.EMBYID:
+            if scope == "emby":
+                return False, "用户没有关联的 Emby 账户", None
+            # scope=both 但没绑 Emby：降级为只重置系统密码，避免管理员一个按钮卡死
+            scope = "system"
+
+        # 准备密码：admin 显式指定 > 自动生成
+        if custom_password:
+            ok, msg = UserService.validate_password_strength(custom_password, label="新密码")
+            if not ok:
+                return False, msg, None
+            new_password = custom_password
+        else:
             new_password = generate_password(12)
-            
-            # 先重置再设置新密码
-            await emby.reset_user_password(user.EMBYID)
-            success = await emby.set_user_password(user.EMBYID, new_password)
-            
-            if success:
+
+        emby_done = False
+        try:
+            if scope in ("emby", "both"):
+                emby = get_emby_client()
+                # 先重置再设新密码——Emby 不支持直接 set 已有密码到新值
+                await emby.reset_user_password(user.EMBYID)
+                ok = await emby.set_user_password(user.EMBYID, new_password)
+                if not ok:
+                    return False, "Emby 密码重置失败", None
+                emby_done = True
+
+            if scope in ("system", "both"):
                 user.PASSWORD = hash_password(new_password)
                 await UserOperate.update_user(user)
-                logger.info(f"密码已重置: {user.USERNAME}")
-                return True, "密码重置成功", new_password
-            else:
-                return False, "密码重置失败", None
+
+            label = {
+                "system": "系统",
+                "emby": "Emby",
+                "both": "系统 + Emby",
+            }[scope]
+            logger.info(f"密码已重置: {user.USERNAME} (scope={scope})")
+            return True, f"{label}密码重置成功", new_password
         except Exception as e:
-            logger.error(f"重置密码失败: {e}")
+            # 失败时不回滚 Emby 改动（Emby 一旦改了就改了），但会把状态写进日志，
+            # 方便管理员手动复核。系统侧的 user.PASSWORD 还没 commit 就不会落库。
+            logger.error(
+                f"重置密码失败: {e} (scope={scope}, emby_done={emby_done})",
+                exc_info=True,
+            )
             return False, f"重置失败: {e}", None
 
     @staticmethod

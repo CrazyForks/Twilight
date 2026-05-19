@@ -43,6 +43,21 @@ async def register():
         }
     """
     from src.config import Config
+    from src.core.utils import rate_limit_check
+
+    # 公开端点：注册接口防批量创建，按 IP 限 5 次/10 分钟。
+    client_ip = request.remote_addr or 'unknown'
+    allowed, retry_after = rate_limit_check(
+        'user_register', client_ip, max_requests=5, window_seconds=600,
+    )
+    if not allowed:
+        logger.warning(
+            "/users/register 限流命中 ip=%s retry_after=%ss",
+            client_ip, retry_after,
+        )
+        return api_response(
+            False, f"注册过于频繁，请在 {retry_after} 秒后重试", code=429,
+        )
 
     data = request.get_json() or {}
 
@@ -209,12 +224,40 @@ async def complete_emby_account_for_me():
 async def get_emby_register_status():
     """查询 Emby 注册队列状态。"""
     from src.services import EmbyRegisterQueueService
+    from src.core.utils import rate_limit_check
 
     request_id = (request.args.get('request_id') or '').strip()
     status_token = (request.args.get('status_token') or '').strip()
 
     if not request_id or not status_token:
         return api_response(False, "缺少 request_id 或 status_token", code=400)
+
+    # 轮询端点：按 request_id 限频 + 按 IP 兜底，防止被无限刷。
+    client_ip = request.remote_addr or 'unknown'
+    allowed_req, retry_after_req = rate_limit_check(
+        'emby_register_status:req', request_id,
+        max_requests=60, window_seconds=60,
+    )
+    if not allowed_req:
+        logger.warning(
+            "/register/emby/status 单 request_id 限流命中 req=%s ip=%s retry_after=%ss",
+            request_id, client_ip, retry_after_req,
+        )
+        return api_response(
+            False, f"查询过于频繁，请在 {retry_after_req} 秒后重试", code=429,
+        )
+    allowed_ip, retry_after_ip = rate_limit_check(
+        'emby_register_status:ip', client_ip,
+        max_requests=240, window_seconds=60,
+    )
+    if not allowed_ip:
+        logger.warning(
+            "/register/emby/status IP 维度限流命中 ip=%s retry_after=%ss",
+            client_ip, retry_after_ip,
+        )
+        return api_response(
+            False, f"查询过于频繁，请在 {retry_after_ip} 秒后重试", code=429,
+        )
 
     status = await EmbyRegisterQueueService.get_status(request_id, status_token)
     if not status:
@@ -227,7 +270,7 @@ async def get_emby_register_status():
 async def check_registration_available():
     """
     检查是否可以注册
-    
+
     Response:
         {
             "success": true,
@@ -240,7 +283,22 @@ async def check_registration_available():
         }
     """
     from src.config import RegisterConfig
-    
+    from src.core.utils import rate_limit_check
+
+    # 公开端点：注册页可能多次刷新查询，给个相对宽松的 IP 限速。
+    client_ip = request.remote_addr or 'unknown'
+    allowed, retry_after = rate_limit_check(
+        'register_check_available', client_ip, max_requests=60, window_seconds=60,
+    )
+    if not allowed:
+        logger.warning(
+            "/users/check-available 限流命中 ip=%s retry_after=%ss",
+            client_ip, retry_after,
+        )
+        return api_response(
+            False, f"请求过于频繁，请在 {retry_after} 秒后重试", code=429,
+        )
+
     available, msg = await UserService.check_registration_available()
     current_count = await UserService.get_registered_user_count()
     emby_bound_count = await UserService.get_emby_bound_user_count()
@@ -965,11 +1023,26 @@ async def get_telegram_status():
 @require_auth
 async def create_tg_rebind_request():
     from src.config import Config
+    from src.core.utils import rate_limit_check
 
     if not Config.TELEGRAM_MODE:
         return api_response(False, "Telegram 功能未启用", code=400)
 
     user = g.current_user
+
+    # 换绑请求会进管理员审批队列，单用户每小时最多 3 次足够。
+    allowed, retry_after = rate_limit_check(
+        'tg_rebind_request', str(user.UID), max_requests=3, window_seconds=3600,
+    )
+    if not allowed:
+        logger.warning(
+            "/me/telegram/rebind-request 限流命中 uid=%s retry_after=%ss",
+            user.UID, retry_after,
+        )
+        return api_response(
+            False, f"换绑请求过于频繁，请在 {retry_after} 秒后重试", code=429,
+        )
+
     if not user.TELEGRAM_ID:
         return api_response(False, "当前账号尚未绑定 Telegram", code=400)
 
@@ -990,17 +1063,31 @@ async def create_tg_rebind_request():
 async def unbind_my_telegram():
     """
     解绑 Telegram 账号
-    
+
     注意：如果系统强制要求绑定 Telegram，则不允许解绑
     """
     from src.config import Config
-    
+    from src.core.utils import rate_limit_check
+
     user = g.current_user
-    
+
+    # 按 UID 限速：防恶意频繁解绑触发外部联动。
+    allowed, retry_after = rate_limit_check(
+        'tg_unbind', str(user.UID), max_requests=5, window_seconds=600,
+    )
+    if not allowed:
+        logger.warning(
+            "/me/telegram/unbind 限流命中 uid=%s retry_after=%ss",
+            user.UID, retry_after,
+        )
+        return api_response(
+            False, f"操作过于频繁，请在 {retry_after} 秒后重试", code=429,
+        )
+
     # 检查是否强制绑定
     if Config.FORCE_BIND_TELEGRAM:
         return api_response(False, "系统要求必须绑定 Telegram，不允许解绑。如需更换账号请使用换绑功能", code=403)
-    
+
     # 检查是否已绑定
     if not user.TELEGRAM_ID:
         return api_response(False, "您尚未绑定 Telegram", code=400)
@@ -1123,16 +1210,30 @@ async def generate_tg_bind_code():
         }
     """
     from src.config import Config, TelegramConfig
-    
+    from src.core.utils import rate_limit_check
+
     if not Config.TELEGRAM_MODE or not TelegramConfig.BOT_TOKEN:
         return api_response(False, "Telegram Bot 未启用", code=400)
-    
+
     user = g.current_user
-    
+
+    # 与注册版本对齐：单账号 10 分钟最多生成 5 次绑定码。
+    allowed, retry_after = rate_limit_check(
+        'tg_user_bind_code', str(user.UID), max_requests=5, window_seconds=600,
+    )
+    if not allowed:
+        logger.warning(
+            "/me/telegram/bind-code 限流命中 uid=%s retry_after=%ss",
+            user.UID, retry_after,
+        )
+        return api_response(
+            False, f"生成绑定码过于频繁，请在 {retry_after} 秒后重试", code=429,
+        )
+
     # 已绑定则不允许再生成
     if user.TELEGRAM_ID:
         return api_response(False, "您已绑定 Telegram，如需更换请先解绑", code=400)
-    
+
     # 清理过期绑定码
     await _cleanup_expired_codes()
     if await TelegramBindCodeOperate.count_active() >= _MAX_BIND_CODES:
@@ -1223,10 +1324,40 @@ async def query_tg_register_bind_code_status():
         }
     """
     from src.config import Config, TelegramConfig
+    from src.core.utils import rate_limit_check
 
     code = (request.args.get('code') or '').strip().upper()
     if not code or len(code) != 8 or not code.isalnum():
         return api_response(False, "绑定码格式无效", code=400)
+
+    # 公开轮询端点：双层限速，避免被反复刷或被用来枚举绑定码。
+    # - 单 code：30 次 / 60s （前端 2s 一次 = 30 次/分钟，留 1× 余量）
+    # - 单 IP：120 次 / 60s （单 IP 多页签/多账号兼容，但拒绝大规模扫描）
+    client_ip = request.remote_addr or 'unknown'
+    allowed_code, retry_after_code = rate_limit_check(
+        'tg_register_bind_code_status:code', code,
+        max_requests=30, window_seconds=60,
+    )
+    if not allowed_code:
+        logger.warning(
+            "bind-code/status code 维度限流命中 code=%s ip=%s retry_after=%ss",
+            code, client_ip, retry_after_code,
+        )
+        return api_response(
+            False, f"查询过于频繁，请在 {retry_after_code} 秒后重试", code=429,
+        )
+    allowed_ip, retry_after_ip = rate_limit_check(
+        'tg_register_bind_code_status:ip', client_ip,
+        max_requests=120, window_seconds=60,
+    )
+    if not allowed_ip:
+        logger.warning(
+            "bind-code/status IP 维度限流命中 ip=%s retry_after=%ss",
+            client_ip, retry_after_ip,
+        )
+        return api_response(
+            False, f"查询过于频繁，请在 {retry_after_ip} 秒后重试", code=429,
+        )
 
     if not Config.TELEGRAM_MODE or not TelegramConfig.BOT_TOKEN:
         return api_response(False, "Telegram Bot 未启用", code=400)
@@ -1278,8 +1409,12 @@ async def confirm_tg_bind_internal(bind_code: str, telegram_id: int) -> tuple[bo
             return False, "该账号已绑定 Telegram", {}, 400
 
         # 强制要求加入指定群组（仅在配置了 GROUP_ID 时生效）。
+        # sync_roster=True：顺手把这次探测到的成员状态写进花名册，
+        # 弥补 Bot API 无法主动枚举群成员的缺口（用户从未发言时被动收集会漏）。
         from src.services.telegram_membership import TelegramMembershipService
-        ok, missing = await TelegramMembershipService.check_user_in_groups(telegram_id, strict=True)
+        ok, missing = await TelegramMembershipService.check_user_in_groups(
+            telegram_id, strict=True, sync_roster=True,
+        )
         if not ok:
             return (
                 False,
@@ -1324,8 +1459,11 @@ async def confirm_tg_bind_internal(bind_code: str, telegram_id: int) -> tuple[bo
             return False, "该 Telegram 已绑定其他账号，一个 Telegram 只能绑定一个账号", {}, 400
 
         # 注册阶段也强制检查群组成员资格，避免绕过 Bot 后再注册。
+        # 同样借这次 get_chat_member 把花名册同步一次（与 /bind 流程一致）。
         from src.services.telegram_membership import TelegramMembershipService
-        ok, missing = await TelegramMembershipService.check_user_in_groups(telegram_id, strict=True)
+        ok, missing = await TelegramMembershipService.check_user_in_groups(
+            telegram_id, strict=True, sync_roster=True,
+        )
         if not ok:
             return (
                 False,

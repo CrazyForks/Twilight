@@ -76,9 +76,24 @@ const SUMMARY_LABELS: Record<string, string> = {
   emby_online: "Emby 在线",
   enabled: "启用",
   days_threshold: "阈值(天)",
+  preserve_tg_bound: "保留TG绑定",
+  pending_register_excluded: "注册队列排除",
   rejoin_scanned: "复核扫描",
   rejoin_candidates: "待复核恢复",
   rejoin_uids: "待复核 UID",
+  reason_no_account: "无系统账号",
+  reason_no_emby: "无 Emby",
+  reason_disabled: "已禁用",
+  preserved_bound: "已绑 Emby 保留",
+  roster_size: "花名册总数",
+  bots_in_roster: "花名册 Bot",
+  admins_excluded: "排除管理员",
+  excluded_total: "排除合计",
+  targets: "目标数",
+  dry_run: "干跑",
+  not_in_group: "已不在群",
+  kicked: "已踢出",
+  skipped: "跳过",
 };
 
 function formatSummaryValue(value: unknown): string {
@@ -381,6 +396,9 @@ function StatusBadge({ job }: { job: SchedulerJobItem }) {
   );
 }
 
+// 哪些任务在手动触发时支持参数面板
+const PARAMETERIZED_JOBS = new Set(["cleanup_no_emby", "kick_unknown_group_members"]);
+
 export default function AdminSchedulerPage() {
   const { toast } = useToast();
   const [jobs, setJobs] = useState<SchedulerJobItem[]>([]);
@@ -395,6 +413,14 @@ export default function AdminSchedulerPage() {
 
   // 触发器编辑器
   const [scheduleJob, setScheduleJob] = useState<SchedulerJobItem | null>(null);
+
+  // 参数化触发弹窗
+  const [paramJob, setParamJob] = useState<SchedulerJobItem | null>(null);
+  const [paramDays, setParamDays] = useState("7");
+  const [paramPreserveTg, setParamPreserveTg] = useState(true);
+  const [paramIgnoreEnabled, setParamIgnoreEnabled] = useState(true);
+  const [paramKickDryRun, setParamKickDryRun] = useState(true);
+  const [paramKickMaxPerRun, setParamKickMaxPerRun] = useState("200");
 
   const loadJobs = useCallback(async () => {
     const res = await api.listSchedulerJobs();
@@ -440,25 +466,74 @@ export default function AdminSchedulerPage() {
     };
   }, [anyRunning, refresh]);
 
-  const handleTrigger = async (job: SchedulerJobItem) => {
-    setRunning((p) => ({ ...p, [job.id]: true }));
-    try {
-      const res = await api.triggerSchedulerJob(job.id);
-      if (res.success) {
-        toast({
-          title: `已触发：${job.name}`,
-          description: "任务在后台执行，可在卡片中查看状态",
-          variant: "success",
-        });
-        await refresh();
-      } else {
-        toast({ title: "触发失败", description: res.message, variant: "destructive" });
+  const runJob = useCallback(
+    async (job: SchedulerJobItem, params?: Record<string, unknown>) => {
+      setRunning((p) => ({ ...p, [job.id]: true }));
+      try {
+        const res = await api.triggerSchedulerJob(job.id, params);
+        if (res.success) {
+          toast({
+            title: `已触发：${job.name}`,
+            description: "任务在后台执行，可在卡片中查看状态",
+            variant: "success",
+          });
+          await refresh();
+        } else {
+          toast({ title: "触发失败", description: res.message, variant: "destructive" });
+        }
+      } catch (err: any) {
+        toast({ title: "触发失败", description: err.message || "网络异常", variant: "destructive" });
+      } finally {
+        setRunning((p) => ({ ...p, [job.id]: false }));
       }
-    } catch (err: any) {
-      toast({ title: "触发失败", description: err.message || "网络异常", variant: "destructive" });
-    } finally {
-      setRunning((p) => ({ ...p, [job.id]: false }));
+    },
+    [refresh, toast],
+  );
+
+  const handleTrigger = (job: SchedulerJobItem) => {
+    if (PARAMETERIZED_JOBS.has(job.id)) {
+      // 弹窗收集参数后再发起
+      const lastDays = Number(
+        (job.last_run?.summary as Record<string, unknown> | undefined)?.["days_threshold"] ?? 7,
+      );
+      setParamDays(Number.isFinite(lastDays) && lastDays > 0 ? String(Math.trunc(lastDays)) : "7");
+      const lastPreserveTg = (job.last_run?.summary as Record<string, unknown> | undefined)?.[
+        "preserve_tg_bound"
+      ];
+      setParamPreserveTg(lastPreserveTg === undefined ? true : Boolean(lastPreserveTg));
+      setParamIgnoreEnabled(true);
+      setParamKickDryRun(true);
+      setParamKickMaxPerRun("200");
+      setParamJob(job);
+      return;
     }
+    void runJob(job);
+  };
+
+  const handleParamConfirm = async () => {
+    if (!paramJob) return;
+    let params: Record<string, unknown> = {};
+    if (paramJob.id === "cleanup_no_emby") {
+      const days = Number(paramDays);
+      if (!Number.isFinite(days) || days < 1) {
+        toast({ title: "天数不合法", description: "必须 ≥ 1 天", variant: "destructive" });
+        return;
+      }
+      params = {
+        days: Math.trunc(days),
+        preserve_tg_bound: paramPreserveTg,
+        ignore_enabled_flag: paramIgnoreEnabled,
+      };
+    } else if (paramJob.id === "kick_unknown_group_members") {
+      const mpr = Number(paramKickMaxPerRun);
+      params = {
+        dry_run: paramKickDryRun,
+        max_per_run: Number.isFinite(mpr) && mpr > 0 ? Math.trunc(mpr) : 200,
+      };
+    }
+    const job = paramJob;
+    setParamJob(null);
+    await runJob(job, params);
   };
 
   const openLogs = async (job: SchedulerJobItem) => {
@@ -639,6 +714,106 @@ export default function AdminSchedulerPage() {
         onOpenChange={(open) => { if (!open) setScheduleJob(null); }}
         onSaved={refresh}
       />
+
+      {/* 参数化手动触发：cleanup_no_emby / kick_unknown_group_members */}
+      <Dialog
+        open={Boolean(paramJob)}
+        onOpenChange={(open) => { if (!open) setParamJob(null); }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>手动触发 · {paramJob?.name}</DialogTitle>
+            <DialogDescription>
+              本次仅作用于这一次手动触发，不会修改 config.toml 默认值。
+            </DialogDescription>
+          </DialogHeader>
+
+          {paramJob?.id === "cleanup_no_emby" && (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>注册超过多少天才清理</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={paramDays}
+                  onChange={(e) => setParamDays(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  仅删除注册时间 ≥ N 天且仍未补建 Emby 的非管理员账号。当前 Emby 注册队列里的 UID 会被强制排除。
+                </p>
+              </div>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={paramPreserveTg}
+                  onChange={(e) => setParamPreserveTg(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300"
+                />
+                <span>
+                  保留已绑 Telegram 的待激活账号
+                  <span className="block text-xs text-muted-foreground">
+                    他们仍可在前端 Modal 自助补建 Emby。关闭后这些"半完成"账号也会一并删除。
+                  </span>
+                </span>
+              </label>
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={paramIgnoreEnabled}
+                  onChange={(e) => setParamIgnoreEnabled(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300"
+                />
+                <span>
+                  忽略 AUTO_CLEANUP_NO_EMBY 总开关
+                  <span className="block text-xs text-muted-foreground">
+                    勾选后即便 config 里没启用自动清理，也能手动跑一次。
+                  </span>
+                </span>
+              </label>
+            </div>
+          )}
+
+          {paramJob?.id === "kick_unknown_group_members" && (
+            <div className="space-y-4">
+              <label className="flex items-start gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={paramKickDryRun}
+                  onChange={(e) => setParamKickDryRun(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 rounded border-gray-300"
+                />
+                <span>
+                  仅试运行 (dry_run)
+                  <span className="block text-xs text-muted-foreground">
+                    勾选后只统计待踢的目标，不会真正踢人。结果在 summary 中查看。
+                  </span>
+                </span>
+              </label>
+              <div className="space-y-2">
+                <Label>单次最多踢出</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={paramKickMaxPerRun}
+                  onChange={(e) => setParamKickMaxPerRun(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  避免触发 Telegram 限流；默认 200，上限 500。
+                </p>
+              </div>
+              <p className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                ⚠️ 按 Sakura_EmbyBoss 思路：以群花名册为基准反查 users 表，踢 无系统账号 / 已禁用 / 未绑 Emby 的成员。
+              </p>
+            </div>
+          )}
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={() => setParamJob(null)}>取消</Button>
+            <Button onClick={handleParamConfirm}>立即执行</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={Boolean(logsJob)} onOpenChange={(open) => { if (!open) { setLogsJob(null); setLogsDetail(null); setLogsHistory([]); } }}>
         <DialogContent className="max-h-[85vh] w-[92vw] max-w-3xl overflow-hidden p-0 sm:max-w-3xl">

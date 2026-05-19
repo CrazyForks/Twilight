@@ -150,12 +150,29 @@ export default function AdminUsersPage() {
   const [kickConfirmText, setKickConfirmText] = useState("");
   const [kickResult, setKickResult] = useState<KickPreview | null>(null);
 
-  // 一键踢出所有未绑定 Emby 的系统账号（无视注册时间）
+  // 一键踢出所有未绑定 Emby 的系统账号
   type NoEmbyPreview = NonNullable<Awaited<ReturnType<typeof api.kickNoEmbyUsers>>["data"]>;
   const [noEmbyOpen, setNoEmbyOpen] = useState(false);
   const [noEmbyLoading, setNoEmbyLoading] = useState(false);
   const [noEmbyPreview, setNoEmbyPreview] = useState<NoEmbyPreview | null>(null);
   const [noEmbyConfirmText, setNoEmbyConfirmText] = useState("");
+  // 0 = 不按注册时间过滤，>0 = 仅清理注册超过 N 天的账号
+  const [noEmbyMinDays, setNoEmbyMinDays] = useState("0");
+  // 是否保留"已绑 TG / 可自助补建 Emby"的待激活账号
+  const [noEmbyPreserveDirect, setNoEmbyPreserveDirect] = useState(true);
+
+  // 重置密码对话框
+  const [resetPwdOpen, setResetPwdOpen] = useState(false);
+  const [resetPwdUser, setResetPwdUser] = useState<UserInfo | null>(null);
+  const [resetPwdScope, setResetPwdScope] = useState<"system" | "emby" | "both">("both");
+  const [resetPwdAuto, setResetPwdAuto] = useState(true);
+  const [resetPwdCustom, setResetPwdCustom] = useState("");
+  const [resetPwdLoading, setResetPwdLoading] = useState(false);
+  const [resetPwdResult, setResetPwdResult] = useState<null | {
+    scope: "system" | "emby" | "both";
+    new_password: string;
+    auto_generated: boolean;
+  }>(null);
 
   const usersCacheRef = useRef<
     Map<string, { users: UserInfo[]; total: number; pages: number }>
@@ -315,19 +332,39 @@ export default function AdminUsersPage() {
     }
   };
 
-  const handleResetPassword = async (user: UserInfo) => {
+  const handleResetPassword = (user: UserInfo) => {
+    // 没绑 Emby 的账号默认只能重置系统密码
+    const defaultScope: "system" | "emby" | "both" = user.emby_bound ? "both" : "system";
+    setResetPwdUser(user);
+    setResetPwdScope(defaultScope);
+    setResetPwdAuto(true);
+    setResetPwdCustom("");
+    setResetPwdResult(null);
+    setResetPwdOpen(true);
+  };
+
+  const handleResetPasswordSubmit = async () => {
+    if (!resetPwdUser) return;
+    if (!resetPwdAuto && !resetPwdCustom.trim()) {
+      toast({ title: "请输入新密码", description: "或勾选随机生成", variant: "destructive" });
+      return;
+    }
+    setResetPwdLoading(true);
     try {
-      const res = await api.resetPassword(user.uid);
+      const res = await api.resetPassword(resetPwdUser.uid, {
+        scope: resetPwdScope,
+        password: resetPwdAuto ? undefined : resetPwdCustom.trim(),
+      });
       if (res.success && res.data) {
-        toast({
-          title: "密码已重置",
-          description: `新密码: ${res.data.new_password}`,
-        });
+        setResetPwdResult(res.data);
+        toast({ title: "密码已重置", variant: "success" });
       } else {
         toast({ title: "重置失败", description: res.message, variant: "destructive" });
       }
     } catch (error: any) {
       toast({ title: "重置失败", description: error.message, variant: "destructive" });
+    } finally {
+      setResetPwdLoading(false);
     }
   };
 
@@ -671,10 +708,19 @@ export default function AdminUsersPage() {
   };
 
   // ============== 一键踢出未绑定 Emby 的系统账号 ==============
+  const noEmbyMinDaysParsed = (() => {
+    const n = Number(noEmbyMinDays);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+  })();
+
   const handleNoEmbyPreview = async () => {
     setNoEmbyLoading(true);
     try {
-      const res = await api.kickNoEmbyUsers({ dryRun: true });
+      const res = await api.kickNoEmbyUsers({
+        dryRun: true,
+        minDays: noEmbyMinDaysParsed,
+        preservePendingRegister: noEmbyPreserveDirect,
+      });
       if (res.success && res.data) {
         setNoEmbyPreview(res.data);
       } else {
@@ -694,7 +740,11 @@ export default function AdminUsersPage() {
     }
     setNoEmbyLoading(true);
     try {
-      const res = await api.kickNoEmbyUsers({ dryRun: false });
+      const res = await api.kickNoEmbyUsers({
+        dryRun: false,
+        minDays: noEmbyMinDaysParsed,
+        preservePendingRegister: noEmbyPreserveDirect,
+      });
       if (res.success && res.data) {
         toast({
           title: "清理完成",
@@ -1357,22 +1407,72 @@ export default function AdminUsersPage() {
       >
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>踢出所有未绑 Emby 账号</DialogTitle>
+            <DialogTitle>踢出未绑 Emby 账号</DialogTitle>
             <DialogDescription>
-              无视注册时间，删除所有未绑定 Emby 的系统账号。管理员 / 白名单 / 未识别角色会被强制跳过。
+              删除未绑定 Emby 的系统账号。管理员 / 白名单 / 未识别角色 / 当前正在 Emby
+              注册队列里的 UID 一律跳过。可选限制最少注册天数。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4 text-sm">
+            <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
+              <div className="space-y-2">
+                <Label>最少注册天数</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={noEmbyMinDays}
+                  onChange={(e) => {
+                    setNoEmbyMinDays(e.target.value);
+                    setNoEmbyPreview(null);
+                  }}
+                  placeholder="0 表示不卡注册时间"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  {noEmbyMinDaysParsed > 0
+                    ? `仅清理注册超过 ${noEmbyMinDaysParsed} 天的账号`
+                    : "无视注册时间，匹配所有未绑 Emby 的账号"}
+                </p>
+              </div>
+              <label className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
+                <input
+                  type="checkbox"
+                  checked={noEmbyPreserveDirect}
+                  onChange={(e) => {
+                    setNoEmbyPreserveDirect(e.target.checked);
+                    setNoEmbyPreview(null);
+                  }}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                <span className="text-xs">
+                  保留可直接补建 Emby 的用户
+                  <span className="block text-[10px] text-muted-foreground">
+                    (已绑 Telegram 的待激活账号)
+                  </span>
+                </span>
+              </label>
+            </div>
+
             <p className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-amber-700 dark:text-amber-300">
-              ⚠️ 包括待激活账号（PENDING_EMBY=true）。请先「预览」确认范围后再确认执行。
+              ⚠️ 请先「预览」确认范围后再确认执行。
             </p>
 
             {noEmbyPreview && (
               <div className="space-y-2">
                 <Label>
                   匹配到 {noEmbyPreview.candidate_count} 个待清理账号
-                  （跳过 管理员 {noEmbyPreview.skipped_admins} · 白名单 {noEmbyPreview.skipped_whitelist} · 未识别 {noEmbyPreview.skipped_unrecognized}）
                 </Label>
+                <div className="flex flex-wrap gap-1.5 text-[10px]">
+                  <Badge variant="outline">管理员 {noEmbyPreview.skipped_admins}</Badge>
+                  <Badge variant="outline">白名单 {noEmbyPreview.skipped_whitelist}</Badge>
+                  <Badge variant="outline">未识别 {noEmbyPreview.skipped_unrecognized}</Badge>
+                  <Badge variant="outline">注册队列 {noEmbyPreview.skipped_in_queue}</Badge>
+                  {noEmbyPreview.skipped_pending_register > 0 && (
+                    <Badge variant="outline">可补建 Emby {noEmbyPreview.skipped_pending_register}</Badge>
+                  )}
+                  {noEmbyPreview.skipped_too_recent > 0 && (
+                    <Badge variant="outline">注册时间不够 {noEmbyPreview.skipped_too_recent}</Badge>
+                  )}
+                </div>
                 {noEmbyPreview.candidate_count > 0 ? (
                   <div className="max-h-56 overflow-y-auto rounded-md border">
                     <table className="w-full text-sm">
@@ -1448,6 +1548,132 @@ export default function AdminUsersPage() {
               确认踢出
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reset User Password Dialog（区分系统 / Emby / 两者） */}
+      <Dialog
+        open={resetPwdOpen}
+        onOpenChange={(open) => {
+          setResetPwdOpen(open);
+          if (!open) {
+            setResetPwdUser(null);
+            setResetPwdResult(null);
+            setResetPwdCustom("");
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>重置密码 · {resetPwdUser?.username}</DialogTitle>
+            <DialogDescription>
+              可单独重置系统登录密码或 Emby 播放密码；同时支持自定义新密码或随机生成。
+            </DialogDescription>
+          </DialogHeader>
+
+          {resetPwdResult ? (
+            <div className="space-y-3">
+              <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5">
+                <p className="text-sm">
+                  <span className="text-muted-foreground">重置范围：</span>
+                  <span className="font-medium">
+                    {resetPwdResult.scope === "system"
+                      ? "仅系统密码"
+                      : resetPwdResult.scope === "emby"
+                        ? "仅 Emby 密码"
+                        : "系统 + Emby"}
+                  </span>
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  {resetPwdResult.auto_generated ? "随机生成" : "管理员指定"}的新密码：
+                </p>
+                <code className="block break-all rounded bg-background px-2 py-1.5 text-base font-mono">
+                  {resetPwdResult.new_password}
+                </code>
+                <p className="text-xs text-muted-foreground">
+                  请尽快告知用户。本对话框关闭后无法再次查看明文。
+                </p>
+              </div>
+              <DialogFooter className="gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(resetPwdResult.new_password);
+                    toast({ title: "已复制到剪贴板", variant: "success" });
+                  }}
+                >
+                  复制密码
+                </Button>
+                <Button onClick={() => setResetPwdOpen(false)}>完成</Button>
+              </DialogFooter>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>重置范围</Label>
+                <Select
+                  value={resetPwdScope}
+                  onValueChange={(v) => setResetPwdScope(v as typeof resetPwdScope)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="both" disabled={!resetPwdUser?.emby_bound}>
+                      系统 + Emby（同一个密码）
+                    </SelectItem>
+                    <SelectItem value="system">仅系统登录密码</SelectItem>
+                    <SelectItem value="emby" disabled={!resetPwdUser?.emby_bound}>
+                      仅 Emby 密码
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
+                {!resetPwdUser?.emby_bound && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    该用户未绑定 Emby，只能重置系统密码。
+                  </p>
+                )}
+              </div>
+
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={resetPwdAuto}
+                  onChange={(e) => setResetPwdAuto(e.target.checked)}
+                  className="h-4 w-4 rounded border-gray-300"
+                />
+                <span>随机生成 12 位强密码</span>
+              </label>
+
+              {!resetPwdAuto && (
+                <div className="space-y-2">
+                  <Label>自定义新密码</Label>
+                  <Input
+                    type="text"
+                    value={resetPwdCustom}
+                    onChange={(e) => setResetPwdCustom(e.target.value)}
+                    placeholder="≥ 8 位，含大小写字母 + 数字"
+                    autoComplete="new-password"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    至少 8 位，且包含大小写字母与数字。
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {!resetPwdResult && (
+            <DialogFooter className="gap-2">
+              <Button variant="outline" onClick={() => setResetPwdOpen(false)}>
+                取消
+              </Button>
+              <Button onClick={handleResetPasswordSubmit} disabled={resetPwdLoading}>
+                {resetPwdLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                重置密码
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -1932,19 +2158,23 @@ export default function AdminUsersPage() {
               </div>
             ) : kickPreview ? (
               <div className="rounded-md border p-3 space-y-1 text-xs">
-                <p>候选 TG ID 总数: <strong>{kickPreview.candidates_total}</strong></p>
-                <p>其中已绑 Web 账号: <strong>{kickPreview.bound_users}</strong></p>
-                <p>花名册补充: <strong>{kickPreview.roster_added}</strong></p>
+                <p>花名册成员: <strong>{kickPreview.roster_size}</strong>（含 bot {kickPreview.bots_in_roster}）</p>
+                <p>系统内活跃且已绑 Emby: <strong>{kickPreview.preserved_bound}</strong></p>
                 <p>群管理员排除: <strong>{kickPreview.admins_excluded}</strong></p>
                 <p>排除总数: <strong>{kickPreview.excluded_total}</strong></p>
                 <p className="text-destructive">
                   实际待踢: <strong>{kickPreview.targets}</strong>
+                  <span className="ml-2 text-muted-foreground font-normal">
+                    （无账号 {kickPreview.reason_no_account} · 无 Emby {kickPreview.reason_no_emby} · 已禁用 {kickPreview.reason_disabled}）
+                  </span>
                 </p>
                 {kickPreview.preview_targets && kickPreview.preview_targets.length > 0 && (
                   <div className="pt-1">
-                    <p className="text-muted-foreground">前 {kickPreview.preview_targets.length} 个目标 ID：</p>
+                    <p className="text-muted-foreground">前 {kickPreview.preview_targets.length} 个目标：</p>
                     <p className="break-all text-[10px] text-muted-foreground">
-                      {kickPreview.preview_targets.join(", ")}
+                      {kickPreview.preview_targets
+                        .map((t) => `${t.tg_id}(${t.reason})`)
+                        .join(", ")}
                     </p>
                   </div>
                 )}

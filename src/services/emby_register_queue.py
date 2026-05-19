@@ -150,6 +150,15 @@ class EmbyRegisterQueueService:
         return len(cls._pending_by_username)
 
     @classmethod
+    def pending_uids(cls) -> set[int]:
+        """当前队列里"还没拿到 Emby 账号但快了"的 UID 集合。
+
+        清理任务用它把这部分用户从 "注册超过 N 天还没 Emby" 列表里排除，
+        避免在临界窗口（worker 已 dequeue 但还没把 EMBYID 落库）误删账号。
+        """
+        return {int(uid) for uid in cls._pending_by_uid.keys() if uid is not None}
+
+    @classmethod
     async def _cleanup_expired_status_locked(cls) -> None:
         """清理过期的终态记录，防止 _status dict 无限膨胀。"""
         now = cls._now()

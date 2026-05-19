@@ -666,25 +666,50 @@ class UserOperate:
             return list(result.scalars().all())
 
     @staticmethod
-    async def get_no_emby_users(days: int = 7) -> list[UserModel]:
+    async def get_no_emby_users(
+        days: int = 7,
+        *,
+        exclude_uids: Optional[set[int]] = None,
+        preserve_tg_bound: bool = False,
+    ) -> list[UserModel]:
+        """获取注册超过指定天数但仍无 Emby 账户的用户。
+
+        :param days: 注册超过多少天才视为可清理。
+        :param exclude_uids: 额外强制保留的 UID 集合（例如正在 Emby 注册队列里处理的）。
+        :param preserve_tg_bound: True 时跳过仍持有 TELEGRAM_ID 的"半完成"账号——
+            他们仍可在前端继续补建 Emby，不应该被一刀切删掉。
+
+        过滤口径：
+        - EMBYID 为 NULL 或空字符串；
+        - 注册时间 ≤ 阈值，时间来源 ``COALESCE(REGISTER_TIME, CREATE_AT)``，
+          兼容老数据只有 CREATE_AT 而 REGISTER_TIME 是 NULL 的情况；
+        - 角色不在 {ADMIN, WHITE_LIST, UNRECOGNIZED}——UNRECOGNIZED 通常是
+          注册流程半路出错留下的占位记录，由人工核对，不能让定时任务一刀切。
         """
-        获取注册超过指定天数但仍无 Emby 账户的用户
-        
-        :param days: 注册超过多少天
-        """
-        from sqlalchemy import or_
+        from sqlalchemy import or_, func as _func
         threshold = int(time.time()) - days * 86400
+        reg_time = _func.coalesce(UserModel.REGISTER_TIME, UserModel.CREATE_AT)
+
+        conditions = [
+            or_(UserModel.EMBYID.is_(None), UserModel.EMBYID == ''),
+            reg_time.isnot(None),
+            reg_time <= threshold,
+            UserModel.ROLE.notin_([
+                Role.ADMIN.value,
+                Role.WHITE_LIST.value,
+                Role.UNRECOGNIZED.value,
+            ]),
+        ]
+        if preserve_tg_bound:
+            conditions.append(UserModel.TELEGRAM_ID.is_(None))
+
         async with UsersSessionFactory() as session:
-            result = await session.execute(
-                select(UserModel).where(
-                    or_(UserModel.EMBYID.is_(None), UserModel.EMBYID == ''),
-                    UserModel.REGISTER_TIME.isnot(None),
-                    UserModel.REGISTER_TIME <= threshold,
-                    UserModel.ROLE != Role.ADMIN.value,
-                    UserModel.ROLE != Role.WHITE_LIST.value,
-                )
-            )
-            return list(result.scalars().all())
+            result = await session.execute(select(UserModel).where(*conditions))
+            users = list(result.scalars().all())
+
+        if exclude_uids:
+            users = [u for u in users if int(u.UID) not in exclude_uids]
+        return users
 
     @staticmethod
     async def get_all_users(

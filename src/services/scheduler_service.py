@@ -44,9 +44,17 @@ class RunContext:
         'startup': 'startup',
     }
 
-    def __init__(self, job_id: str, trigger: str = 'scheduled'):
+    def __init__(
+        self,
+        job_id: str,
+        trigger: str = 'scheduled',
+        params: Optional[dict] = None,
+    ):
         self.job_id = job_id
         self.trigger = trigger
+        # 手动触发可携带 params 覆盖任务行为（如 cleanup_no_emby 的 days 阈值）；
+        # 自动调度走 config 默认值，params 为空 dict。
+        self.params: dict = dict(params or {})
         self.summary: dict[str, Any] = {}
         self.logs: list[str] = []
         self._max_logs = 800  # 内存里挡一道，落库会再截断
@@ -194,10 +202,12 @@ class SchedulerService:
         fn: Callable[..., Awaitable[Any]],
         *,
         trigger: str = 'scheduled',
+        params: Optional[dict] = None,
     ) -> dict:
         """执行 job 并把 last-run 落库。供 APScheduler 调度与管理员手动触发共用。
 
         `fn` 既兼容老签名 `async def f()`，也接受新签名 `async def f(ctx: RunContext)`。
+        ``params`` 仅在手动触发时使用，自动调度路径传 ``None``。
         """
         if job_id in cls._running:
             return cls._last_runs.get(job_id, {'status': 'running'})
@@ -212,7 +222,7 @@ class SchedulerService:
             logger.warning(f"无法创建 scheduler_run 记录: {exc}")
             run_id = 0
 
-        ctx = RunContext(job_id, trigger=trigger)
+        ctx = RunContext(job_id, trigger=trigger, params=params)
         error_text: Optional[str] = None
         try:
             await fn(ctx)
@@ -354,9 +364,17 @@ class SchedulerService:
         return cls._job_fn_map().get(job_id)
 
     @classmethod
-    async def trigger_job(cls, job_id: str) -> tuple[bool, str, Optional[dict]]:
+    async def trigger_job(
+        cls,
+        job_id: str,
+        *,
+        params: Optional[dict] = None,
+    ) -> tuple[bool, str, Optional[dict]]:
         """手动触发指定 job。运行在调度器所在事件循环上（如果可用），
         否则就在当前协程里 await（API 线程）。
+
+        :param params: 手动触发时携带的参数，写进 ``RunContext.params``。
+            每个 job 自行决定识别哪些键，不识别的字段被忽略。
 
         Returns:
             (ok, message, run_record) —— ok 仅表示触发成功，job 本身的结果在
@@ -374,7 +392,9 @@ class SchedulerService:
         except RuntimeError:
             running_loop = None
 
-        coro_factory = lambda: cls._run_with_tracking(job_id, fn, trigger='manual')
+        coro_factory = lambda: cls._run_with_tracking(
+            job_id, fn, trigger='manual', params=params,
+        )
 
         if sched_loop is not None and sched_loop is not running_loop:
             # API 线程触发 → 把任务安排到调度器所在 loop，立即返回，不阻塞 API
@@ -734,21 +754,22 @@ class SchedulerService:
 
     @staticmethod
     async def kick_unknown_group_members(ctx: RunContext):
-        """手动专属：踢出"群成员里没绑定本站 Web 账号的人"。
+        """手动专属：参照 Sakura_EmbyBoss 的"踢出群里没有 Emby 账号的人"语义。
 
-        - 仅扫描已配置的群组（取 TelegramConfig.GROUP_ID 第一个）。
-        - 候选集合 = ``users.TELEGRAM_ID`` ∪ ``telegram_bind_codes.CONFIRMED_TELEGRAM_ID``
-          ∪ ``telegram_group_roster``（Bot 被动观察到的群成员，按 chat_id 过滤）。
-          Bot API 没法主动枚举陌生成员，但花名册由 chat_member 事件 + 消息观察
-          长期累积，能补齐"在群但从来没碰过本站"的那部分人。
-        - 排除：群管理员/群主、Bot 自身、配置中的管理员账号、所有"系统中活跃且仍持有该 TG 绑定"的 ID。
-        - 踢出策略：``ban + unban``（临时移除，能再加回来）。
+        以群组花名册（Bot 被动观察到的群成员）为基准，逐个反查 ``users`` 表：
+
+        - 没绑系统账号（含 UNRECOGNIZED）→ kick (``no_account``)
+        - 系统账号被禁用 → kick (``disabled``)
+        - 系统账号未绑 Emby（含 PENDING_EMBY） → kick (``no_emby``)
+        - 系统账号正常 + 已绑 Emby → 留人
+
+        群管理员 / TelegramConfig.ADMIN_ID / ADMIN / WHITE_LIST 一律排除。
+        踢出策略沿用 ``ban + unban``（临时移除，被踢者将来仍可重新加入）。
+
+        受 Bot API 限制，无法主动枚举从未被 chat_member 事件/消息观察过的成员；
+        roster 是长期累积的最佳近似。
         """
-        from src.config import TelegramConfig
         from src.services.telegram_membership import TelegramMembershipService
-        from src.db.user import UserOperate, UserModel, Role, TelegramBindCodeModel, UsersSessionFactory
-        from src.db.telegram_roster import TelegramRosterOperate
-        from sqlalchemy import select as _select
 
         ctx.summary['enabled'] = False
 
@@ -763,91 +784,60 @@ class SchedulerService:
         ctx.summary['enabled'] = True
         ctx.summary['chat_id'] = str(chat_id)
 
-        # 候选 TG ID 集合
-        ctx.log("📋 收集候选 TG ID...")
-        candidate_ids: set[int] = set()
-        excluded_ids: set[int] = set()
-        bound_ids: set[int] = set()  # 出现在 users 表里的 TG ID（视为"已绑定 Web 账号"）
-        async with UsersSessionFactory() as session:
-            # 所有 users.TELEGRAM_ID
-            user_rows = (await session.execute(
-                _select(UserModel.TELEGRAM_ID, UserModel.ACTIVE_STATUS, UserModel.ROLE)
-                .where(UserModel.TELEGRAM_ID.isnot(None))
-            )).all()
-            for tg_id, active, role in user_rows:
-                if tg_id is None:
-                    continue
-                try:
-                    tg_int = int(tg_id)
-                except (TypeError, ValueError):
-                    continue
-                candidate_ids.add(tg_int)
-                bound_ids.add(tg_int)
-                # 系统内"活跃且非未识别"的就排除；管理员/白名单永远排除
-                if role in (Role.ADMIN.value, Role.WHITE_LIST.value):
-                    excluded_ids.add(tg_int)
-                elif bool(active) and role != Role.UNRECOGNIZED.value:
-                    excluded_ids.add(tg_int)
+        # 手动参数：dry_run / max_per_run
+        params = getattr(ctx, 'params', {}) or {}
+        dry_run = bool(params.get('dry_run', False))
+        try:
+            max_per_run = int(params.get('max_per_run', 200))
+        except (TypeError, ValueError):
+            max_per_run = 200
+        max_per_run = max(1, min(max_per_run, 500))
 
-            # telegram_bind_codes 里 confirmed 的 TG ID（这些可能从未完成绑定）
-            bind_rows = (await session.execute(
-                _select(TelegramBindCodeModel.CONFIRMED_TELEGRAM_ID)
-                .where(TelegramBindCodeModel.CONFIRMED_TELEGRAM_ID.isnot(None))
-            )).all()
-            for (tg_id,) in bind_rows:
-                if tg_id is None:
-                    continue
-                try:
-                    candidate_ids.add(int(tg_id))
-                except (TypeError, ValueError):
-                    continue
+        ctx.log("📋 构建踢人计划（按花名册反查系统账号）...")
+        plan = await TelegramMembershipService.build_unbound_kick_plan(chat_id)
+        reasons: dict[int, str] = plan['reasons']  # type: ignore[assignment]
+        targets: list[int] = plan['targets']  # type: ignore[assignment]
+        excluded_ids: set[int] = plan['excluded_ids']  # type: ignore[assignment]
 
-        # 花名册：Bot 被动观察到的群成员
-        roster_rows = await TelegramRosterOperate.list_active_telegram_ids(chat_id)
-        roster_added = 0
-        for tg_int, is_bot in roster_rows:
-            if is_bot:
-                # 花名册里的 bot 一律不动；顺手放进排除集，避免被其它路径吸进来
-                excluded_ids.add(tg_int)
-                continue
-            if tg_int not in candidate_ids:
-                roster_added += 1
-            candidate_ids.add(tg_int)
-        ctx.summary['roster_size'] = len(roster_rows)
-        ctx.summary['roster_added'] = roster_added
+        reason_counts = {'no_account': 0, 'no_emby': 0, 'disabled': 0}
+        for r in reasons.values():
+            reason_counts[r] = reason_counts.get(r, 0) + 1
 
-        # 配置中静态指定的管理员 TG ID（TelegramConfig.ADMIN_ID）也排除
-        raw_admin = TelegramConfig.ADMIN_ID
-        admin_seq = raw_admin if isinstance(raw_admin, (list, tuple)) else [raw_admin]
-        for raw in admin_seq:
-            try:
-                excluded_ids.add(int(raw))
-            except (TypeError, ValueError):
-                continue
-
-        # 群管理员 / 群主：通过 Bot API 实时获取
-        admin_ids = await TelegramMembershipService.fetch_group_admin_ids(chat_id)
-        excluded_ids.update(admin_ids)
-        ctx.summary['admins_excluded'] = len(admin_ids)
-        ctx.summary['candidates_total'] = len(candidate_ids)
+        ctx.summary['roster_size'] = plan['roster_size']
+        ctx.summary['bots_in_roster'] = plan['bots_in_roster']
+        ctx.summary['preserved_bound'] = plan['preserved_bound']
+        ctx.summary['admins_excluded'] = len(plan['group_admin_ids'])  # type: ignore[arg-type]
         ctx.summary['excluded_total'] = len(excluded_ids)
-        ctx.summary['bound_users'] = len(bound_ids)
-
-        targets = [tid for tid in candidate_ids if tid not in excluded_ids]
         ctx.summary['targets'] = len(targets)
+        ctx.summary['reason_no_account'] = reason_counts['no_account']
+        ctx.summary['reason_no_emby'] = reason_counts['no_emby']
+        ctx.summary['reason_disabled'] = reason_counts['disabled']
+        ctx.summary['dry_run'] = dry_run
+
         if not targets:
-            ctx.log("✅ 没有可处理的候选 TG ID（全部被系统已知活跃用户/管理员吸收）")
+            ctx.log("✅ 没有可处理的候选 TG ID（roster 中的成员全部已绑 Emby/管理员）")
             return
 
         ctx.log(
-            f"🛠️ 待清理 {len(targets)} 个 TG ID "
-            f"(花名册新增 {roster_added}，已排除管理员/活跃用户/Bot)"
+            f"🛠️ 待清理 {len(targets)} 个 TG ID — "
+            f"无账号 {reason_counts['no_account']} · 无 Emby {reason_counts['no_emby']} · "
+            f"已禁用 {reason_counts['disabled']}（max_per_run={max_per_run}）"
         )
+
+        if dry_run:
+            ctx.log("ℹ️ dry_run=true，跳过实际踢人")
+            ctx.summary['kicked'] = 0
+            ctx.summary['skipped'] = 0
+            ctx.summary['failed'] = 0
+            ctx.summary['not_in_group'] = 0
+            ctx.summary['scanned'] = 0
+            return
+
         result = await TelegramMembershipService.kick_unknown_members(
             chat_id,
             list(targets),
             excluded_ids=set(excluded_ids),
-            max_per_run=200,
+            max_per_run=max_per_run,
         )
 
         for key in ('scanned', 'kicked', 'skipped', 'failed', 'not_in_group'):
@@ -864,17 +854,67 @@ class SchedulerService:
 
     @staticmethod
     async def cleanup_no_emby_users(ctx: RunContext):
-        """清理注册后长期未创建 Emby 账户的用户"""
-        if not RegisterConfig.AUTO_CLEANUP_NO_EMBY:
+        """清理注册后长期未创建 Emby 账户的用户。
+
+        触发参数（仅手动触发时识别）：
+        - ``days``：覆盖 ``AUTO_CLEANUP_NO_EMBY_DAYS``，最少 1，最多 3650。
+        - ``preserve_tg_bound``：True 时跳过已绑 TG 但还没补建 Emby 的"半完成"账号
+          （默认沿用 ``EMBY_DIRECT_REGISTER_ENABLED``：开启时认为他们随时可自助补建，
+          先保留；关闭时按老规矩一并清理）。
+        - ``ignore_enabled_flag``：True 时即便 ``AUTO_CLEANUP_NO_EMBY=False`` 也允许
+          手动跑一次（避免管理员临时清扫还得改 config）。
+        """
+        from src.services.emby_register_queue import EmbyRegisterQueueService
+
+        params = getattr(ctx, 'params', {}) or {}
+        manual_days = params.get('days')
+        ignore_enabled_flag = bool(params.get('ignore_enabled_flag', False))
+        preserve_tg_bound_param = params.get('preserve_tg_bound')
+
+        # AUTO_CLEANUP_NO_EMBY 是给定时调度看的；手动触发时管理员可显式 override
+        if not RegisterConfig.AUTO_CLEANUP_NO_EMBY and not (
+            ctx.trigger == 'manual' and ignore_enabled_flag
+        ):
             ctx.summary['enabled'] = False
-            ctx.log("ℹ️ AUTO_CLEANUP_NO_EMBY 未启用，跳过")
+            ctx.log("ℹ️ AUTO_CLEANUP_NO_EMBY 未启用，跳过（手动触发可传 ignore_enabled_flag=true 强制执行）")
             return
+
+        # 解析 days：手动 > 配置
         days = RegisterConfig.AUTO_CLEANUP_NO_EMBY_DAYS
+        if manual_days is not None:
+            try:
+                days = int(manual_days)
+            except (TypeError, ValueError):
+                ctx.log(f"⚠️ 忽略非法 days 参数: {manual_days!r}，回退到配置默认 {days}")
+                days = RegisterConfig.AUTO_CLEANUP_NO_EMBY_DAYS
+        days = max(1, min(3650, int(days)))
+
+        if preserve_tg_bound_param is None:
+            preserve_tg_bound = bool(RegisterConfig.EMBY_DIRECT_REGISTER_ENABLED)
+        else:
+            preserve_tg_bound = bool(preserve_tg_bound_param)
+
+        # 把队列里还在补建 Emby 的 UID 摘出来，避免临界窗口误删
+        try:
+            pending_uids = EmbyRegisterQueueService.pending_uids()
+        except Exception as exc:  # pragma: no cover - 队列没启动也不应阻塞清理
+            ctx.log(f"⚠️ 读取 Emby 注册队列状态失败，按「无在飞」处理: {exc}")
+            pending_uids = set()
+
         ctx.summary['enabled'] = True
         ctx.summary['days_threshold'] = days
-        ctx.log(f"🧹 开始清理注册超过 {days} 天无 Emby 账户的用户...")
+        ctx.summary['preserve_tg_bound'] = preserve_tg_bound
+        ctx.summary['pending_register_excluded'] = len(pending_uids)
+        ctx.log(
+            f"🧹 开始清理注册超过 {days} 天无 Emby 账户的用户"
+            f"（保留TG绑定: {preserve_tg_bound}, 在飞注册排除: {len(pending_uids)}）..."
+        )
         try:
-            users = await UserOperate.get_no_emby_users(days)
+            users = await UserOperate.get_no_emby_users(
+                days,
+                exclude_uids=pending_uids or None,
+                preserve_tg_bound=preserve_tg_bound,
+            )
             ctx.summary['scanned'] = len(users)
             ctx.summary['deleted'] = 0
             ctx.summary['failed'] = 0
