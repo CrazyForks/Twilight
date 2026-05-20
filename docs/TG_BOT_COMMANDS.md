@@ -147,10 +147,13 @@
 | ------ | ---- |
 | `Telegram.bot_help_text` | 完整覆盖 `/help` 和 `/twihelp` |
 | `Telegram.bot_admin_help_text` | 完整覆盖 `/twishelp` |
+| `Telegram.bot_start_text` | 完整覆盖私聊 `/start` 文本 |
+| `Telegram.bot_group_start_text` | 完整覆盖群组 `/start` 提示文本 |
+| `Telegram.bot_bind_prompt_text` | 完整覆盖 `/bind` 无参数时的绑定码输入提示 |
 | `Telegram.bot_help_header` | 旧配置：只在默认普通帮助顶部追加 |
 | `Telegram.bot_help_footer` | 旧配置：只在默认普通帮助底部追加 |
 
-支持 `{server_name}` 占位符。文本按 Telegram Markdown 发送，特殊字符需要按 Markdown 规则转义。
+支持 `{server_name}`、`{user_name}`、`{bot_username}` 占位符。文本按 Telegram Markdown 发送，特殊字符需要按 Markdown 规则转义。
 
 ## 安全注意事项
 

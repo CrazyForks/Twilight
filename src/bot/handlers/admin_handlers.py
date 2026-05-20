@@ -89,6 +89,11 @@ def _is_anonymous_group_command(update: Update) -> bool:
     return bool(message and message.sender_chat and (not update.effective_user or not is_admin(update.effective_user.id)))
 
 
+def _md_code(value: object) -> str:
+    """Sanitize text used inside Markdown inline-code spans."""
+    return str(value or "").replace("`", "'")
+
+
 def _render_custom_text(template: str) -> str:
     if not template:
         return ""

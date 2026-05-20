@@ -1021,6 +1021,20 @@ async def get_config_schema():
                         "value": TelegramConfig.PROXY_URL,
                     },
                     {
+                        "key": "bot_start_text",
+                        "label": "/start 完整文本",
+                        "type": "textarea",
+                        "description": "完整覆盖私聊 /start 文本（Markdown），留空使用内置默认；支持 {server_name}/{user_name}/{bot_username}",
+                        "value": TelegramConfig.BOT_START_TEXT,
+                    },
+                    {
+                        "key": "bot_group_start_text",
+                        "label": "群组 /start 文本",
+                        "type": "textarea",
+                        "description": "群组内发送 /start 时的提示文本，留空使用默认；支持 {server_name}/{bot_username}",
+                        "value": TelegramConfig.BOT_GROUP_START_TEXT,
+                    },
+                    {
                         "key": "bot_start_title",
                         "label": "/start 标题",
                         "type": "string",
@@ -1033,6 +1047,13 @@ async def get_config_schema():
                         "type": "string",
                         "description": "自定义 /start 简介段落，留空使用默认",
                         "value": TelegramConfig.BOT_START_INTRO,
+                    },
+                    {
+                        "key": "bot_bind_prompt_text",
+                        "label": "/bind 引导文本",
+                        "type": "textarea",
+                        "description": "用户发送 /bind 但未带绑定码时的完整提示文本，留空使用默认；支持 {server_name}/{user_name}/{bot_username}",
+                        "value": TelegramConfig.BOT_BIND_PROMPT_TEXT,
                     },
                     {
                         "key": "bot_help_text",

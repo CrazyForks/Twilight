@@ -93,9 +93,12 @@ proxy_url = ""
 bind_confirm_api_url = ""
 # —— Bot 文案自定义（留空使用内置默认）
 #   • 所有文本按 Markdown 渲染，自行转义 _ * [ 等特殊字符
-#   • 可用占位符: {server_name}
+#   • 可用占位符: {server_name}, {user_name}, {bot_username}
+bot_start_text = ""     # /start 私聊完整文本；留空使用内置默认
+bot_group_start_text = "" # 群组 /start 提示文本；留空使用内置默认
 bot_start_title = ""    # /start 第一行标题
 bot_start_intro = ""    # /start 简介段
+bot_bind_prompt_text = "" # /bind 无参数时的绑定码输入提示
 bot_help_text = ""      # /twihelp 完整文本；留空使用内置默认
 bot_admin_help_text = "" # /twishelp 完整文本；留空使用内置默认
 bot_help_header = ""    # 旧配置：内置 /twihelp 命令列表前段

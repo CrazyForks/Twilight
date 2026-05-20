@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 BIND_STATE_KEY = "bind_wait_code"
 
 
-def _render_custom_text(template: str) -> str:
+def _render_custom_text(template: str, **values) -> str:
     """把 ``{server_name}`` 之类的占位符替换成真实值。
 
     单一占位符当前只有 ``server_name``；以后要加占位符在这里扩展。
@@ -48,8 +48,12 @@ def _render_custom_text(template: str) -> str:
     """
     if not template:
         return ""
+    payload = {
+        "server_name": Config.SERVER_NAME or "Twilight",
+        **values,
+    }
     try:
-        return template.format(server_name=Config.SERVER_NAME or "Twilight")
+        return template.format(**payload)
     except (KeyError, IndexError, ValueError):
         # 模板里出现未支持的占位符时不要崩，直接原样返回
         return template
@@ -115,7 +119,8 @@ def register(bot):
 
             bot_username = context.bot.username or ""
             kb = InlineKeyboardMarkup([[InlineKeyboardButton("📨 前往私聊", url=f"https://t.me/{bot_username}")]])
-            reply = await update.message.reply_text("🌙 请在私聊中使用 Bot", reply_markup=kb)
+            group_text = _render_custom_text(TelegramConfig.BOT_GROUP_START_TEXT or "", bot_username=bot_username)
+            reply = await update.message.reply_text(group_text or "🌙 请在私聊中使用 Bot", reply_markup=kb)
             asyncio.create_task(safe_delete_message(update.message, GROUP_MSG_DELETE_DELAY))
             asyncio.create_task(safe_delete_message(reply, GROUP_MSG_DELETE_DELAY))
             return
@@ -140,10 +145,21 @@ def register(bot):
 
         custom_title = _render_custom_text(TelegramConfig.BOT_START_TITLE or "")
         custom_intro = _render_custom_text(TelegramConfig.BOT_START_INTRO or "")
+        custom_start = _render_custom_text(
+            TelegramConfig.BOT_START_TEXT or "",
+            user_name=escape_markdown(user_name),
+            bot_username=context.bot.username or "",
+        )
         title_line = custom_title or f"🌙 **{server_name} 控制中心**"
         intro_line = custom_intro or "欢迎使用 Emby 管理机器人"
 
-        if panel_on:
+        if custom_start:
+            await update.message.reply_text(
+                custom_start,
+                reply_markup=main_menu_keyboard(user_id) if panel_on else None,
+                parse_mode="Markdown",
+            )
+        elif panel_on:
             text = (
                 f"{title_line}\n\n"
                 f"你好，**{escape_markdown(user_name)}**！\n"
@@ -182,6 +198,15 @@ def register(bot):
         user_id = update.effective_user.id if update.effective_user else 0
         user_name = update.effective_user.first_name if update.effective_user else "用户"
         server_name = Config.SERVER_NAME or "Twilight"
+
+        custom_start = _render_custom_text(
+            TelegramConfig.BOT_START_TEXT or "",
+            user_name=escape_markdown(user_name),
+            bot_username=context.bot.username or "",
+        )
+        if custom_start:
+            await safe_edit_message(query.message, custom_start, reply_markup=main_menu_keyboard(user_id))
+            return
 
         custom_title = _render_custom_text(TelegramConfig.BOT_START_TITLE or "")
         title_line = custom_title or f"🌙 **{server_name}**"
@@ -526,8 +551,13 @@ def register(bot):
 
         if not context.args or len(context.args) < 1:
             context.user_data[BIND_STATE_KEY] = True
+            prompt = _render_custom_text(
+                TelegramConfig.BOT_BIND_PROMPT_TEXT or "",
+                user_name=escape_markdown(update.effective_user.first_name or "用户"),
+                bot_username=context.bot.username or "",
+            )
             await update.message.reply_text(
-                "📨 请输入 8 位绑定码以完成绑定\n\n" "💡 获取方式: 网页端个人中心/注册页\n" "💡 取消流程: /cancel",
+                prompt or "📨 请输入 8 位绑定码以完成绑定\n\n" "💡 获取方式: 网页端个人中心/注册页\n" "💡 取消流程: /cancel",
                 parse_mode="Markdown",
             )
             return

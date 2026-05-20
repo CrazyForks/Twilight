@@ -431,9 +431,12 @@ class TelegramConfig(BaseConfig):
     # 巡检任务会跳过"重新入群识别"分支（永封后该分支永远不会命中）。
     BAN_ON_LEAVE: bool = False
     # —— Bot 文案自定义（留空使用内置默认）。所有字符串都按 Markdown 渲染，
-    # 注意自行转义 _ * [ 等特殊字符；其中可以用 {server_name} 占位符。
+    # 注意自行转义 _ * [ 等特殊字符；其中可以用 {server_name}/{user_name}/{bot_username} 占位符。
+    BOT_START_TEXT: str = ""  # /start 完整文本，留空使用内置默认
+    BOT_GROUP_START_TEXT: str = ""  # 群组内 /start 提示文本，留空使用内置默认
     BOT_START_TITLE: str = ""  # /start 标题行，例如 "🌙 {server_name} 控制中心"
     BOT_START_INTRO: str = ""  # /start 简介段，例如 "欢迎使用 Emby 管理机器人"
+    BOT_BIND_PROMPT_TEXT: str = ""  # /bind 无参数时的绑定码输入提示，留空使用内置默认
     BOT_HELP_TEXT: str = ""  # /twihelp 完整文本，留空使用内置默认
     BOT_ADMIN_HELP_TEXT: str = ""  # /twishelp 完整文本，留空使用内置默认
     BOT_HELP_HEADER: str = ""  # /help 顶部段（旧配置，命令列表前），可用于公告
