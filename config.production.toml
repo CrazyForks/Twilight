@@ -149,6 +149,7 @@ white_list_usernames = ""
 # —— 邀请树（已绑定 Emby 的用户可向下邀请；A 邀 B 邀 C 计 3 层）
 invite_enabled = false
 invite_limit = 10
+invite_root_user_limit = -1
 invite_max_depth = 3
 invite_require_emby = true
 invite_code_default_days = 30

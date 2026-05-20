@@ -484,7 +484,8 @@ class RegisterConfig(BaseConfig):
 
     # 邀请系统（树状邀请：用户 B 生成 Emby 注册码，A 使用后成为 B 的下级）
     INVITE_ENABLED: bool = False  # 是否启用邀请系统（关闭时所有邀请相关 API 直接返回禁用）
-    INVITE_LIMIT: int = 10  # 每人最多邀请数量 (-1 = 无限制)
+    INVITE_LIMIT: int = 10  # 每人最多同时存在的未使用邀请码数量 (-1 = 无限制)
+    INVITE_ROOT_USER_LIMIT: int = -1  # 每棵邀请树最多可成功邀请的用户数，不含树根 (-1 = 无限制)
     INVITE_MAX_DEPTH: int = 3  # 邀请树最大层级，B->A->C 计为 3 层。1 表示禁止任何邀请
     INVITE_REQUIRE_EMBY: bool = True  # 是否要求邀请人已绑定 Emby 账号才能生码
     INVITE_CODE_DEFAULT_DAYS: int = 30  # 被邀请人 Emby 账号的默认开通天数

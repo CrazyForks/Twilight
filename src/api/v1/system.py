@@ -1260,6 +1260,13 @@ async def get_config_schema():
                         "value": RegisterConfig.INVITE_LIMIT,
                     },
                     {
+                        "key": "invite_root_user_limit",
+                        "label": "树根邀请用户上限",
+                        "type": "int",
+                        "description": "每棵邀请树最多可成功邀请多少用户，不含树根本人，-1 = 无限制",
+                        "value": RegisterConfig.INVITE_ROOT_USER_LIMIT,
+                    },
+                    {
                         "key": "invite_require_emby",
                         "label": "邀请需绑定 Emby",
                         "type": "bool",

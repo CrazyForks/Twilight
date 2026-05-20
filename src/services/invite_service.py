@@ -23,9 +23,11 @@ from collections import deque
 from typing import Optional
 
 from src.config import RegisterConfig
+from src.core.registration_lock import acquire_lock, release_lock
 from src.db.invite import (
     InviteCodeOperate,
     InviteRelationOperate,
+    InviteCodeModel,
 )
 from src.db.user import UserOperate, UserModel
 
@@ -43,6 +45,13 @@ class InviteService:
             return max(1, int(RegisterConfig.INVITE_MAX_DEPTH or 1))
         except (TypeError, ValueError):
             return 3
+
+    @staticmethod
+    def root_user_limit() -> int:
+        try:
+            return int(RegisterConfig.INVITE_ROOT_USER_LIMIT)
+        except (TypeError, ValueError):
+            return -1
 
     # -------------------- 树结构计算 --------------------
     @staticmethod
@@ -88,6 +97,62 @@ class InviteService:
                 visited.add(child)
                 queue.append((child, depth + 1))
         return max_depth
+
+    @staticmethod
+    def _get_root_uid_from_parent_map(uid: int, parent_of: dict[int, int]) -> int:
+        """从 parent 映射向上找到树根；异常环路时返回已遍历到的节点。"""
+        cur = uid
+        visited = {cur}
+        while cur in parent_of:
+            parent = parent_of[cur]
+            if parent in visited:
+                break
+            visited.add(parent)
+            cur = parent
+        return cur
+
+    @staticmethod
+    async def get_root_uid(uid: int) -> int:
+        _, parent_of = await InviteService._build_adjacency()
+        return InviteService._get_root_uid_from_parent_map(uid, parent_of)
+
+    @staticmethod
+    def _count_subtree_descendants(root_uid: int, children_map: dict[int, list[int]]) -> int:
+        """统计 root_uid 下所有后代数量，不包含 root 本人。"""
+        count = 0
+        queue: deque[int] = deque(children_map.get(root_uid, []))
+        visited: set[int] = {root_uid}
+        while queue:
+            node = queue.popleft()
+            if node in visited:
+                continue
+            visited.add(node)
+            count += 1
+            queue.extend(children_map.get(node, []))
+        return count
+
+    @staticmethod
+    async def get_root_invited_count(uid: int) -> tuple[int, int, int]:
+        """返回 (root_uid, 已成功邀请用户数, 配置上限)。"""
+        children_map, parent_of = await InviteService._build_adjacency()
+        root_uid = InviteService._get_root_uid_from_parent_map(uid, parent_of)
+        return (
+            root_uid,
+            InviteService._count_subtree_descendants(root_uid, children_map),
+            InviteService.root_user_limit(),
+        )
+
+    @staticmethod
+    async def ensure_root_capacity_for_inviter(inviter_uid: int) -> tuple[bool, str]:
+        limit = InviteService.root_user_limit()
+        if limit == -1:
+            return True, ""
+        if limit < 0:
+            return True, ""
+        root_uid, invited_count, _ = await InviteService.get_root_invited_count(inviter_uid)
+        if invited_count >= limit:
+            return False, f"该邀请树已达到最多可邀请用户数 ({limit})，树根 UID={root_uid}"
+        return True, ""
 
     @staticmethod
     async def collect_subtree_uids(
@@ -138,7 +203,63 @@ class InviteService:
             active = await InviteCodeOperate.count_active_by_inviter(inviter.UID)
             if active >= int(limit):
                 return False, f"未使用的邀请码已达上限 ({limit})，请先撤销旧的"
+        ok, msg = await InviteService.ensure_root_capacity_for_inviter(inviter.UID)
+        if not ok:
+            return False, msg
         return True, ""
+
+    @staticmethod
+    async def ensure_existing_code_can_be_used(inviter: UserModel) -> tuple[bool, str]:
+        """校验已生成的邀请码当前是否还允许被使用，不检查未使用邀请码数量。"""
+        if not InviteService.is_enabled():
+            return False, "邀请系统未启用"
+        if not inviter or not getattr(inviter, "UID", None):
+            return False, "无效的邀请人"
+        if not inviter.ACTIVE_STATUS:
+            return False, "邀请人账户已被禁用"
+        if RegisterConfig.INVITE_REQUIRE_EMBY and not inviter.EMBYID:
+            return False, "邀请人未绑定 Emby 账号"
+
+        max_depth = InviteService.max_depth()
+        ancestor_depth = await InviteService.get_ancestor_depth(inviter.UID)
+        if ancestor_depth >= max_depth:
+            return False, f"已达到最大邀请层级 ({max_depth})，不能再向下邀请"
+        return await InviteService.ensure_root_capacity_for_inviter(inviter.UID)
+
+    @staticmethod
+    async def validate_code_for_use(invitee_uid: int, code: str) -> tuple[bool, str, Optional[InviteCodeModel]]:
+        """在创建 Emby 账号前验证邀请码和邀请树容量，避免外部账号已创建后才失败。"""
+        if not InviteService.is_enabled():
+            return False, "邀请系统未启用", None
+        code_info = await InviteCodeOperate.get_code(code)
+        if not code_info or not code_info.ACTIVE:
+            return False, "邀请码无效或已停用", None
+        if code_info.USE_COUNT_LIMIT != -1 and code_info.USE_COUNT >= code_info.USE_COUNT_LIMIT:
+            return False, "邀请码已被使用", None
+        from src.core.utils import timestamp
+
+        if code_info.EXPIRES_AT != -1 and timestamp() > code_info.EXPIRES_AT:
+            return False, "邀请码已过期", None
+        inviter_uid = code_info.INVITER_UID
+        if inviter_uid == invitee_uid:
+            return False, "不能使用自己生成的邀请码", None
+        if await InviteRelationOperate.get_parent_uid(invitee_uid) is not None:
+            return False, "当前账号已存在邀请关系，不能重复使用邀请码", None
+
+        inviter = await UserOperate.get_user_by_uid(inviter_uid)
+        if not inviter:
+            return False, "邀请人不存在", None
+        can_use, reason = await InviteService.ensure_existing_code_can_be_used(inviter)
+        if not can_use:
+            return False, reason or "邀请人当前不可继续邀请", None
+
+        ancestor_depth = await InviteService.get_ancestor_depth(inviter_uid)
+        if ancestor_depth + 1 > InviteService.max_depth():
+            return False, "该邀请会超过最大层级限制", None
+        ok, msg = await InviteService.ensure_root_capacity_for_inviter(inviter_uid)
+        if not ok:
+            return False, msg, None
+        return True, "", code_info
 
     # -------------------- 用法 --------------------
     @staticmethod
@@ -147,28 +268,33 @@ class InviteService:
 
         返回 (ok, msg, inviter_uid)。
         """
-        if not InviteService.is_enabled():
-            return False, "邀请系统未启用", None
-        code_info = await InviteCodeOperate.get_code(code)
-        if not code_info or not code_info.ACTIVE:
-            return False, "邀请码无效或已停用", None
+        pre_ok, pre_msg, code_info = await InviteService.validate_code_for_use(invitee_uid, code)
+        if not pre_ok or not code_info:
+            return False, pre_msg, None
+
         inviter_uid = code_info.INVITER_UID
-        if inviter_uid == invitee_uid:
-            return False, "不能使用自己生成的邀请码", None
-        # 已有上级则保留旧关系；这里只判断是否能再下挂一层
-        ancestor_depth = await InviteService.get_ancestor_depth(inviter_uid)
-        if ancestor_depth + 1 > InviteService.max_depth():
-            return False, "该邀请会超过最大层级限制", None
+        root_uid = await InviteService.get_root_uid(inviter_uid)
+        lock_key = f"tw:invite:root:{root_uid}"
+        lock_token = await acquire_lock(lock_key, timeout=5.0, ttl=30)
+        if lock_token is None:
+            return False, "邀请系统繁忙，请稍后重试", None
+        try:
+            ok, msg, code_info = await InviteService.validate_code_for_use(invitee_uid, code)
+            if not ok or not code_info:
+                return False, msg, None
+            inviter_uid = code_info.INVITER_UID
 
-        ok = await InviteCodeOperate.consume(code, invitee_uid)
-        if not ok:
-            return False, "邀请码已被使用或已过期", None
+            consumed = await InviteCodeOperate.consume(code, invitee_uid)
+            if not consumed:
+                return False, "邀请码已被使用或已过期", None
 
-        await InviteRelationOperate.add_relation(
-            parent_uid=inviter_uid,
-            child_uid=invitee_uid,
-            code=code,
-        )
+            await InviteRelationOperate.add_relation(
+                parent_uid=inviter_uid,
+                child_uid=invitee_uid,
+                code=code,
+            )
+        finally:
+            await release_lock(lock_key, lock_token)
         logger.info(f"邀请关系建立: inviter={inviter_uid} child={invitee_uid} code={code}")
         return True, "邀请关系已建立", inviter_uid
 
@@ -283,6 +409,7 @@ class InviteService:
                 "enabled": InviteService.is_enabled(),
                 "max_depth": InviteService.max_depth(),
                 "invite_limit": RegisterConfig.INVITE_LIMIT,
+                "invite_root_user_limit": InviteService.root_user_limit(),
                 "require_emby": bool(RegisterConfig.INVITE_REQUIRE_EMBY),
             },
         }

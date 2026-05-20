@@ -66,6 +66,7 @@ async def get_invite_config():
             "enabled": InviteService.is_enabled(),
             "max_depth": InviteService.max_depth(),
             "invite_limit": RegisterConfig.INVITE_LIMIT,
+            "invite_root_user_limit": InviteService.root_user_limit(),
             "require_emby": bool(RegisterConfig.INVITE_REQUIRE_EMBY),
             "default_days": int(RegisterConfig.INVITE_CODE_DEFAULT_DAYS or 30),
         },
@@ -84,6 +85,7 @@ async def get_my_invite_status():
     parent_uid = await InviteRelationOperate.get_parent_uid(user.UID)
     children = await InviteRelationOperate.get_children(user.UID)
     can_invite, reason = await InviteService.ensure_can_invite(user)
+    root_uid, root_invited_count, root_user_limit = await InviteService.get_root_invited_count(user.UID)
 
     parent_info = None
     if parent_uid:
@@ -117,6 +119,9 @@ async def get_my_invite_status():
             "children": children_info,
             "depth": ancestor_depth,
             "max_depth": InviteService.max_depth(),
+            "root_uid": root_uid,
+            "root_invited_count": root_invited_count,
+            "invite_root_user_limit": root_user_limit,
             "can_invite": can_invite,
             "invite_block_reason": "" if can_invite else reason,
         },
@@ -228,10 +233,9 @@ async def check_invite_code():
     info = await InviteCodeOperate.get_code(code)
     if not info or not info.ACTIVE:
         return api_response(False, "邀请码无效或已停用", code=404)
-    if info.USE_COUNT_LIMIT != -1 and info.USE_COUNT >= info.USE_COUNT_LIMIT:
-        return api_response(False, "邀请码已被使用", code=400)
-    if info.EXPIRES_AT != -1 and timestamp() > info.EXPIRES_AT:
-        return api_response(False, "邀请码已过期", code=400)
+    ok, msg, _ = await InviteService.validate_code_for_use(-1, code)
+    if not ok:
+        return api_response(False, msg, code=400)
     inviter = await UserOperate.get_user_by_uid(info.INVITER_UID)
     return api_response(
         True,
@@ -271,20 +275,9 @@ async def use_invite_code():
     if not pwd_ok:
         return api_response(False, pwd_msg, code=400)
 
-    info = await InviteCodeOperate.get_code(code)
-    if not info or not info.ACTIVE:
-        return api_response(False, "邀请码无效或已停用", code=404)
-    if info.USE_COUNT_LIMIT != -1 and info.USE_COUNT >= info.USE_COUNT_LIMIT:
-        return api_response(False, "邀请码已被使用", code=400)
-    if info.EXPIRES_AT != -1 and timestamp() > info.EXPIRES_AT:
-        return api_response(False, "邀请码已过期", code=400)
-    if info.INVITER_UID == user.UID:
-        return api_response(False, "不能使用自己生成的邀请码", code=400)
-
-    # 层级校验
-    inviter_depth = await InviteService.get_ancestor_depth(info.INVITER_UID)
-    if inviter_depth + 1 > InviteService.max_depth():
-        return api_response(False, "该邀请会超过最大层级限制", code=400)
+    valid, msg, info = await InviteService.validate_code_for_use(user.UID, code)
+    if not valid or not info:
+        return api_response(False, msg, code=400)
 
     cap_ok, cap_msg = await UserService.check_emby_user_capacity()
     if not cap_ok:
@@ -306,6 +299,15 @@ async def use_invite_code():
     if days is None:
         days = int(RegisterConfig.INVITE_CODE_DEFAULT_DAYS or 30)
     expire_at = -1 if days <= 0 else timestamp() + days_to_seconds(days)
+
+    ok, msg, inviter_uid = await InviteService.apply_invite(user.UID, code)
+    if not ok:
+        logger.warning(f"邀请关系建立失败: {msg}")
+        try:
+            await emby.delete_user(emby_user.id)
+        except Exception as exc:  # pragma: no cover
+            logger.error(f"邀请失败后回滚 Emby 账号失败: {exc}")
+        return api_response(False, msg, code=400)
 
     user.EMBYID = emby_user.id
     user.ACTIVE_STATUS = True
@@ -339,11 +341,6 @@ async def use_invite_code():
         await UserOperate.update_user(user)
     except Exception:  # pragma: no cover
         pass
-
-    ok, msg, inviter_uid = await InviteService.apply_invite(user.UID, code)
-    if not ok:
-        logger.warning(f"邀请关系建立失败: {msg}")
-        # Emby 已建好，仅记录邀请关系失败，不回滚
 
     return api_response(
         True,
