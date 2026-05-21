@@ -807,7 +807,7 @@ async def handle_request_item_by_key(require_key: str):
         success = await BangumiRequireOperate.delete_require_by_key(require_key)
         if success:
             return api_response(True, "请求已删除")
-        return api_response(False, "删除失败")
+        return api_response(False, "删除失败", code=500)
 
     media_info = None
     if req.other_info:
@@ -867,7 +867,7 @@ async def handle_request_item(request_id: int):
 
         if success:
             return api_response(True, "请求已删除")
-        return api_response(False, "删除失败")
+        return api_response(False, "删除失败", code=500)
 
     # GET 请求：返回详情
     # 这里可以复用 get_user_requests 的逻辑，但针对单条

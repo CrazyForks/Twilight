@@ -7,22 +7,37 @@
 import ipaddress
 from flask import request
 
-# 可信代理网段：仅当 remote_addr 属于这些网段时才信任 X-Forwarded-For / X-Real-IP
-_TRUSTED_PROXIES = {
-    ipaddress.ip_network("127.0.0.0/8"),
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-    ipaddress.ip_network("::1/128"),
-    ipaddress.ip_network("fc00::/7"),
-}
+from src.config import APIConfig
+
+_DEFAULT_TRUSTED_PROXIES = ("127.0.0.0/8", "::1/128")
+
+
+def _trusted_proxy_networks() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    """Return configured trusted proxy CIDRs, falling back to loopback only."""
+    raw = getattr(APIConfig, "TRUSTED_PROXIES", None) or list(_DEFAULT_TRUSTED_PROXIES)
+    if isinstance(raw, str):
+        entries = [part.strip() for part in raw.split(",")]
+    else:
+        entries = [str(part).strip() for part in raw]
+
+    networks = []
+    for entry in entries:
+        if not entry:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(entry, strict=False))
+        except ValueError:
+            continue
+    if not networks:
+        return tuple(ipaddress.ip_network(item) for item in _DEFAULT_TRUSTED_PROXIES)
+    return tuple(networks)
 
 
 def _is_trusted_proxy(ip_str: str) -> bool:
     """判断 IP 是否属于可信代理网段。"""
     try:
         addr = ipaddress.ip_address(ip_str)
-        return any(addr in net for net in _TRUSTED_PROXIES)
+        return any(addr in net for net in _trusted_proxy_networks())
     except (ValueError, TypeError):
         return False
 

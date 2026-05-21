@@ -669,7 +669,7 @@ async def reset_my_password():
 
     if success:
         return api_response(True, message, {"new_password": new_password})
-    return api_response(False, message)
+    return api_response(False, message, code=500)
 
 
 @users_bp.route("/me/password/change", methods=["POST"])
@@ -1086,7 +1086,7 @@ async def renew_my_account():
                 "expired_at": user_info["expired_at"],
             },
         )
-    return api_response(False, message)
+    return api_response(False, message, code=400)
 
 
 @users_bp.route("/me/use-code", methods=["POST"])

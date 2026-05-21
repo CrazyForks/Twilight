@@ -463,7 +463,9 @@ class RegisterConfig(BaseConfig):
     MEDIA_REQUEST_ENABLED: bool = False  # 是否启用求片功能
     MAX_CONCURRENT_REQUESTS_PER_USER: int = -1  # 每个用户允许同时存在的求片请求上限，-1 表示不限制
     REGCODE_FORMAT: str = "code-{random}"  # 卡码生成格式，支持 {random}/{type}/{days}/{index}
-    REGCODE_RANDOM_ALGORITHM: str = "base32-20"  # 推荐 base32-20；兼容 hex20/base32-16/alnum-16/digits-12/uuid/legacy-sha1
+    REGCODE_RANDOM_ALGORITHM: str = (
+        "base32-20"  # 推荐 base32-20；兼容 hex20/base32-16/alnum-16/digits-12/uuid/legacy-sha1
+    )
     REGCODE_DECOY_ACTION: str = "disable_user"  # none/disable_user/disable_user_and_deactivate_code
 
     # 无码注册（待激活）配置
@@ -500,7 +502,9 @@ class RegisterConfig(BaseConfig):
     INVITE_MAX_DEPTH: int = 3  # 邀请树最大层级，B->A->C 计为 3 层。1 表示禁止任何邀请
     INVITE_REQUIRE_EMBY: bool = True  # 是否要求邀请人已绑定 Emby 账号才能生码
     INVITE_CODE_DEFAULT_DAYS: int = 30  # 被邀请人 Emby 账号的默认开通天数
-    INVITE_CODE_FORMAT: str = "inv-{random}"  # 邀请码格式；生成时会强制 inv- 前缀，支持 {random}/{uid}/{days}/{index}/{timestamp}
+    INVITE_CODE_FORMAT: str = (
+        "inv-{random}"  # 邀请码格式；生成时会强制 inv- 前缀，支持 {random}/{uid}/{days}/{index}/{timestamp}
+    )
 
     # ───────── 签到 / 积分（原 [Signin] 节并入此处）─────────
     # 重命名说明：[Signin].enabled → SAR.signin_enabled，避免与 SAR 节的语义重名；
@@ -543,6 +547,7 @@ class APIConfig(BaseConfig):
     SESSION_COOKIE_SAMESITE: str = "Lax"  # Strict / Lax / None
     SESSION_COOKIE_DOMAIN: str = ""
     SESSION_COOKIE_PATH: str = "/"
+    TRUSTED_PROXIES: List[str] = ["127.0.0.0/8", "::1/128"]
 
 
 def normalize_storage_settings() -> None:

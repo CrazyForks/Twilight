@@ -3,6 +3,7 @@ Emby API
 
 提供 Emby 相关查询操作
 """
+
 import hmac
 import logging
 
@@ -177,7 +178,7 @@ async def get_sessions_count():
             },
         )
     except Exception as e:
-        return api_response(False, f"获取失败: {e}")
+        return api_response(False, f"获取失败: {e}", code=500)
 
 
 # ==================== Bangumi 点格子 Webhook ====================

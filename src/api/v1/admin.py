@@ -577,11 +577,7 @@ async def grant_user_registration_entitlement_and_dequeue(uid: int):
         regcode_queue = await RegcodeUseQueueService.clear_for_uid(uid, queued_only=True)
     finally:
         await UserService.release_emby_capacity_lock(capacity_lock)
-    processing_blocked = [
-        item.get("reason")
-        for item in (emby_queue, regcode_queue)
-        if item.get("reason")
-    ]
+    processing_blocked = [item.get("reason") for item in (emby_queue, regcode_queue) if item.get("reason")]
 
     logger.warning(
         "管理员 %s 授权并移出未处理队列 uid=%s username=%s days=%s emby=%s regcode=%s",
@@ -594,7 +590,11 @@ async def grant_user_registration_entitlement_and_dequeue(uid: int):
     )
     return api_response(
         True,
-        "已授予 Emby 注册资格；已移出未处理队列" if not processing_blocked else "已授予 Emby 注册资格；部分请求已开始处理，未强制移出",
+        (
+            "已授予 Emby 注册资格；已移出未处理队列"
+            if not processing_blocked
+            else "已授予 Emby 注册资格；部分请求已开始处理，未强制移出"
+        ),
         {
             "uid": uid,
             "username": user.USERNAME,
@@ -1275,7 +1275,8 @@ async def cancel_user_permanent_expiry(uid: int):
     )
     return api_response(
         True,
-        f"已取消永久有效期，改为 {days} 天后到期" + ("；白名单角色已降级为普通用户" if previous_role == Role.WHITE_LIST.value else ""),
+        f"已取消永久有效期，改为 {days} 天后到期"
+        + ("；白名单角色已降级为普通用户" if previous_role == Role.WHITE_LIST.value else ""),
         {
             "uid": user.UID,
             "days": days,
@@ -1447,7 +1448,7 @@ async def kick_user(uid: int):
 
     if success:
         return api_response(True, f"已踢出 {kicked} 个会话", {"kicked_count": kicked})
-    return api_response(False, "操作失败")
+    return api_response(False, "操作失败", code=500)
 
 
 @admin_bp.route("/users/<int:uid>/libraries", methods=["GET"])
@@ -1521,7 +1522,11 @@ async def set_user_libraries(uid: int):
     data = request.get_json() or {}
     library_names = EmbyService._normalize_library_names(data.get("library_names", []))
     raw_library_ids = data.get("library_ids", [])
-    library_ids = [str(i or "").strip() for i in raw_library_ids if str(i or "").strip()] if isinstance(raw_library_ids, list) else []
+    library_ids = (
+        [str(i or "").strip() for i in raw_library_ids if str(i or "").strip()]
+        if isinstance(raw_library_ids, list)
+        else []
+    )
     enable_all = parse_bool(data.get("enable_all"), default=False)
     action = str(data.get("action") or "set").strip().lower()
 
@@ -1903,7 +1908,8 @@ async def list_regcodes():
 
     if search:
         codes = [
-            c for c in codes
+            c
+            for c in codes
             if search in c.CODE.lower()
             or search in (RegCodeOperate.get_note(c) or "").lower()
             or search in (c.UID or "").lower()
@@ -1942,7 +1948,11 @@ async def list_regcodes():
                     "use_count_limit": c.USE_COUNT_LIMIT,
                     "days": c.DAYS,
                     "active": c.ACTIVE,
-                    "status": "disabled" if not c.ACTIVE else "expired" if _is_expired(c) else "used_up" if _is_used_up(c) else "available",
+                    "status": (
+                        "disabled"
+                        if not c.ACTIVE
+                        else "expired" if _is_expired(c) else "used_up" if _is_used_up(c) else "available"
+                    ),
                     "note": RegCodeOperate.get_note(c),
                     "created_time": c.CREATED_TIME,
                     "used_by": c.UID,
@@ -2275,7 +2285,7 @@ async def delete_regcode(code: str):
 
     if success:
         return api_response(True, "删除成功")
-    return api_response(False, "注册码不存在或删除失败")
+    return api_response(False, "注册码不存在或删除失败", code=404)
 
 
 @admin_bp.route("/regcodes/<code>", methods=["PUT"])
@@ -4134,7 +4144,11 @@ async def bind_emby_to_user(uid: int):
     occupant = await UserOperate.get_user_by_embyid(emby_user.id)
     # Emby 绑定上限检查：只在"目标账号还没有 EMBYID 且这次会净增一个绑定"时强制
     # （从占用者那里夺取 → 净增 0；目标已经有 EMBYID → 替换；目标无 EMBYID → 净增 1）
-    if not target_user.EMBYID and not getattr(target_user, "PENDING_EMBY", False) and (occupant is None or occupant.UID == target_user.UID):
+    if (
+        not target_user.EMBYID
+        and not getattr(target_user, "PENDING_EMBY", False)
+        and (occupant is None or occupant.UID == target_user.UID)
+    ):
         capacity_lock = await UserService.acquire_emby_capacity_lock()
         if capacity_lock is None:
             return api_response(False, "Emby 名额检查繁忙，请稍后重试", code=409)

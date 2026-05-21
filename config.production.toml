@@ -221,6 +221,9 @@ session_cookie_samesite = "Strict"
 # 留空用请求 Host；跨子域共享会话填顶级域 .example.com
 session_cookie_domain = ""
 session_cookie_path = "/"
+# 可信反向代理 CIDR。只有 remote_addr 命中这里时才信任 X-Real-IP / X-Forwarded-For。
+# 默认仅信任本机反代；多级代理请显式加入反代出口 IP/CIDR，勿填整个私网段。
+trusted_proxies = ["127.0.0.0/8", "::1/128"]
 
 # ───────── 安全 ─────────
 [Security]

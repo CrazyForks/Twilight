@@ -17,6 +17,7 @@ from typing import Callable, Any, List
 from flask import Blueprint, request, g
 
 from src.api.v1.auth import api_response
+from src.core.utils import rate_limit_check
 from src.db.user import UserOperate, UserModel
 from src.services import UserService, EmbyService
 
@@ -82,6 +83,8 @@ def require_apikey(f: Callable) -> Callable:
 
         user = None
         permissions: List[str] = list(ALL_PERMISSIONS)
+        rate_limit_key = None
+        rate_limit_per_minute = 100
         multi_key = await ApiKeyOperate.get_api_key_by_plaintext(apikey)
 
         if multi_key:
@@ -95,6 +98,11 @@ def require_apikey(f: Callable) -> Callable:
                 permissions = [p for p in stored_perms if p in ALL_PERMISSIONS]
             elif not multi_key.ALLOW_QUERY:
                 permissions = []
+            rate_limit_key = f"multi:{multi_key.ID}"
+            try:
+                rate_limit_per_minute = int(multi_key.RATE_LIMIT or 0)
+            except (TypeError, ValueError):
+                rate_limit_per_minute = 100
             await ApiKeyOperate.touch_usage(multi_key.ID)
         else:
             user = await UserOperate.get_user_by_apikey(apikey)
@@ -102,12 +110,23 @@ def require_apikey(f: Callable) -> Callable:
                 if not user.APIKEY_STATUS:
                     return api_response(False, "API Key 已禁用", code=403)
                 permissions = _get_user_permissions(user)
+                rate_limit_key = f"legacy:{user.UID}"
 
         if not user:
             return api_response(False, "API Key 无效或已禁用", code=401)
 
         if not user.ACTIVE_STATUS:
             return api_response(False, "账户已被禁用", code=403)
+
+        if rate_limit_key and rate_limit_per_minute > 0:
+            allowed, retry_after = rate_limit_check(
+                "apikey",
+                rate_limit_key,
+                max_requests=rate_limit_per_minute,
+                window_seconds=60,
+            )
+            if not allowed:
+                return api_response(False, f"API Key 请求过于频繁，请在 {retry_after} 秒后重试", code=429)
 
         g.current_user = user
         g.apikey = apikey

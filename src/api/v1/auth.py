@@ -118,6 +118,7 @@ def api_response(success: bool, message: str, data: Any = None, code: int = 200)
     """
     response = {
         "success": success,
+        "code": code,
         "message": message,
         "data": data,
         "timestamp": timestamp(),
