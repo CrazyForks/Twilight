@@ -71,6 +71,7 @@ async def get_invite_config():
             "invite_root_user_limit": InviteService.root_user_limit(),
             "require_emby": bool(RegisterConfig.INVITE_REQUIRE_EMBY),
             "default_days": int(RegisterConfig.INVITE_CODE_DEFAULT_DAYS or 30),
+            "code_format": RegisterConfig.INVITE_CODE_FORMAT,
             "permanent_invite_max_days": InviteService.DEFAULT_PERMANENT_INVITE_MAX_DAYS,
         },
     )
@@ -87,8 +88,8 @@ async def get_my_invite_status():
     ancestor_depth = await InviteService.get_ancestor_depth(user.UID)
     parent_uid = await InviteRelationOperate.get_parent_uid(user.UID)
     children = await InviteRelationOperate.get_children(user.UID)
+    children_map, _ = await InviteService._build_adjacency()
     can_invite, reason = await InviteService.ensure_can_invite(user)
-    root_uid, root_invited_count, root_user_limit = await InviteService.get_root_invited_count(user.UID)
     max_code_days, max_code_days_reason = InviteService.max_code_days_for_inviter(user)
 
     parent_info = None
@@ -114,9 +115,47 @@ async def get_my_invite_status():
                     "expired_at": child.EXPIRED_AT if child.EMBYID else None,
                     "expire_status": format_expire_time(child.EXPIRED_AT) if child.EMBYID else "未绑定 Emby",
                     "emby_expired": emby_expired,
-                    "can_generate_renew_code": bool(child.EMBYID and emby_expired and child.ROLE != Role.ADMIN.value and max_code_days > 0),
+                    "can_generate_renew_code": bool(
+                        child.EMBYID and emby_expired and child.ROLE != Role.ADMIN.value and max_code_days > 0
+                    ),
                 }
             )
+
+    def serialize_tree_user(model, depth: int) -> dict:
+        emby_expired = UserService.is_emby_access_expired(model)
+        return {
+            "uid": model.UID,
+            "username": model.USERNAME,
+            "active": bool(model.ACTIVE_STATUS),
+            "has_emby": bool(model.EMBYID),
+            "expired_at": model.EXPIRED_AT if model.EMBYID else None,
+            "expire_status": format_expire_time(model.EXPIRED_AT) if model.EMBYID else "未绑定 Emby",
+            "emby_expired": emby_expired,
+            "depth": depth,
+        }
+
+    self_depth = ancestor_depth
+
+    descendant_count = 0
+
+    async def build_descendants(parent_id: int, depth: int, seen: set[int]) -> list[dict]:
+        nonlocal descendant_count
+        result: list[dict] = []
+        for child_id in sorted(children_map.get(parent_id, [])):
+            if child_id in seen:
+                continue
+            child_user = await UserOperate.get_user_by_uid(child_id)
+            if not child_user:
+                continue
+            descendant_count += 1
+            next_seen = set(seen)
+            next_seen.add(child_id)
+            node = serialize_tree_user(child_user, depth)
+            node["children"] = await build_descendants(child_id, depth + 1, next_seen)
+            result.append(node)
+        return result
+
+    descendants = await build_descendants(user.UID, self_depth + 1, {user.UID})
 
     return api_response(
         True,
@@ -126,11 +165,13 @@ async def get_my_invite_status():
             "is_root": parent_uid is None,
             "parent": parent_info,
             "children": children_info,
+            "tree": {
+                "self": serialize_tree_user(user, self_depth),
+                "descendants": descendants,
+                "descendant_count": descendant_count,
+            },
             "depth": ancestor_depth,
             "max_depth": InviteService.max_depth(),
-            "root_uid": root_uid,
-            "root_invited_count": root_invited_count,
-            "invite_root_user_limit": root_user_limit,
             "can_invite": can_invite,
             "invite_block_reason": "" if can_invite else reason,
             "max_code_days": max_code_days,

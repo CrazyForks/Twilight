@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import time
+import secrets
 from typing import Optional, List
 
 from sqlalchemy import (
@@ -27,6 +28,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.asyncio import AsyncAttrs
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from src.config import RegisterConfig
 from src.db.utils import init_async_db
 
 
@@ -152,6 +154,35 @@ class InviteRelationOperate:
 
 class InviteCodeOperate:
     @staticmethod
+    def _generate_code(inviter_uid: int, days: int, index: int = 1, code_format: Optional[str] = None) -> str:
+        """按配置格式生成邀请码，最终始终以 inv- 开头。"""
+        fmt = (code_format if code_format is not None else RegisterConfig.INVITE_CODE_FORMAT) or "inv-{random}"
+        fmt = str(fmt).strip()[:96] or "inv-{random}"
+        if not fmt.lower().startswith("inv-"):
+            fmt = f"inv-{fmt}"
+        if "{random}" not in fmt:
+            fmt = f"{fmt}-{{random}}"
+
+        values = {
+            "random": secrets.token_hex(16),
+            "uid": int(inviter_uid),
+            "days": int(days) if days is not None else 30,
+            "index": index,
+            "timestamp": int(time.time()),
+        }
+        try:
+            code = fmt.format(**values)
+        except (KeyError, IndexError, ValueError):
+            code = "inv-{random}".format(**values)
+        code = "".join(ch for ch in code if ch.isalnum() or ch in "._:-").strip("._:-")
+        if not code.lower().startswith("inv-"):
+            code = f"inv-{code}"
+        if len(code) > 64:
+            prefix = "inv-"
+            code = prefix + code[len(prefix):64]
+        return code or f"inv-{secrets.token_hex(16)}"
+
+    @staticmethod
     async def create_code(
         inviter_uid: int,
         days: int = 30,
@@ -159,10 +190,7 @@ class InviteCodeOperate:
         expires_at: int = -1,
         note: Optional[str] = None,
     ) -> InviteCodeModel:
-        import secrets
-
-        # 16 字节随机；和现有 regcode-* 区分前缀
-        code = f"inv-{secrets.token_hex(16)}"
+        code = InviteCodeOperate._generate_code(inviter_uid, days)
         item = InviteCodeModel(
             CODE=code,
             INVITER_UID=int(inviter_uid),
@@ -176,6 +204,14 @@ class InviteCodeOperate:
         )
         async with InviteSessionFactory() as session:
             async with session.begin():
+                for retry_index in range(1, 9):
+                    exists = await session.execute(select(InviteCodeModel.CODE).where(InviteCodeModel.CODE == code).limit(1))
+                    if exists.scalar_one_or_none() is None:
+                        break
+                    code = InviteCodeOperate._generate_code(inviter_uid, days, retry_index + 1)
+                    item.CODE = code
+                else:
+                    raise ValueError("生成邀请码重复次数过多，请调整邀请码格式")
                 session.add(item)
                 await session.flush()
                 snapshot = InviteCodeModel(

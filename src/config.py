@@ -500,6 +500,7 @@ class RegisterConfig(BaseConfig):
     INVITE_MAX_DEPTH: int = 3  # 邀请树最大层级，B->A->C 计为 3 层。1 表示禁止任何邀请
     INVITE_REQUIRE_EMBY: bool = True  # 是否要求邀请人已绑定 Emby 账号才能生码
     INVITE_CODE_DEFAULT_DAYS: int = 30  # 被邀请人 Emby 账号的默认开通天数
+    INVITE_CODE_FORMAT: str = "inv-{random}"  # 邀请码格式；生成时会强制 inv- 前缀，支持 {random}/{uid}/{days}/{index}/{timestamp}
 
     # ───────── 签到 / 积分（原 [Signin] 节并入此处）─────────
     # 重命名说明：[Signin].enabled → SAR.signin_enabled，避免与 SAR 节的语义重名；

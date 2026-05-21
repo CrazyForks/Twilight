@@ -309,8 +309,7 @@ async def complete_emby_account_for_me():
     from src.config import RegisterConfig
 
     has_regcode_entitlement = (
-        bool(getattr(user, "PENDING_EMBY", False))
-        and getattr(user, "PENDING_EMBY_DAYS", None) is not None
+        bool(getattr(user, "PENDING_EMBY", False)) and getattr(user, "PENDING_EMBY_DAYS", None) is not None
     )
     if not has_regcode_entitlement and not RegisterConfig.EMBY_DIRECT_REGISTER_ENABLED:
         return api_response(
@@ -1094,16 +1093,19 @@ async def renew_my_account():
 @require_auth
 async def use_code():
     """
-    统一使用注册码/续期码/白名单码
+    统一使用注册码/续期码/白名单码/邀请码
 
     已登录用户根据卡码类型自动处理：
+    - check_only=true：仅预检并返回前端确认弹窗所需展示信息
     - 注册码：为无 Emby 账户的用户创建 Emby 账户
     - 续期码：续期
     - 白名单码：赋予白名单角色，自动创建 Emby 账户（如没有）
+    - 邀请码：为无 Emby 账户的用户创建 Emby 账户并建立邀请关系
 
     Request:
         {
             "reg_code": "code-xxx",
+            "check_only": false,          // 可选；true 时只返回 UI 预览信息
             "emby_username": "emby_name",   // 创建 Emby 账户时必填
             "emby_password": "Password123"   // 创建 Emby 账户时必填
         }
@@ -1142,6 +1144,7 @@ async def use_code():
 
     data = request.get_json() or {}
     reg_code = data.get("reg_code", "").strip()
+    check_only = bool(data.get("check_only") or data.get("dry_run") or data.get("preview"))
     emby_username = (data.get("emby_username") or "").strip() or None
 
     raw_password = data.get("emby_password")
@@ -1153,7 +1156,11 @@ async def use_code():
         emby_password = ""
 
     if not reg_code:
-        return api_response(False, "缺少注册码/续期码", code=400)
+        return api_response(False, "缺少注册码/续期码/邀请码", code=400)
+
+    if check_only:
+        success, message, preview = await UserService.inspect_code_use(g.current_user, reg_code)
+        return api_response(success, message, preview, code=200 if success else 400)
 
     from src.services import RegcodeUseQueueService
 

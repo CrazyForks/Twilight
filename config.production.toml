@@ -167,6 +167,8 @@ invite_root_user_limit = -1
 invite_max_depth = 3
 invite_require_emby = true
 invite_code_default_days = 30
+# 邀请码格式；最终强制 inv- 前缀，支持 {random}/{uid}/{days}/{index}/{timestamp}
+invite_code_format = "inv-{random}"
 
 # —— 长期无 Emby 的悬空用户自动清理
 auto_cleanup_no_emby = false

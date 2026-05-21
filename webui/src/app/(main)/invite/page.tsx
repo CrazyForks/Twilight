@@ -33,11 +33,46 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { api, type InviteCodeItem, type InviteMyStatus, type InviteConfig } from "@/lib/api";
+import { api, type InviteCodeItem, type InviteMyStatus, type InviteConfig, type InviteTreeNode } from "@/lib/api";
 
 function formatExpires(unix: number): string {
   if (!unix || unix <= 0) return "永不过期";
   return new Date(unix * 1000).toLocaleString("zh-CN");
+}
+
+function InviteTreeNodeList({ nodes }: { nodes: InviteTreeNode[] }) {
+  if (!nodes.length) return null;
+  return (
+    <div className="space-y-2">
+      {nodes.map((node) => (
+        <div key={node.uid} className="space-y-2">
+          <div className="rounded-lg border bg-card/70 px-3 py-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium">{node.username}</p>
+                <p className="text-[11px] text-muted-foreground">UID #{node.uid} · 第 {node.depth} 层</p>
+              </div>
+              <div className="flex flex-wrap justify-end gap-1">
+                <Badge variant={node.active ? "success" : "secondary"} className="text-[10px]">
+                  {node.active ? "启用" : "禁用"}
+                </Badge>
+                <Badge variant={node.has_emby ? "outline" : "secondary"} className="text-[10px]">
+                  {node.has_emby ? "Emby" : "无 Emby"}
+                </Badge>
+                {node.emby_expired && <Badge variant="destructive" className="text-[10px]">已到期</Badge>}
+              </div>
+            </div>
+            <p className="mt-1 text-[11px] text-muted-foreground">{node.expire_status || "-"}</p>
+          </div>
+          {node.children?.length ? (
+            <div className="ml-4 border-l pl-3">
+              <InviteTreeNodeList nodes={node.children} />
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 export default function InviteCenterPage() {
@@ -340,6 +375,49 @@ export default function InviteCenterPage() {
         </div>
       )}
 
+      {status?.tree && (
+        <Card>
+          <CardContent className="space-y-4 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold flex items-center gap-2">
+                <GitBranch className="h-4 w-4 text-primary" />
+                我的上下级树
+              </h3>
+              <Badge variant="outline" className="text-[10px]">
+                下级总数 {status.tree.descendant_count}
+              </Badge>
+            </div>
+
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <p className="mb-2 text-[11px] uppercase tracking-widest text-muted-foreground">直属上级</p>
+              <div className="flex flex-wrap items-center gap-2 text-sm">
+                {status.parent ? (
+                  <Badge variant="secondary" className="max-w-[220px] truncate">
+                    {status.parent.username} · UID #{status.parent.uid}
+                  </Badge>
+                ) : (
+                  <span className="text-muted-foreground">你当前没有上级，是邀请树根节点。</span>
+                )}
+                <Badge variant="default" className="max-w-[180px] truncate">
+                  我 · 第 {status.tree.self.depth} 层
+                </Badge>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-[11px] uppercase tracking-widest text-muted-foreground">下级树</p>
+              {status.tree.descendants.length ? (
+                <InviteTreeNodeList nodes={status.tree.descendants} />
+              ) : (
+                <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
+                  暂无下级。生成邀请码并被使用后，这里会展示完整下级树。
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* 下级名单 */}
       {status && status.children.length > 0 && (
         <Card>
@@ -458,7 +536,7 @@ export default function InviteCenterPage() {
           <DialogHeader>
             <DialogTitle>生成邀请码</DialogTitle>
             <DialogDescription>
-              将邀请码分享给好友，让对方在「注册」/「邀请使用」页填写即可。
+              将邀请码分享给好友，让对方先注册并登录，再到仪表盘「注册码/续期码/邀请码使用」处填写即可。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

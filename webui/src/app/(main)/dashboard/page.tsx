@@ -38,7 +38,7 @@ import { useAsyncResource } from "@/hooks/use-async-resource";
 import { PageError } from "@/components/layout/page-state";
 import { useAuthStore } from "@/store/auth";
 import { useSystemStore } from "@/store/system";
-import { api, type EmbyInfo, type MediaRequest, type TelegramStatus, type SigninSummary, type RegisterAvailability, type EmbyRegisterStatus } from "@/lib/api";
+import { api, type CodeUsePreview, type EmbyInfo, type MediaRequest, type TelegramStatus, type SigninSummary, type RegisterAvailability, type EmbyRegisterStatus } from "@/lib/api";
 import { AnnouncementBoard } from "@/components/announcement-board";
 import { validatePasswordStrength } from "@/lib/password";
 
@@ -75,12 +75,14 @@ interface StoredEmbyRegisterRequest {
   savedAt: number;
 }
 
+type CodeCheckInfo = CodeUsePreview;
+
 export default function DashboardPage() {
   const { user, fetchUser } = useAuthStore();
   const { info: systemInfo, fetchInfo: fetchSystemInfo } = useSystemStore();
   const { toast } = useToast();
   const [regCode, setRegCode] = useState("");
-  const [regCodeInfo, setRegCodeInfo] = useState<{ type: number; type_name: string; days: number } | null>(null);
+  const [regCodeInfo, setRegCodeInfo] = useState<CodeCheckInfo | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
   const [isUsingCode, setIsUsingCode] = useState(false);
   const [embyUsername, setEmbyUsername] = useState("");
@@ -401,22 +403,23 @@ export default function DashboardPage() {
     return "夜深了";
   };
 
-  // ============== Regcode 流程 ==============
+  // ============== 卡码/邀请码流程 ==============
   const handleCheckRegcode = async () => {
-    if (!regCode.trim()) {
-      toast({ title: "请输入注册码/续期码", variant: "destructive" });
+    const code = regCode.trim();
+    if (!code) {
+      toast({ title: "请输入注册码/续期码/邀请码", variant: "destructive" });
       return;
     }
     try {
-      const res = await api.checkRegcode(regCode.trim());
-      if (res.success && res.data) {
-        setRegCodeInfo(res.data);
+      const res = await api.useCode(code, { checkOnly: true });
+      if (res.success && res.data?.source && res.data.type_name) {
+        setRegCodeInfo(res.data as CodeUsePreview);
         setEmbyUsername("");
         setEmbyPassword("");
         setShowEmbyPassword(false);
         setShowConfirm(true);
       } else {
-        toast({ title: "注册码/续期码无效", description: res.message, variant: "destructive" });
+        toast({ title: "卡码无效", description: res.message, variant: "destructive" });
       }
     } catch (err: any) {
       toast({ title: "检查失败", description: err.message || "网络异常", variant: "destructive" });
@@ -425,7 +428,7 @@ export default function DashboardPage() {
 
   const handleUseRegcode = async () => {
     if (!regCodeInfo || !regCode.trim()) return;
-    const requiresEmbyRegister = !user?.emby_id && (regCodeInfo.type === 1 || regCodeInfo.type === 3);
+    const requiresEmbyRegister = Boolean(regCodeInfo.requires_emby_credentials);
     const validateEmbyPassword = (pwd: string) => {
       if (pwd.length < 8) return "Emby 密码至少 8 位";
       if (!/[a-z]/.test(pwd)) return "Emby 密码至少包含一个小写字母";
@@ -465,7 +468,7 @@ export default function DashboardPage() {
             const statusRes = await api.getUseCodeStatus(res.data.request_id, res.data.status_token);
             if (!statusRes.success || !statusRes.data) continue;
             if (statusRes.data.status === "success") {
-              toast({ title: "注册码/续期码使用成功", description: statusRes.data.message || regCodeInfo.type_name, variant: "success" });
+              toast({ title: "卡码使用成功", description: statusRes.data.message || regCodeInfo.type_name, variant: "success" });
               setRegCode("");
               setRegCodeInfo(null);
               setEmbyUsername("");
@@ -481,7 +484,7 @@ export default function DashboardPage() {
           }
           toast({ title: "卡码仍在队列中", description: "请稍后刷新页面查看结果" });
         } else {
-          toast({ title: "注册码/续期码使用成功", description: regCodeInfo.type_name, variant: "success" });
+          toast({ title: "卡码使用成功", description: res.message || regCodeInfo.type_name, variant: "success" });
           setRegCode("");
           setRegCodeInfo(null);
           setShowConfirm(false);
@@ -1013,21 +1016,21 @@ export default function DashboardPage() {
       </motion.div>
       )}
 
-      {/* 注册码/续期码 */}
+      {/* 注册码/续期码/邀请码 */}
       <motion.div variants={item} className="premium-card p-5 sm:p-6">
         <div className="flex items-center gap-3 mb-5">
           <div className="p-2 bg-primary/10 rounded-xl text-primary">
             <Key className="h-5 w-5" />
           </div>
           <div>
-            <h3 className="text-base font-black tracking-tight">注册码/续期码使用</h3>
+            <h3 className="text-base font-black tracking-tight">注册码/续期码/邀请码使用</h3>
             <p className="text-[11px] text-muted-foreground font-bold uppercase tracking-tighter">Code Use</p>
           </div>
         </div>
 
         <div className="flex flex-col gap-3 md:flex-row">
           <Input
-            placeholder="请输入注册码或续期码"
+            placeholder="请输入注册码、续期码或邀请码"
             value={regCode}
             onChange={(e) => setRegCode(e.target.value)}
             className="h-12 rounded-xl border-white/60 bg-white/40 shadow-inner"
@@ -1194,25 +1197,23 @@ export default function DashboardPage() {
       <Dialog open={showConfirm} onOpenChange={setShowConfirm}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>确认使用注册码/续期码</DialogTitle>
+            <DialogTitle>{regCodeInfo?.confirm_title || "确认使用卡码"}</DialogTitle>
           </DialogHeader>
           {regCodeInfo && (
             <div className="space-y-2 text-sm text-muted-foreground">
               <p>类型: {regCodeInfo.type_name}</p>
-              <p>
-                {regCodeInfo.type === 2
-                  ? regCodeInfo.days <= 0
-                    ? "续期时长: 永久"
-                    : `续期时长: ${regCodeInfo.days} 天`
-                  : regCodeInfo.days <= 0
-                    ? "有效期: 永久"
-                    : `增加时长: ${regCodeInfo.days} 天`}
-              </p>
+              {regCodeInfo.source === "invite" && regCodeInfo.inviter && (
+                <p>邀请人: {regCodeInfo.inviter}</p>
+              )}
+              <p>{regCodeInfo.duration_label}</p>
+              {!regCodeInfo.requires_emby_credentials && <p>{regCodeInfo.description}</p>}
             </div>
           )}
-          {regCodeInfo && !user?.emby_id && (regCodeInfo.type === 1 || regCodeInfo.type === 3) && (
+          {regCodeInfo?.requires_emby_credentials && (
             <div className="space-y-3 rounded-lg border border-border p-3">
-              <p className="text-sm font-medium">该卡码将创建 Emby 账号，请填写以下信息</p>
+              <p className="text-sm font-medium">
+                {regCodeInfo.description}
+              </p>
               <div className="space-y-2">
                 <Label htmlFor="embyUsername">Emby 用户名</Label>
                 <Input
@@ -1247,7 +1248,7 @@ export default function DashboardPage() {
           <div className="flex gap-3 justify-end">
             <Button variant="outline" onClick={() => setShowConfirm(false)}>取消</Button>
             <Button onClick={handleUseRegcode} disabled={isUsingCode}>
-              {isUsingCode ? <Loader2 className="h-4 w-4 animate-spin" /> : "确认"}
+              {isUsingCode ? <Loader2 className="h-4 w-4 animate-spin" /> : regCodeInfo?.submit_label || "确认"}
             </Button>
           </div>
         </DialogContent>

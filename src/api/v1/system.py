@@ -1454,6 +1454,13 @@ async def get_config_schema():
                         "description": "被邀请人 Emby 账号默认开通天数（0 或 -1 表示永久）",
                         "value": RegisterConfig.INVITE_CODE_DEFAULT_DAYS,
                     },
+                    {
+                        "key": "invite_code_format",
+                        "label": "邀请码格式",
+                        "type": "string",
+                        "description": "邀请码生成格式，最终会强制以 inv- 开头；支持 {random}/{uid}/{days}/{index}/{timestamp}，例如 inv-{uid}-{random}",
+                        "value": RegisterConfig.INVITE_CODE_FORMAT,
+                    },
                     # —— 签到 / 积分（原 [Signin] 节，并入此处。仅装饰用途，无排行榜）
                     {
                         "key": "signin_enabled",

@@ -35,6 +35,9 @@ function buildHttpErrorMessage(
   const detail = backendMessage && backendMessage !== "接口不存在" ? `后端返回：${backendMessage}` : "";
 
   if (status === 404) {
+    if (backendMessage && backendMessage !== "接口不存在") {
+      return backendMessage;
+    }
     return [
       `接口不存在：${target}`,
       detail,
@@ -471,8 +474,11 @@ class ApiClient {
     );
   }
 
-  async useCode(regCode: string, options?: { embyUsername?: string; embyPassword?: string }) {
-    const payload: Record<string, string> = { reg_code: regCode };
+  async useCode(regCode: string, options?: { embyUsername?: string; embyPassword?: string; checkOnly?: boolean }) {
+    const payload: Record<string, string | boolean> = { reg_code: regCode };
+    if (options?.checkOnly) {
+      payload.check_only = true;
+    }
     if (options?.embyUsername) {
       payload.emby_username = options.embyUsername;
     }
@@ -480,19 +486,7 @@ class ApiClient {
       payload.emby_password = options.embyPassword;
     }
 
-    return this.request<{
-      pending?: boolean;
-      request_id?: string;
-      status_token?: string;
-      status?: "queued" | "processing" | "success" | "failed";
-      queue_position?: number;
-      reused?: boolean;
-      emby_password?: string;
-      expire_status?: string;
-      expired_at?: string | number;
-      role?: number;
-      role_name?: string;
-    }>("/users/me/use-code", {
+    return this.request<CodeUseResponse>("/users/me/use-code", {
       method: "POST",
       body: JSON.stringify(payload),
     });
@@ -1793,6 +1787,35 @@ export interface UserInfo {
   library_self_service?: boolean;  // 是否允许在个人设置中自助显隐管理员开放的媒体库
 }
 
+export interface CodeUsePreview {
+  source: "regcode" | "invite";
+  type: number;
+  type_name: string;
+  days: number;
+  valid: boolean;
+  inviter?: string | null;
+  requires_emby_credentials: boolean;
+  confirm_title: string;
+  description: string;
+  duration_label: string;
+  submit_label?: string;
+}
+
+export interface CodeUseResponse extends Partial<CodeUsePreview> {
+  pending?: boolean;
+  request_id?: string;
+  status_token?: string;
+  status?: "queued" | "processing" | "success" | "failed";
+  queue_position?: number;
+  reused?: boolean;
+  emby_password?: string;
+  expire_status?: string;
+  expired_at?: string | number;
+  role?: number;
+  role_name?: string;
+  user?: UserInfo;
+}
+
 export interface ApiKeyItem {
   id: number;
   name: string;
@@ -2230,6 +2253,7 @@ export interface InviteConfig {
   invite_limit: number;
   require_emby: boolean;
   default_days: number;
+  code_format?: string;
   permanent_invite_max_days?: number;
 }
 
@@ -2247,6 +2271,18 @@ export interface InviteCodeItem {
   note?: string | null;
 }
 
+export interface InviteTreeNode {
+  uid: number;
+  username: string;
+  active: boolean;
+  has_emby: boolean;
+  expired_at?: number | null;
+  expire_status?: string;
+  emby_expired?: boolean;
+  depth: number;
+  children?: InviteTreeNode[];
+}
+
 export interface InviteMyStatus {
   enabled: boolean;
   is_root: boolean;
@@ -2261,6 +2297,11 @@ export interface InviteMyStatus {
     emby_expired?: boolean;
     can_generate_renew_code?: boolean;
   }>;
+  tree?: {
+    self: InviteTreeNode;
+    descendants: InviteTreeNode[];
+    descendant_count: number;
+  };
   depth: number;
   max_depth: number;
   can_invite: boolean;

@@ -995,7 +995,9 @@ class UserService:
                 except (TypeError, ValueError):
                     return False, "续期码绑定信息异常，请联系管理员"
                 if int(user.UID) != target_uid_int:
-                    await RegCodeOperate.record_regcode_use(reg_code, uid=user.UID, telegram_id=user.TELEGRAM_ID, increment=0)
+                    await RegCodeOperate.record_regcode_use(
+                        reg_code, uid=user.UID, telegram_id=user.TELEGRAM_ID, increment=0
+                    )
                     user.ACTIVE_STATUS = False
                     await UserOperate.update_user(user)
                     try:
@@ -1011,12 +1013,17 @@ class UserService:
                     return False, "该续期码仅限指定下级使用，当前账号已按安全策略禁用"
 
             days = UserService._normalize_code_days(code_info.DAYS, default=days)
-            await RegCodeOperate.record_regcode_use(reg_code, uid=user.UID, telegram_id=user.TELEGRAM_ID)
 
         # 待开通 Emby 的用户没有真实到期概念，续期没有意义；后续 complete_emby_registration
         # 会用 PENDING_EMBY_DAYS 重新计算到期时间，此处续期反而会被覆盖掉。
         if not user.EMBYID:
             return False, "用户尚未绑定 Emby 账号，无法续期。请先完成 Emby 账号开通。"
+
+        if reg_code:
+            from src.db.regcode import RegCodeOperate
+
+            if not await RegCodeOperate.record_regcode_use(reg_code, uid=user.UID, telegram_id=user.TELEGRAM_ID):
+                return False, "续期码已被使用完"
 
         if days <= 0:
             user.EXPIRED_AT = -1
@@ -1024,7 +1031,9 @@ class UserService:
         else:
             current_time = timestamp()
             base_expired_at = int(user.EXPIRED_AT or 0)
-            new_expired_at = (current_time if base_expired_at < current_time else base_expired_at) + days_to_seconds(days)
+            new_expired_at = (current_time if base_expired_at < current_time else base_expired_at) + days_to_seconds(
+                days
+            )
             await UserOperate.renew_user_expire_time(user, days)
             user.EXPIRED_AT = new_expired_at
 
@@ -1147,6 +1156,7 @@ class UserService:
         emby_password: Optional[str] = None,
     ) -> Tuple[bool, str, Optional[str]]:
         """串行化同一用户/同一卡码的兑换，避免多次卡码并发串绑。"""
+        code_str = (code_str or "").strip()
         locks = await acquire_registration_lock(f"uid-{user.UID}", user.TELEGRAM_ID, reg_code=code_str, timeout=0.5)
         if locks is None:
             return False, "当前卡码或账号正在处理中，请稍后重试", None
@@ -1157,6 +1167,127 @@ class UserService:
             return await UserService._use_code_unlocked(fresh_user, code_str, emby_username, emby_password)
         finally:
             await release_registration_lock(locks)
+
+    @staticmethod
+    async def inspect_code_use(user: UserModel, code_str: str) -> Tuple[bool, str, Optional[dict]]:
+        """预检统一卡码入口，返回前端确认弹窗需要的展示信息。"""
+        code_str = (code_str or "").strip()
+        if not code_str:
+            return False, "缺少注册码/续期码/邀请码", None
+
+        invite_result = None
+        if code_str.lower().startswith("inv-"):
+            invite_result = await UserService._inspect_invite_code_use(user, code_str)
+        if invite_result is not None:
+            return invite_result
+
+        from src.db.regcode import RegCodeOperate, Type as RegCodeType
+
+        code_info = await RegCodeOperate.get_regcode_by_code(code_str)
+        if not code_info:
+            return False, "注册码/续期码/邀请码无效", None
+
+        if RegCodeOperate.is_decoy(code_info):
+            return False, "注册码/续期码/邀请码无效", None
+        if not code_info.ACTIVE:
+            return False, "注册码/续期码已停用", None
+        if code_info.USE_COUNT_LIMIT != -1 and code_info.USE_COUNT >= code_info.USE_COUNT_LIMIT:
+            return False, "注册码/续期码已被使用完", None
+        if UserService._is_regcode_expired(code_info):
+            return False, "注册码/续期码已过期", None
+
+        days = UserService._normalize_code_days(code_info.DAYS, default=30)
+        code_type = code_info.TYPE
+        invite_renew_meta = RegCodeOperate.get_invite_renew_meta(code_info)
+
+        if code_type == RegCodeType.REGISTER.value:
+            if user.EMBYID:
+                return False, "您已拥有 Emby 账户，无需使用注册码", None
+            type_name = "注册码"
+            duration_label = f"开通时长: {UserService._format_days_text(days)}"
+            description = "该注册码将创建 Emby 账号，请填写以下信息"
+            requires_emby_credentials = True
+        elif code_type == RegCodeType.RENEW.value:
+            if invite_renew_meta:
+                target_uid = invite_renew_meta.get("target_uid")
+                try:
+                    target_uid_int = int(target_uid)
+                except (TypeError, ValueError):
+                    return False, "续期码绑定信息异常，请联系管理员", None
+                if int(user.UID) != target_uid_int:
+                    return False, "该续期码仅限指定下级使用", None
+            if not user.EMBYID:
+                return False, "用户尚未绑定 Emby 账号，无法续期。请先完成 Emby 账号开通。", None
+            type_name = "专属续期码" if invite_renew_meta else "续期码"
+            duration_label = f"续期时长: {UserService._format_days_text(days)}"
+            description = "该续期码将为当前 Emby 账号续期"
+            requires_emby_credentials = False
+        elif code_type == RegCodeType.WHITELIST.value:
+            type_name = "白名单码"
+            duration_label = "授权有效期: 永久"
+            requires_emby_credentials = not bool(user.EMBYID)
+            description = (
+                "该白名单码将授予白名单权限并创建 Emby 账号，请填写以下信息"
+                if requires_emby_credentials
+                else "该白名单码将授予白名单权限"
+            )
+        else:
+            return False, "未知的注册码/续期码类型", None
+
+        return (
+            True,
+            "卡码有效",
+            {
+                "source": "regcode",
+                "type": code_type,
+                "type_name": type_name,
+                "days": days,
+                "valid": True,
+                "requires_emby_credentials": requires_emby_credentials,
+                "confirm_title": f"确认使用{type_name}",
+                "description": description,
+                "duration_label": duration_label,
+                "submit_label": "确认使用",
+            },
+        )
+
+    @staticmethod
+    async def _inspect_invite_code_use(
+        user: UserModel,
+        code_str: str,
+    ) -> Optional[Tuple[bool, str, Optional[dict]]]:
+        from src.db.invite import InviteCodeOperate
+        from src.services.invite_service import InviteService
+
+        code_info = await InviteCodeOperate.get_code(code_str)
+        if not code_info:
+            return None
+        if user.EMBYID:
+            return False, "您已拥有 Emby 账号，无需使用邀请码", None
+
+        valid, msg, info = await InviteService.validate_code_for_use(user.UID, code_str)
+        if not valid or not info:
+            return False, msg, None
+
+        inviter = await UserOperate.get_user_by_uid(info.INVITER_UID)
+        days = UserService._normalize_code_days(info.DAYS, default=int(RegisterConfig.INVITE_CODE_DEFAULT_DAYS or 30))
+        return (
+            True,
+            "邀请码有效",
+            {
+                "source": "invite",
+                "type": 4,
+                "type_name": "邀请码",
+                "days": days,
+                "valid": True,
+                "inviter": inviter.USERNAME if inviter else None,
+                "requires_emby_credentials": True,
+                "confirm_title": "确认使用邀请码",
+                "description": "该邀请码将创建 Emby 账号并建立邀请关系，请填写以下信息",
+                "duration_label": f"开通时长: {UserService._format_days_text(days)}",
+                "submit_label": "确认使用",
+            },
+        )
 
     @staticmethod
     async def _handle_decoy_regcode(user: UserModel, code_info, code_str: str) -> Tuple[bool, str, Optional[str]]:
@@ -1192,19 +1323,27 @@ class UserService:
         emby_password: Optional[str] = None,
     ) -> Tuple[bool, str, Optional[str]]:
         """
-        已登录用户统一使用注册码/续期码/白名单码
+        已登录用户统一使用注册码/续期码/白名单码/邀请码
 
         - 注册码(TYPE=1)：为无 Emby 账户的用户创建 Emby 账户
         - 续期码(TYPE=2)：续期
         - 白名单码(TYPE=3)：赋予白名单角色，如果没有 Emby 账户则自动创建
+        - 邀请码(inv-*)：为无 Emby 账户的用户创建 Emby 账户并建立邀请关系
 
         :return: (成功, 消息, 新Emby密码 或 None)
         """
         from src.db.regcode import RegCodeOperate, Type as RegCodeType
 
+        if code_str.lower().startswith("inv-"):
+            from src.db.invite import InviteCodeOperate
+
+            invite_info = await InviteCodeOperate.get_code(code_str)
+            if invite_info:
+                return await UserService._use_invite_code_unlocked(user, code_str, emby_username, emby_password)
+
         code_info = await RegCodeOperate.get_regcode_by_code(code_str)
         if not code_info:
-            return False, "注册码/续期码无效", None
+            return False, "注册码/续期码/邀请码无效", None
 
         if RegCodeOperate.is_decoy(code_info):
             return await UserService._handle_decoy_regcode(user, code_info, code_str)
@@ -1386,6 +1525,111 @@ class UserService:
             return True, msg, None
 
         return False, "未知的注册码/续期码类型", None
+
+    @staticmethod
+    async def _use_invite_code_unlocked(
+        user: UserModel,
+        code_str: str,
+        emby_username: Optional[str] = None,
+        emby_password: Optional[str] = None,
+    ) -> Tuple[bool, str, Optional[str]]:
+        """已登录用户在统一入口使用邀请码创建 Emby 账号并建立邀请关系。"""
+        from src.services.invite_service import InviteService
+
+        if user.EMBYID:
+            return False, "您已拥有 Emby 账号，无需使用邀请码", None
+
+        emby_username = (emby_username or "").strip()
+        if not emby_username:
+            return False, "使用邀请码创建 Emby 账号时，请填写 Emby 用户名", None
+        if not is_valid_username(emby_username):
+            return False, "Emby 用户名格式不正确（3-20 位字母数字下划线，不能以数字开头）", None
+        pwd_ok, pwd_msg = UserService._validate_emby_register_password(emby_password)
+        if not pwd_ok:
+            return False, pwd_msg, None
+
+        valid, msg, info = await InviteService.validate_code_for_use(user.UID, code_str)
+        if not valid or not info:
+            return False, msg, None
+
+        emby_capacity_lock = await UserService.acquire_emby_capacity_lock()
+        if emby_capacity_lock is None:
+            return False, "Emby 名额检查繁忙，请稍后重试", None
+
+        emby = get_emby_client()
+        try:
+            if not getattr(user, "PENDING_EMBY", False):
+                cap_ok, cap_msg = await UserService.check_emby_user_capacity(exclude_uid=user.UID)
+                if not cap_ok:
+                    return False, cap_msg, None
+            user_limit_ok, user_limit_msg = await UserService.check_normal_user_capacity_for_grant(user)
+            if not user_limit_ok:
+                return False, user_limit_msg, None
+
+            try:
+                existing = await emby.get_user_by_name(emby_username)
+                if existing:
+                    return False, "该 Emby 用户名已被占用", None
+                emby_user = await emby.create_user(emby_username, emby_password or "")
+                if not emby_user:
+                    return False, "创建 Emby 账户失败", None
+            except EmbyError as exc:
+                logger.error("邀请码创建 Emby 账户失败: %s", exc)
+                return False, f"Emby 服务器错误: {exc}", None
+
+            days = UserService._normalize_code_days(
+                info.DAYS, default=int(RegisterConfig.INVITE_CODE_DEFAULT_DAYS or 30)
+            )
+            expire_at = -1 if days <= 0 else timestamp() + days_to_seconds(days)
+
+            ok, msg, _inviter_uid = await InviteService.apply_invite(user.UID, code_str)
+            if not ok:
+                logger.warning("邀请关系建立失败: %s", msg)
+                try:
+                    await emby.delete_user(emby_user.id)
+                except Exception as exc:  # pragma: no cover
+                    logger.error("邀请失败后回滚 Emby 账号失败: %s", exc)
+                return False, msg, None
+
+            user.EMBYID = emby_user.id
+            user.PENDING_EMBY = False
+            user.PENDING_EMBY_DAYS = None
+            user.ACTIVE_STATUS = True
+            if not user.CREATE_AT:
+                user.CREATE_AT = user.REGISTER_TIME or timestamp()
+            if not user.REGISTER_TIME:
+                user.REGISTER_TIME = user.CREATE_AT
+            if user.ROLE in (Role.ADMIN.value, Role.WHITE_LIST.value):
+                user.EXPIRED_AT = 253402214400
+            else:
+                user.EXPIRED_AT = expire_at
+                if user.ROLE == Role.UNRECOGNIZED.value:
+                    user.ROLE = Role.NORMAL.value
+
+            other_data = {}
+            if user.OTHER:
+                try:
+                    other_data = json.loads(user.OTHER)
+                except (json.JSONDecodeError, TypeError):
+                    other_data = {}
+            if not isinstance(other_data, dict):
+                other_data = {}
+            other_data["emby_username"] = emby_username
+            user.OTHER = json.dumps(other_data)
+            user.PASSWORD = hash_password(emby_password or "")
+            await UserOperate.update_user(user)
+
+            try:
+                from src.services import EmbyService
+
+                await UserService.sync_user_to_emby(user)
+                await EmbyService.apply_default_hidden_libraries(user)
+            except Exception as exc:  # pragma: no cover
+                logger.warning("邀请开通后同步状态或应用默认隐藏媒体库失败: %s", exc)
+
+            return True, "邀请使用成功，Emby 账号已开通，邀请关系已建立", None
+        finally:
+            await UserService.release_emby_capacity_lock(emby_capacity_lock)
 
     @staticmethod
     async def reset_password(

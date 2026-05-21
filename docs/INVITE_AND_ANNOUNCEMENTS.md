@@ -28,8 +28,10 @@
 | `invite_enabled` | `false` | 邀请系统总开关。关闭后所有 `/invite/*` 接口返回 403。 |
 | `invite_max_depth` | `3` | 整棵邀请树允许的最大层级。`1` 等于禁止邀请。 |
 | `invite_limit` | `10` | 每位用户**未使用**邀请码上限（已用的不算）。`-1` 表示无限制。 |
+| `invite_root_user_limit` | `-1` | 每棵邀请树最多可成功邀请多少用户，不含树根本人。`-1` 表示无限制。 |
 | `invite_require_emby` | `true` | 是否要求邀请人已绑定 Emby 才能生码。 |
 | `invite_code_default_days` | `30` | 被邀请人 Emby 账号默认开通天数。`0` / `-1` 表示永久。 |
+| `invite_code_format` | `inv-{random}` | 邀请码格式；最终会强制以 `inv-` 开头。支持 `{random}`、`{uid}`、`{days}`、`{index}`、`{timestamp}`。 |
 
 修改这些字段后会触发整进程重启（沿用现有 [config 重启策略][cfg-restart]）。
 
@@ -47,8 +49,9 @@
 ### 1.4 前端入口
 
 * **普通用户**：侧边栏「邀请中心」`/invite`
-  * 查看自己的层级 / 上级 / 下级
+  * 查看自己的层级 / 直属上级 / 完整下级树；不会返回多层上级信息
   * 生成 / 复制 / 撤销邀请码
+  * 为已到期直属下级生成专属续期码
 * **管理员**：侧边栏「邀请森林」`/admin/invite`
   * 星图（SVG 自绘）可视化整棵森林
   * 点击节点查看用户详情、断开上级、级联删除
@@ -62,8 +65,9 @@
 | `POST` | `/invite/codes` | 生成邀请码 |
 | `GET`  | `/invite/codes` | 列出我生成的邀请码 |
 | `DELETE` | `/invite/codes/<code>` | 撤销/删除我生成的邀请码 |
+| `POST` | `/invite/renew-codes` | 为已到期直属下级生成专属续期码 |
 | `POST` | `/invite/check` | 公开：校验邀请码是否可用（按 IP 限流） |
-| `POST` | `/invite/use` | 已登录用户使用邀请码创建 Emby 账号 |
+| `POST` | `/invite/use` | 已登录用户使用邀请码创建 Emby 账号（兼容旧入口；Web 前端统一走 `/users/me/use-code`） |
 
 ### 1.6 管理员接口
 

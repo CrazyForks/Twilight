@@ -64,7 +64,7 @@
 | POST | `/users/me/emby/unbind` | User | 解绑 Emby 账号 |
 | POST | `/users/regcode/check` | Public | 检查注册码/续期码 |
 | POST | `/users/me/renew` | User | 使用续期码续期 |
-| POST | `/users/me/use-code` | User | 统一使用注册码/续期码/白名单码 |
+| POST | `/users/me/use-code` | User | 统一预检/使用注册码、续期码、白名单码、邀请码 |
 | GET | `/users/me/devices` | User | 当前用户设备 |
 | DELETE | `/users/me/devices/{device_id}` | User | 删除设备 |
 | GET | `/users/me/libraries` | User | 当前用户媒体库权限 |
@@ -272,8 +272,9 @@
 | POST | `/invite/codes` | User | 生成邀请码 |
 | GET | `/invite/codes` | User | 我的邀请码 |
 | DELETE | `/invite/codes/{code}` | User | 删除或停用邀请码 |
+| POST | `/invite/renew-codes` | User | 为已到期直属下级生成专属续期码 |
 | POST | `/invite/check` | Public | 校验邀请码 |
-| POST | `/invite/use` | User | 使用邀请码开通 Emby |
+| POST | `/invite/use` | User | 使用邀请码开通 Emby（兼容旧入口） |
 
 ## Signin
 

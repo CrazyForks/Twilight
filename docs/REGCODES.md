@@ -9,6 +9,7 @@
 | `1` | 注册码 | `POST /users/register`、`POST /users/me/use-code` | 新用户注册系统账号并获得补建 Emby 资格；已登录且未绑定 Emby 的用户可用它创建 Emby 账号。 |
 | `2` | 续期码 | `POST /users/me/renew`、`POST /users/me/use-code` | 已绑定 Emby 的用户续期；天数 `0` 或 `-1` 表示永久。 |
 | `3` | 白名单码 | `POST /users/me/use-code` | 授予白名单角色和永久有效期；未绑定 Emby 时会要求同时创建 Emby 账号。 |
+| `invite` | 邀请码 | `POST /users/me/use-code` | 已登录且未绑定 Emby 的用户创建 Emby 账号，并建立邀请关系。前端统一走该入口，后端自动识别。 |
 
 ## 字段
 
@@ -72,6 +73,7 @@
 
 - `POST /users/regcode/check` 是公开接口，仅返回类型、天数和有效性，不返回使用者信息；按 IP 限流防枚举。
 - `POST /users/register` 使用注册码时额外限流，并通过注册锁避免同一码并发注册。
-- `POST /users/me/use-code`、`POST /users/me/renew` 需要登录，并检查启用状态、次数上限和卡码自身有效期。
+- `POST /users/me/use-code` 需要登录，支持注册码、续期码、白名单码和邀请码；传 `check_only=true` 时只返回类型、时长、确认文案和是否需要 Emby 用户名/密码，不消费卡码。
+- `POST /users/me/renew` 是旧续期入口，保留兼容。
 - `GET/POST/PUT/DELETE /admin/regcodes` 均需要管理员鉴权。
 - 诱饵码不会在公开检查中暴露；已登录用户使用后会按 `[SAR].regcode_decoy_action` 执行安全动作。

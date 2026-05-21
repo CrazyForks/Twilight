@@ -177,9 +177,9 @@ class InviteService:
             return True, ""
         if limit < 0:
             return True, ""
-        root_uid, invited_count, _ = await InviteService.get_root_invited_count(inviter_uid)
+        _root_uid, invited_count, _ = await InviteService.get_root_invited_count(inviter_uid)
         if invited_count >= limit:
-            return False, f"该邀请树已达到最多可邀请用户数 ({limit})，树根 UID={root_uid}"
+            return False, f"该邀请树已达到最多可邀请用户数 ({limit})"
         return True, ""
 
     @staticmethod
