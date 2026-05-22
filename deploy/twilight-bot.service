@@ -1,6 +1,7 @@
 [Unit]
-Description=Twilight Telegram Bot
-After=network.target twilight.service
+Description=Twilight Go Telegram Bot Bridge
+After=network-online.target twilight.service
+Wants=network-online.target
 PartOf=twilight.service
 
 [Service]
@@ -8,18 +9,15 @@ Type=exec
 User=root
 Group=root
 WorkingDirectory=/root/Twilight
-ExecStart=/root/Twilight/.venv/bin/python main.py bot
+ExecStart=/root/Twilight/bin/twilight bot --config /root/Twilight/config.toml
 
-Environment=TWILIGHT_BOT_LOCK_FILE=/root/Twilight/db/telegram_bot.lock
 Environment=TWILIGHT_CONFIG_FILE=/root/Twilight/config.toml
 EnvironmentFile=-/root/Twilight/.env
 
-# 资源限制
 LimitNOFILE=65535
 MemoryMax=512M
 MemoryHigh=384M
 
-# 重启策略
 Restart=always
 RestartSec=10
 StartLimitIntervalSec=300

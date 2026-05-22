@@ -86,6 +86,31 @@ function buildParseErrorMessage(status: number, endpoint: string, method: string
   return `服务器响应解析失败 (${status})：${target}\n接口没有返回标准 JSON。`;
 }
 
+async function parseApiResponse<T>(
+  response: Response,
+  endpoint: string,
+  method: string,
+): Promise<ApiResponse<T>> {
+  if (response.status === 204) {
+    return { success: true, message: "OK" };
+  }
+
+  const text = await response.text();
+  if (!text) {
+    return { success: response.ok, message: response.ok ? "OK" : response.statusText };
+  }
+
+  try {
+    return JSON.parse(text) as ApiResponse<T>;
+  } catch (error) {
+    if (!response.ok) {
+      return { success: false, message: response.statusText || `HTTP ${response.status}` };
+    }
+    console.error("JSON parse error:", error);
+    throw new Error(buildParseErrorMessage(response.status, endpoint, method));
+  }
+}
+
 class ApiClient {
   private normalizeRequestStatus(status?: string | null, mode: "user" | "admin" = "user"): string {
     const raw = (status || "").trim().toLowerCase();
@@ -141,6 +166,32 @@ class ApiClient {
     });
   }
 
+  private normalizeBackgroundAssetCssUrlValue(value?: string | null): string {
+    if (!value) return "";
+    return value.replace(/url\((['"]?)(.*?)\1\)/g, (_match, quote, rawUrl: string) => {
+      const raw = rawUrl.trim();
+      let path = raw;
+      if (/^https?:\/\//i.test(raw)) {
+        try {
+          const parsed = new URL(raw);
+          const allowedOrigin = API_BASE
+            ? new URL(API_BASE, typeof window === "undefined" ? "http://localhost" : window.location.origin).origin
+            : (typeof window === "undefined" ? "" : window.location.origin);
+          if (!allowedOrigin) return "none";
+          if (parsed.origin !== allowedOrigin) return "none";
+          path = parsed.pathname;
+        } catch {
+          return "none";
+        }
+      }
+      if (!/^\/api\/v1\/users\/assets\/background\/[a-f0-9]{16}\.(jpg|png|gif|webp|bmp)$/i.test(path)) return "none";
+      const normalized = this.toAbsoluteAssetUrl(path);
+      if (!normalized) return "none";
+      const q = quote || '"';
+      return `url(${q}${normalized}${q})`;
+    });
+  }
+
   setToken(token: string | null) {
     void token;
   }
@@ -183,15 +234,7 @@ class ApiClient {
       );
     }
 
-    let data: ApiResponse<T>;
-    
-    // 尝试解析JSON，即使content-type不匹配
-    try {
-      data = await response.json();
-    } catch (error) {
-      console.error("JSON parse error:", error);
-      throw new Error(buildParseErrorMessage(response.status, endpoint, method));
-    }
+    const data = await parseApiResponse<T>(response, endpoint, method);
 
     if (!response.ok) {
       throw new Error(buildHttpErrorMessage(response.status, endpoint, method, data?.message));
@@ -221,18 +264,16 @@ class ApiClient {
         credentials: "include",
       });
     } catch (error) {
+      if (isAbortError(error)) {
+        throw error;
+      }
       console.error("Network error:", error);
       throw new Error(
         `无法连接后端接口：${describeApiTarget(endpoint, methodName)}\n请检查后端服务是否启动、API 地址是否正确、反向代理是否可达。`
       );
     }
 
-    let data: ApiResponse<T>;
-    try {
-      data = await response.json();
-    } catch {
-      throw new Error(buildParseErrorMessage(response.status, endpoint, methodName));
-    }
+    const data = await parseApiResponse<T>(response, endpoint, methodName);
 
     if (!response.ok) {
       throw new Error(buildHttpErrorMessage(response.status, endpoint, methodName, data?.message));
@@ -591,7 +632,7 @@ class ApiClient {
   }
 
   async removeDevice(deviceId: string) {
-    return this.request(`/users/me/devices/${deviceId}`, {
+    return this.request(`/users/me/devices/${encodeURIComponent(deviceId)}`, {
       method: "DELETE",
     });
   }
@@ -897,6 +938,22 @@ class ApiClient {
     return this.request<SystemStats>("/system/admin/stats");
   }
 
+  async getRuntimeStatus() {
+    return this.request<RuntimeStatus>("/system/admin/runtime/status");
+  }
+
+  async getRuntimeLogs(limit = 200, after?: number) {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (after && after > 0) query.set("after", String(after));
+    return this.request<RuntimeLogsResponse>(`/system/admin/runtime/logs?${query}`);
+  }
+
+  runtimeLogStreamURL(limit = 100, after?: number) {
+    const query = new URLSearchParams({ limit: String(limit) });
+    if (after && after > 0) query.set("after", String(after));
+    return `${API_BASE}/api/v1/system/admin/runtime/logs/stream?${query}`;
+  }
+
   async getConfigToml() {
     return this.request<{ content: string; path: string }>("/system/admin/config/toml");
   }
@@ -919,17 +976,82 @@ class ApiClient {
     });
   }
 
+  async getDatabaseStatus() {
+    return this.request<DatabaseStatus>("/system/admin/database/status");
+  }
+
+  async listDatabaseBackups() {
+    return this.request<{ backups: DatabaseBackup[] }>("/system/admin/database/backups");
+  }
+
+  async createDatabaseBackup() {
+    return this.request<{ backup: DatabaseBackup }>("/system/admin/database/backup", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+  }
+
+  async restoreDatabaseBackup(
+    name: string,
+    options?: { dry_run?: boolean; preview?: boolean; confirm?: string }
+  ) {
+    return this.request<DatabaseRestoreResult>("/system/admin/database/restore", {
+      method: "POST",
+      body: JSON.stringify({ name, ...(options || {}) }),
+    });
+  }
+
+  async previewDatabaseRestore(name: string) {
+    return this.restoreDatabaseBackup(name, { dry_run: true });
+  }
+
+  async migrateDatabase(payload: {
+    target_driver: "json" | "postgres";
+    dry_run?: boolean;
+    preview?: boolean;
+    confirm?: string;
+    database_url?: string;
+    postgres_dsn?: string;
+    state_file?: string;
+  }) {
+    return this.request<DatabaseMigrationResult>("/system/admin/database/migrate", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+  }
+
   async updateFromGit(payload: {
     repo_url: string;
     branch?: string;
     restart_services?: boolean;
+    dry_run?: boolean;
+    allow_dirty?: boolean;
   }) {
     return this.request<{
       project_root: string;
       repo_url: string;
       branch: string;
-      restart_scheduled: boolean;
+      dry_run?: boolean;
+      updated?: boolean;
+      restart_scheduled?: boolean;
+      restart_available?: boolean;
       services?: string[];
+      before?: {
+        branch: string;
+        commit: string;
+        remote_url: string;
+        dirty: boolean;
+        dirty_count: number;
+        dirty_files: string[];
+      };
+      after?: {
+        branch: string;
+        commit: string;
+        remote_url: string;
+        dirty: boolean;
+        dirty_count: number;
+        dirty_files: string[];
+      };
       results: Array<{
         command: string;
         returncode: number;
@@ -1327,8 +1449,8 @@ class ApiClient {
     if (res.success && res.data?.background) {
       try {
         const config = JSON.parse(res.data.background);
-        config.lightBgImage = this.normalizeCssUrlValue(config.lightBgImage);
-        config.darkBgImage = this.normalizeCssUrlValue(config.darkBgImage);
+        config.lightBgImage = this.normalizeBackgroundAssetCssUrlValue(config.lightBgImage);
+        config.darkBgImage = this.normalizeBackgroundAssetCssUrlValue(config.darkBgImage);
         res.data.background = JSON.stringify(config);
       } catch {
         // ignore invalid legacy format
@@ -1461,6 +1583,18 @@ class ApiClient {
   async deleteRegcode(code: string) {
     return this.request(`/admin/regcodes/${encodeURIComponent(code)}`, {
       method: "DELETE",
+    });
+  }
+
+  async batchDeleteRegcodes(codes: string[]) {
+    return this.request<{
+      deleted: number;
+      deleted_codes: string[];
+      missing: number;
+      missing_codes: string[];
+    }>("/admin/regcodes/batch-delete", {
+      method: "POST",
+      body: JSON.stringify({ codes }),
     });
   }
 
@@ -2121,6 +2255,40 @@ export interface SystemStats {
   } | null;
 }
 
+export interface RuntimeLogEntry {
+  id: number;
+  time: number;
+  level: string;
+  message: string;
+  attrs?: Record<string, string>;
+}
+
+export interface RuntimeLogsResponse {
+  entries: RuntimeLogEntry[];
+  next_cursor: number;
+  limit: number;
+}
+
+export interface RuntimeStatus {
+  started_at: number;
+  uptime_seconds: number;
+  host_uptime_seconds?: number;
+  hostname?: string;
+  go_version: string;
+  goos: string;
+  goarch: string;
+  goroutines: number;
+  cpu_count: number;
+  redis_enabled: boolean;
+  routes: number;
+  active_database: string;
+  config_database: string;
+  users: number;
+  load_average?: number[];
+  memory?: Record<string, number>;
+  host_memory?: Record<string, number>;
+}
+
 export interface Regcode {
   code: string;
   type: number;
@@ -2187,6 +2355,62 @@ export interface ConfigSchema {
   categories?: ConfigCategory[];
 }
 
+
+export interface DatabaseBackup {
+  name: string;
+  path: string;
+  size: number;
+  created_at: number;
+}
+
+export interface DatabaseStatus {
+  active_driver: string;
+  configured_driver: string;
+  state_file: string;
+  backup_dir: string;
+  backup_count: number;
+  postgres_configured: boolean;
+  redis_enabled: boolean;
+  user_count: number;
+}
+
+export interface DatabaseOperationResult {
+  operation?: "restore" | "migrate" | string;
+  source_driver?: string;
+  configured_driver?: string;
+  target_driver?: string;
+  dry_run: boolean;
+  requires_confirmation?: boolean;
+  confirm?: string;
+  snapshot_bytes?: number;
+  target_snapshot_bytes?: number;
+  current_snapshot_bytes?: number;
+  target_ready?: Record<string, unknown>;
+  warnings?: string[];
+  counts?: Record<string, number>;
+  current_counts?: Record<string, number>;
+  users: number;
+  api_keys: number;
+  regcodes: number;
+  invite_codes: number;
+  media_requests: number;
+  announcements: number;
+  state_file?: string;
+  backup?: DatabaseBackup;
+  restored?: string;
+  pre_restore_backup?: DatabaseBackup;
+  pre_migration_backup?: DatabaseBackup;
+  pre_operation_backup?: DatabaseBackup;
+}
+
+export type DatabaseMigrationResult = DatabaseOperationResult & {
+  target_driver: string;
+};
+
+export type DatabaseRestoreResult = DatabaseOperationResult & {
+  restored: string;
+  backup?: DatabaseBackup;
+};
 
 export interface SchedulerJobRun {
   id?: number;

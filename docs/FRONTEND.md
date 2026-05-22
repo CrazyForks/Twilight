@@ -1,90 +1,30 @@
-# Twilight 前端开发文档
+# 前端开发
 
-Twilight 当前主前端位于 `webui/`，技术栈为 Next.js + TypeScript + Tailwind CSS。
+前端是位于 `webui/` 的 Next.js 应用。
 
-## 前端目录说明
-
-- `webui/`：主前端（Next.js 16，生产使用，唯一前端工程）
-
-## 技术栈（主前端）
-
-- Next.js 16（App Router）
-- TypeScript
-- Tailwind CSS
-- Radix UI + 自定义组件
-- Zustand（状态管理）
-- TanStack Query（数据请求）
-- Framer Motion（动效）
-
-## 本地开发
-
-### 1) 安装依赖
+## 本地启动
 
 ```bash
 cd webui
 pnpm install --frozen-lockfile
-```
-
-### 2) 配置环境变量
-
-创建 `webui/.env.local`：
-
-```env
-NEXT_PUBLIC_API_URL=http://localhost:5000
-NEXT_PUBLIC_SITE_NAME=Twilight
-```
-
-### 3) 启动开发服务
-
-```bash
 pnpm dev
 ```
 
-默认访问：`http://localhost:3000`
-
-## 与后端联调
-
-- 后端推荐启动命令：`python main.py api --debug`
-- Swagger：`http://localhost:5000/api/v1/docs`
-- 前端 API 客户端：`webui/src/lib/api.ts`
-
-示例：
-
-```ts
-import { api } from "@/lib/api";
-
-const me = await api.getMe();
-```
-
-## 构建与发布
+后端单独启动：
 
 ```bash
-pnpm build
-pnpm start
+bash start_backend_dev.sh
 ```
 
-本项目只维护 `pnpm-lock.yaml`，不要混用 npm/yarn 生成另一套 lockfile。
+## API 契约
 
-## 常见问题
+- 前端 API 调用统一维护在 `webui/src/lib/api.ts`。
+- 后端路由统一注册在 `internal/api/routes.go`。
+- 响应结构保持 `{ success, code, message, data, timestamp }` envelope。
+- 新增或调整接口时，同时检查前端调用路径、请求方法、鉴权等级、错误提示和移动端展示。
 
-### 前端请求 401
+## 验证
 
-- 确认已登录并有有效 Token
-- 检查浏览器存储中的认证信息是否过期
-
-### 前端请求不到后端
-
-- 检查 `NEXT_PUBLIC_API_URL`
-- 确认后端服务运行在对应端口（默认 5000）
-- 如跨域，检查后端 CORS 配置
-
-### 页面样式异常
-
-- 删除缓存后重装依赖：`rm -rf node_modules .next`（Windows 可手动删除）
-- 重新安装并启动
-
-## 参考文档
-
-- [后端 API 文档](./BACKEND_API.md)
-- [开发指南](./DEVELOPMENT.md)
-- [安装部署指南](./INSTALL.md)
+- UI 或 API 客户端变更后执行前端 lint/build。
+- 后端变更后执行 `go test ./...` 和 `go vet ./...`。
+- 涉及鉴权、上传、路径、配置保存、数据库迁移、Git 更新或实时日志时，补充安全边界测试。

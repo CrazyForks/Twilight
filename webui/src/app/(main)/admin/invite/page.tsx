@@ -9,7 +9,7 @@
  * - 不引入额外可视化库，方便部署到 Cloudflare Workers（rendering tree small）。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   GitBranch,
@@ -21,10 +21,20 @@ import {
   Trash2,
   AlertTriangle,
   ShieldCheck,
+  Search,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { api, type InviteForest, type InviteForestNode } from "@/lib/api";
@@ -56,6 +66,18 @@ interface PlacedForest {
   systems: StarSystem[];
   width: number;
   height: number;
+}
+
+interface DepthPromptOptions {
+  title: string;
+  description: string;
+  defaultValue?: string;
+  confirmLabel: string;
+}
+
+interface DepthPromptState extends DepthPromptOptions {
+  value: string;
+  resolve: (value: string | null) => void;
 }
 
 const DEPTH_COLOR_LIGHT = ["#38bdf8", "#34d399", "#c084fc", "#fbbf24", "#fb7185", "#60a5fa"];
@@ -208,6 +230,32 @@ function findRoot(forest: InviteForest, uid: number): number {
   return cur;
 }
 
+function subtreeUIDs(root: number, childrenMap: Map<number, number[]>): Set<number> {
+  const visible = new Set<number>([root]);
+  const queue = [root];
+  while (queue.length) {
+    const uid = queue.shift()!;
+    for (const child of childrenMap.get(uid) || []) {
+      if (visible.has(child)) continue;
+      visible.add(child);
+      queue.push(child);
+    }
+  }
+  return visible;
+}
+
+function filterForestByRoot(forest: InviteForest, rootUid: number | null): InviteForest {
+  if (!rootUid) return forest;
+  const childrenMap = buildChildrenMap(forest);
+  const visible = subtreeUIDs(rootUid, childrenMap);
+  return {
+    ...forest,
+    nodes: forest.nodes.filter((node) => visible.has(node.uid)),
+    edges: forest.edges.filter((edge) => visible.has(edge.parent) && visible.has(edge.child)),
+    roots: [rootUid],
+  };
+}
+
 function relationHighlight(forest: InviteForest | null, selectedUid: number | null): Set<string> {
   const highlighted = new Set<string>();
   if (!forest || !selectedUid) return highlighted;
@@ -243,8 +291,29 @@ export default function AdminInviteTreePage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [selectedUid, setSelectedUid] = useState<number | null>(null);
+  const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
+  const [rootFilter, setRootFilter] = useState<number | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [scale, setScale] = useState(1);
+  const [depthPrompt, setDepthPrompt] = useState<DepthPromptState | null>(null);
+
+  const requestDepth = useCallback((options: DepthPromptOptions) => {
+    return new Promise<string | null>((resolve) => {
+      setDepthPrompt({
+        ...options,
+        value: options.defaultValue ?? "1",
+        resolve,
+      });
+    });
+  }, []);
+
+  const closeDepthPrompt = useCallback((value: string | null) => {
+    setDepthPrompt((current) => {
+      if (current) current.resolve(value);
+      return null;
+    });
+  }, []);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -267,18 +336,45 @@ export default function AdminInviteTreePage() {
     void reload();
   }, [reload]);
 
-  const placed = useMemo(() => (forest ? placeForest(forest) : null), [forest]);
+  const visibleForest = useMemo(() => (forest ? filterForestByRoot(forest, rootFilter) : null), [forest, rootFilter]);
+  const placed = useMemo(() => (visibleForest ? placeForest(visibleForest) : null), [visibleForest]);
   const starfield = useMemo(() => (placed ? makeStarfield(placed.width, placed.height) : []), [placed]);
-  const highlightedEdges = useMemo(() => relationHighlight(forest, selectedUid), [forest, selectedUid]);
+  const highlightedEdges = useMemo(() => relationHighlight(visibleForest, selectedUid), [visibleForest, selectedUid]);
 
   const nodeByUid = useMemo(() => {
     const map = new Map<number, InviteForestNode>();
-    if (forest) for (const n of forest.nodes) map.set(n.uid, n);
+    if (visibleForest) for (const n of visibleForest.nodes) map.set(n.uid, n);
     return map;
-  }, [forest]);
+  }, [visibleForest]);
+
+  const matchingUIDs = useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase();
+    const matches = new Set<number>();
+    if (!q || !visibleForest) return matches;
+    for (const node of visibleForest.nodes) {
+      if (node.username.toLowerCase().includes(q) || String(node.uid).includes(q) || String(node.telegram_id || "").includes(q)) {
+        matches.add(node.uid);
+      }
+    }
+    return matches;
+  }, [deferredQuery, visibleForest]);
+
+  const showLabels = (visibleForest?.nodes.length || 0) <= 260 && scale >= 0.7;
 
   const selected = selectedUid && nodeByUid.get(selectedUid) ? nodeByUid.get(selectedUid)! : null;
   const selectedPosition = selectedUid && placed ? placed.positions.get(selectedUid) : null;
+
+  useEffect(() => {
+    if (forest && rootFilter && !forest.roots.includes(rootFilter)) {
+      setRootFilter(null);
+    }
+  }, [forest, rootFilter]);
+
+  useEffect(() => {
+    if (selectedUid && visibleForest && !visibleForest.nodes.some((node) => node.uid === selectedUid)) {
+      setSelectedUid(null);
+    }
+  }, [selectedUid, visibleForest]);
 
   const handleDetach = async () => {
     if (!selected) return;
@@ -304,10 +400,12 @@ export default function AdminInviteTreePage() {
   const handleCascadeToggle = async (enable: boolean) => {
     if (!selected) return;
     const action = enable ? "启用" : "禁用";
-    const cascadeRaw = window.prompt(
-      `请输入级联${action}层级：\n  1 = 仅本人（默认）\n  N = 本人 + 下 N-1 层\n  0 = 整棵子树（不限层级）`,
-      "1",
-    );
+    const cascadeRaw = await requestDepth({
+      title: `设置级联${action}层级`,
+      description: "1 = 仅本人（默认）；N = 本人 + 下 N-1 层；0 = 整棵子树（不限层级）。",
+      defaultValue: "1",
+      confirmLabel: `继续${action}`,
+    });
     if (cascadeRaw === null) return;
     const parsed = parseInt(cascadeRaw, 10);
     if (!Number.isFinite(parsed) || parsed < 0) {
@@ -350,10 +448,12 @@ export default function AdminInviteTreePage() {
 
   const handleCascadeDelete = async () => {
     if (!selected) return;
-    const cascadeDepth = window.prompt(
-      "请输入级联删除层级：\n  1 = 仅本人（默认）\n  2 = 本人 + 直接下级\n  N = 本人 + 下 N-1 层\n  0 = 整棵子树（不限层级）",
-      "1",
-    );
+    const cascadeDepth = await requestDepth({
+      title: "设置级联删除层级",
+      description: "1 = 仅本人（默认）；2 = 本人 + 直接下级；N = 本人 + 下 N-1 层；0 = 整棵子树（不限层级）。",
+      defaultValue: "1",
+      confirmLabel: "继续删除",
+    });
     if (cascadeDepth === null) return;
     const parsed = parseInt(cascadeDepth, 10);
     if (!Number.isFinite(parsed) || parsed < 0) {
@@ -395,7 +495,7 @@ export default function AdminInviteTreePage() {
       animate={{ opacity: 1, y: 0 }}
       className="space-y-4"
     >
-      <div className="flex items-center justify-between gap-3 flex-wrap">
+      <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Network className="h-5 w-5" />
@@ -405,7 +505,7 @@ export default function AdminInviteTreePage() {
             管理员视角的整棵邀请关系。点击任意节点查看用户详情、断开/级联删除。
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="grid w-full grid-cols-[auto_1fr_auto_auto] items-center gap-2 sm:flex sm:w-auto">
           <Button variant="outline" size="sm" onClick={() => setScale((s) => Math.max(0.4, s - 0.1))}>
             −
           </Button>
@@ -421,14 +521,47 @@ export default function AdminInviteTreePage() {
       </div>
 
       {forest && (
-        <div className="grid gap-3 sm:grid-cols-4">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div className="relative w-full lg:max-w-sm">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索用户名 / UID / Telegram ID"
+              className="pl-9"
+            />
+          </div>
+              <div className="flex gap-2 overflow-x-auto pb-1 no-scrollbar">
+            <Button size="sm" variant={rootFilter === null ? "default" : "outline"} onClick={() => setRootFilter(null)}>
+              全部
+            </Button>
+            {forest.roots.slice(0, 12).map((root) => {
+              const node = forest.nodes.find((item) => item.uid === root);
+              return (
+                <Button
+                  key={root}
+                  size="sm"
+                  variant={rootFilter === root ? "default" : "outline"}
+                  onClick={() => setRootFilter(root)}
+                  className="max-w-40 shrink-0"
+                >
+                  <span className="truncate">{node?.username || `#${root}`}</span>
+                </Button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {forest && (
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
           <Card><CardContent className="p-4">
             <p className="text-[11px] uppercase tracking-widest text-muted-foreground">节点</p>
-            <p className="text-2xl font-bold">{forest.nodes.length}</p>
+            <p className="text-2xl font-bold">{visibleForest?.nodes.length ?? forest.nodes.length}</p>
           </CardContent></Card>
           <Card><CardContent className="p-4">
             <p className="text-[11px] uppercase tracking-widest text-muted-foreground">树根</p>
-            <p className="text-2xl font-bold">{forest.roots.length}</p>
+            <p className="text-2xl font-bold">{visibleForest?.roots.length ?? forest.roots.length}</p>
           </CardContent></Card>
           <Card><CardContent className="p-4">
             <p className="text-[11px] uppercase tracking-widest text-muted-foreground">最大深度</p>
@@ -477,7 +610,7 @@ export default function AdminInviteTreePage() {
             <div
               ref={containerRef}
               className="overflow-auto bg-[radial-gradient(circle_at_top_left,rgba(14,165,233,0.22),transparent_30%),radial-gradient(circle_at_bottom_right,rgba(168,85,247,0.18),transparent_28%),linear-gradient(180deg,#020617,#0f172a)]"
-              style={{ maxHeight: "70vh" }}
+              style={{ maxHeight: "min(70vh, 720px)", touchAction: "pan-x pan-y" }}
             >
               <div
                 style={{
@@ -541,7 +674,7 @@ export default function AdminInviteTreePage() {
                     </g>
                   ))}
                   {/* 边 */}
-                  {forest.edges.map((e) => {
+                  {visibleForest!.edges.map((e) => {
                     const p = placed!.positions.get(e.parent);
                     const c = placed!.positions.get(e.child);
                     if (!p || !c) return null;
@@ -572,10 +705,13 @@ export default function AdminInviteTreePage() {
                     />
                   )}
                   {/* 节点 */}
-                  {forest.nodes.map((n) => {
+                  {visibleForest!.nodes.map((n) => {
                     const pos = placed!.positions.get(n.uid);
                     if (!pos) return null;
                     const isSelected = selectedUid === n.uid;
+                    const searchActive = deferredQuery.trim().length > 0;
+                    const isMatched = matchingUIDs.has(n.uid);
+                    const dimmed = searchActive && !isMatched && !isSelected;
                     const color = nodeColor(n, pos.depth);
                     const r = nodeRadius(n, pos.depth);
                     return (
@@ -588,33 +724,35 @@ export default function AdminInviteTreePage() {
                         <circle
                           r={r + 14}
                           fill={color}
-                          opacity={isSelected ? 0.28 : pos.depth === 1 ? 0.18 : 0.1}
+                          opacity={dimmed ? 0.04 : isSelected || isMatched ? 0.34 : pos.depth === 1 ? 0.18 : 0.1}
                           filter="url(#invite-soft-glow)"
                         />
                         <circle r={r + 6} fill="none" stroke={color} strokeOpacity={0.25} strokeWidth={1} />
                         <circle
                           r={r}
                           fill={color}
-                          opacity={n.active ? 0.98 : 0.55}
-                          stroke={isSelected ? "#f8fafc" : n.emby_id ? "#e0f2fe" : "#64748b"}
-                          strokeWidth={isSelected ? 2.4 : 1.1}
+                          opacity={dimmed ? 0.24 : n.active ? 0.98 : 0.55}
+                          stroke={isSelected || isMatched ? "#f8fafc" : n.emby_id ? "#e0f2fe" : "#64748b"}
+                          strokeWidth={isSelected || isMatched ? 2.4 : 1.1}
                           filter={n.active ? "url(#invite-soft-glow)" : undefined}
                         />
                         {n.role === 0 && <path d={`M -6 ${-r - 5} L 0 ${-r - 13} L 6 ${-r - 5} Z`} fill="#fbbf24" opacity={0.95} />}
                         {!n.emby_id && <circle r={r + 2} fill="none" stroke="#cbd5e1" strokeOpacity={0.55} strokeDasharray="2 3" />}
-                        <text
-                          textAnchor="middle"
-                          y={r + 14}
-                          fontSize={pos.depth === 1 ? 12 : 10.5}
-                          fontFamily="ui-sans-serif, system-ui"
-                          fill="#e2e8f0"
-                          opacity={n.active ? 0.95 : 0.58}
-                          paintOrder="stroke"
-                          stroke="#020617"
-                          strokeWidth={3}
-                        >
-                          {n.username}
-                        </text>
+                        {(showLabels || isSelected || isMatched || pos.depth === 1) && (
+                          <text
+                            textAnchor="middle"
+                            y={r + 14}
+                            fontSize={pos.depth === 1 ? 12 : 10.5}
+                            fontFamily="ui-sans-serif, system-ui"
+                            fill="#e2e8f0"
+                            opacity={dimmed ? 0.34 : n.active ? 0.95 : 0.58}
+                            paintOrder="stroke"
+                            stroke="#020617"
+                            strokeWidth={3}
+                          >
+                            {n.username}
+                          </text>
+                        )}
                         {pos.depth === 1 && (
                           <text
                             textAnchor="middle"
@@ -720,6 +858,49 @@ export default function AdminInviteTreePage() {
           </div>
         </Sheet>
       )}
+
+      <Dialog
+        open={depthPrompt !== null}
+        onOpenChange={(open) => {
+          if (!open) closeDepthPrompt(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{depthPrompt?.title}</DialogTitle>
+            <DialogDescription>{depthPrompt?.description}</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Input
+              type="number"
+              min={0}
+              inputMode="numeric"
+              value={depthPrompt?.value ?? "1"}
+              onChange={(event) =>
+                setDepthPrompt((current) =>
+                  current ? { ...current, value: event.target.value } : current,
+                )
+              }
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  closeDepthPrompt(depthPrompt?.value.trim() || "1");
+                }
+              }}
+            />
+            <p className="text-xs text-muted-foreground">
+              输入 0 表示整棵子树；输入 1 表示仅当前用户。
+            </p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => closeDepthPrompt(null)}>
+              取消
+            </Button>
+            <Button onClick={() => closeDepthPrompt(depthPrompt?.value.trim() || "1")}>
+              {depthPrompt?.confirmLabel ?? "确认"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </motion.div>
   );
 }

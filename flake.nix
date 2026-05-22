@@ -17,24 +17,20 @@
       devShells = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          python = pkgs.python311;
         in
         {
           default = pkgs.mkShell {
             packages = with pkgs; [
-              python
-              uv
+              go_1_23
               nodejs_22
               pnpm
               pkg-config
               openssl
-              rustc
-              cargo
             ];
 
             shellHook = ''
-              echo "Twilight dev shell: Python $(python --version), Node $(node --version), pnpm $(pnpm --version)"
-              echo "Backend deps: uv venv .venv && . .venv/bin/activate && uv pip install -r requirements-dev.txt"
+              echo "Twilight dev shell: Go $(go version), Node $(node --version), pnpm $(pnpm --version)"
+              echo "Backend check: go test ./..."
               echo "Frontend deps: cd webui && pnpm install --frozen-lockfile"
             '';
           };

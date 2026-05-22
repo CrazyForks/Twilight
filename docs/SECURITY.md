@@ -47,14 +47,14 @@ cors_origins = ["https://app.example.com"]
 - 主要登录、注册、TG 绑定、密码/绑定相关接口都已启用滑动窗口限流（见 [BACKEND_API.md §3.1](./BACKEND_API.md#31-速率限制)）。
 - 配额维度：IP / UID / 业务 key（如绑定码、request_id）。
 - 命中后返回 `HTTP 429` + `retry_after` 提示，并写 `logger.warning`。
-- 配额是单进程内存的（`src/core/utils.py::_RATE_BUCKETS`），多 worker 部署下每个进程独立计数；如有进一步加固需求，可改为基于 Redis 的实现。
+- Go 后端在配置 Redis 时使用 Redis 共享限流计数；未配置 Redis 时降级为单进程内存计数。
 
 ## 4. 多进程部署一致性
 
-- 生产多进程建议配置 Redis：
+- 生产多进程/多实例建议配置 Redis：
   - 共享会话/Token 状态
-  - 共享短时业务状态（如绑定流程）
-- 未配置 Redis 时，某些跨进程流程可能退化为“最终一致”。
+  - 共享 API 速率限制计数
+- 未配置 Redis 时，会话和限流只在当前 Go 进程内生效。
 
 ## 5. 反向代理与暴露面
 
@@ -100,7 +100,16 @@ cors_origins = ["https://app.example.com"]
 - 保留份数：默认 20 份，环境变量 `TWILIGHT_CONFIG_BACKUP_RETENTION` 可覆盖（`<=0` 表示不裁剪）。超出按 mtime 从旧到新淘汰。
 - 备份目录已加入 `.gitignore`，不要 commit。
 
-## 9. 上线前检查清单
+## 9. 数据库与自动更新安全
+
+- 数据库备份、恢复、迁移接口均要求管理员登录；恢复目标会限制在配置的备份目录内，拒绝 `../` 路径穿越。
+- 迁移到 PostgreSQL 前先使用管理端预检，确认目标连接成功、快照大小和实体计数符合预期。
+- 切换 `database.driver` 后需要重启后端；仅迁移数据不会让当前进程自动切换已打开的 store。
+- Git 自动更新只允许 HTTPS 仓库 URL，不允许 URL 内携带用户名/密码/token。
+- 自动更新默认拒绝 dirty worktree；先执行安全预检，再执行拉取。需要本地补丁长期存在时，请先合并或提交，不要依赖强制覆盖。
+- 自动更新使用 `git pull --ff-only`，不会做 rebase、merge 或 reset。
+
+## 10. 上线前检查清单
 
 - [ ] 所有默认密钥/示例密钥已替换
 - [ ] `config.local.toml` 与 `.env` 未入库
@@ -110,3 +119,5 @@ cors_origins = ["https://app.example.com"]
 - [ ] 关键日志可追溯但不泄密
 - [ ] 公开端点的速率限制阈值已按预期流量评估（[BACKEND_API.md §3.1](./BACKEND_API.md#31-速率限制)）
 - [ ] `Telegram.ban_on_leave` 评估过：要开就先确认 Bot 在每个群都有封禁权限，并准备好"误封解除"的运维流程
+- [ ] 数据库备份/恢复/迁移预检已在测试环境跑过
+- [ ] Git 自动更新预检显示 worktree clean，且仓库 URL 不含凭据

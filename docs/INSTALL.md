@@ -1,165 +1,141 @@
-# Twilight 安装部署指南
+# 安装部署
 
-本文档详细说明如何安装和部署 Twilight 系统。
-
-> **前置阅读**
-> 作者默认你具备一定的 Linux 与 Python 基础。如果完全不熟悉，建议先了解相关基础再尝试部署。
-
-> **关于 Docker**
-> 作者本人不喜欢 Docker，因此 **不提供** Docker 部署方案。
-> 如果你需要 Docker，请自行实现；请勿将"没有 Docker 方案"作为 Issue 提交，否则会被直接关闭。
-
-## 目录
-
-- [Twilight 安装部署指南](#twilight-安装部署指南)
-  - [目录](#目录)
-  - [环境要求](#环境要求)
-    - [最低要求](#最低要求)
-    - [推荐配置](#推荐配置)
-    - [前置说明](#前置说明)
-  - [部署步骤](#部署步骤)
-    - [前端](#前端)
-    - [后端](#后端)
-  - [获取帮助](#获取帮助)
+Twilight Go 后端面向 Linux 部署设计，生产环境建议使用 systemd 管理服务，并通过 HTTPS 反向代理暴露前端和 API。
 
 ## 环境要求
 
-### 最低要求
+- Go 1.23 或更高版本。
+- Node.js 22 或更高版本。
+- pnpm。
+- 可访问的 Emby 或 Jellyfin 服务。
+- 生产环境建议配置 Redis，用于共享会话和限流计数。
 
-- **Python**：3.10+
-- **数据库**：SQLite（内置）或 PostgreSQL / MySQL（可选）
-- **Redis**：可选（用于分布式部署或会话存储）
-- **内存**：512 MB+
-- **磁盘**：2 GB+（含依赖与数据库）
+## 后端部署
 
-### 推荐配置
-
-- **Python**：3.11+，搭配 [`uv`](https://github.com/astral-sh/uv) 管理依赖
-- **系统**：Linux（Ubuntu 22.04+）或 Windows 11
-- **内存**：2 GB+
-- **Redis**：按需
-
-### 前置说明
-
-- 不推荐安装在 Windows 设备上
-- 前后端分离部署
-
-## 部署步骤
-
-### 前端
-
-1. 登录 Cloudflare 与 GitHub。
-2. 打开 <https://github.com/Prejudice-Studio/Twilight> 并 Fork 到自己的账号下。
-3. 进入 Cloudflare 主页 → **构建 → 计算 → Workers 和 Pages**。
-4. 选择 **创建应用程序 → Continue with GitHub** 并登录 GitHub。
-5. 选择 Twilight 项目；**项目名称必须为 `twilight-webui`**，否则会出现问题。
-6. 填写以下配置：
-
-   - 构建命令：`pnpm opennextjs-cloudflare build`
-   - 部署命令：`pnpm opennextjs-cloudflare deploy`
-   - 版本命令：`pnpm opennextjs-cloudflare upload`
-   - 高级设置：
-     - 路径：`/webui`
-     - 环境变量：`NEXT_PUBLIC_API_URL` = `你的后端地址`
-     - 环境变量：`NODE_VERSION` = `22`
-
-7. 保存并部署，等待完成。
-8. 可选操作：
-   - 把 Pages 绑定到自己 Cloudflare 托管的域名。
-   - 在 Pages 的 **构建 → 部署挂钩** 添加 GitHub 仓库，实现自动部署（不放心可不加，手动部署即可）。
-
-#### 自托管：1Panel / Docker / systemd 等非交互环境跑 pnpm
-
-把前端跑在自己服务器（1Panel 的 Node 运行环境、Docker、systemd 守护进程等）时，启动脚本通常没有 TTY。pnpm 在这种环境下检测到 `node_modules` 需要重建会卡在 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY`：
-
-```text
-[ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY] Aborted removal of modules directory due to no TTY
-
-If you are running pnpm in CI, set the CI environment variable to "true", or set "confirmModulesPurge" to "false".
+```bash
+go build -o bin/twilight ./cmd/twilight
+cp config.production.toml config.toml
+bash start_backend_prod.sh
 ```
 
-仓库 `webui/.npmrc` 已经配置好 `confirm-modules-purge=false`，clone 下来直接跑就能避开。如果你裁剪过这个文件或者用别的工具引导启动，至少需要满足以下任一条件：
+API 默认监听 `127.0.0.1:5000`，也可以通过 `TWILIGHT_API_HOST` 和 `TWILIGHT_API_PORT` 覆盖。
 
-1. **推荐**：保留 `webui/.npmrc` 里的 `confirm-modules-purge=false`
-2. 在启动脚本里 `export CI=true` 再跑 `pnpm install`
-3. 在 `webui/package.json` 加 `"pnpm": { "confirmModulesPurge": false }`
+HTTPS 反向代理部署时必须注意：
 
-启动命令示例（1Panel Node 运行环境）：
+- `TWILIGHT_SESSION_COOKIE_SECURE=true`
+- `TWILIGHT_API_CORS_ORIGINS=https://你的前端域名`
+- 不要把 `*` 用作带 Cookie 登录态接口的 CORS Origin。
+
+## PostgreSQL 配置
+
+默认配置使用 JSON 状态文件。需要 PostgreSQL 时，在 `config.toml` 中修改 `[Database]`：
+
+```toml
+[Database]
+driver = "postgres"
+url = ""
+backup_dir = ""
+postgres_host = "127.0.0.1"
+postgres_port = 5432
+postgres_user = "twilight"
+postgres_password = "请替换为高强度密码"
+postgres_database = "twilight"
+postgres_sslmode = "disable"
+postgres_max_open_conns = 8
+postgres_max_idle_conns = 4
+```
+
+也可以只填写完整 DSN：
+
+```toml
+[Database]
+driver = "postgres"
+url = "postgres://twilight:请替换为高强度密码@127.0.0.1:5432/twilight?sslmode=disable"
+```
+
+环境变量覆盖：
+
+```bash
+TWILIGHT_DATABASE_DRIVER=postgres
+TWILIGHT_DATABASE_URL=postgres://twilight:密码@127.0.0.1:5432/twilight?sslmode=disable
+# 也可使用等价别名：TWILIGHT_POSTGRES_DSN=postgres://...
+TWILIGHT_POSTGRES_MAX_OPEN_CONNS=8
+TWILIGHT_POSTGRES_MAX_IDLE_CONNS=4
+```
+
+切换前必须先在管理端执行数据库迁移预检；预检只验证连接和快照信息，不会创建 PostgreSQL 表或写入数据。确认 `target_ready.connected=true` 后，再在前端二次确认执行迁移。后端会在实际迁移前自动创建保护性备份，并在响应中返回 `pre_operation_backup`。低配 1Panel 或同机 PostgreSQL 建议先保持连接池较小，避免数据库连接数被面板、备份任务和 Twilight 同时打满。
+
+## 前端部署
 
 ```bash
 cd webui
-pnpm install --frozen-lockfile      # 严格按 pnpm-lock.yaml 装
-pnpm build                          # next build
-pnpm start                          # next start
+pnpm install --frozen-lockfile
+pnpm build
+pnpm start -p 3000
 ```
 
-> `--frozen-lockfile` 保证生产环境装的是和仓库 lockfile 一致的依赖；如果遇到 lockfile 过时报错，先在本地 `pnpm install` 更新 lockfile 提交后再部署，不要在生产环境随手 `--no-frozen-lockfile` 改装。
+生产环境建议让前端域名和 API 域名保持明确的 HTTPS Origin，并在后端 CORS 白名单中逐项填写。
 
-### 后端
+## 特殊部署环境注意事项
 
-1. 安装 Python / uv 环境。
-2. 克隆仓库并进入目录：
+- 1Panel Go 运行环境：运行目录指向项目根目录，启动命令使用 `./bin/twilight api --host 0.0.0.0 --port 5000 --config config.toml`，不要把 `config.toml`、`.env`、1Panel 运行配置提交到 Git。
+- 反向代理：推荐后端只监听 `127.0.0.1:5000`，由 Nginx/Caddy/1Panel OpenResty 暴露 HTTPS；跨域部署时 `session_cookie_samesite` 必须与域名关系匹配。
+- 同域部署：前端 `/api/*` 反代到后端时，`NEXT_PUBLIC_API_URL` 可以留空；分离域名部署时必须设置为后端 HTTPS 地址，并同步后端 `cors_origins`。
+- Cloudflare/OpenNext：标准 Node/1Panel 部署不需要启用 OpenNext dev 初始化；只有 Cloudflare 本地开发需要设置 `TWILIGHT_OPENNEXT_DEV=true`。
+- systemd：项目路径、配置路径和二进制路径不要包含空白或 `%`，setup 脚本会拒绝这类路径，避免 unit 解析歧义。
 
-   ```bash
-   git clone https://github.com/Prejudice-Studio/Twilight.git
-   cd Twilight
-   ```
+## systemd 一键设置
 
-3. 创建并激活 Python / uv 虚拟环境。
-4. 安装依赖：
+项目提供 Linux-only 一键脚本：
 
-   ```bash
-   pip install -r requirements.txt
-   # 或
-   uv pip install -r requirements.txt
-   ```
+```bash
+sudo bash deploy/setup-systemd.sh --dry-run
+sudo bash deploy/setup-systemd.sh --restart
+```
 
-   NixOS 用户先进入项目 flake 环境，再创建虚拟环境：
+脚本会执行以下检查和操作：
 
-   ```bash
-   nix develop
-   uv venv .venv
-   . .venv/bin/activate
-   uv pip install -r requirements.txt
-   ```
+- 检查当前系统是否为 Linux。
+- 检查是否以 root 权限运行。
+- 检查项目目录是否包含 Go 后端入口。
+- 检查配置文件、二进制路径、服务用户/组和端口合法性。
+- 在缺少 `bin/twilight` 时自动构建后端二进制。
+- 创建 `db/`、`db/backups/`、`uploads/`、`config_backups/` 等运行目录。
+- 扫描 `twilight.service`、`twilight-bot.service`、`twilight-scheduler.service` 是否仍指向旧 Python 入口。
+- 检测到旧 Python unit 时，会停止、禁用并备份旧 unit，再写入 Go 版 unit。
 
-5. 复制配置模板并编辑：
+常用覆盖参数：
 
-   ```bash
-   cp config.production.toml config.toml
-   # 编辑 config.toml，按真实环境填写
-   ```
+```bash
+sudo TWILIGHT_PROJECT_ROOT=/opt/Twilight \
+  TWILIGHT_CONFIG_FILE=/opt/Twilight/config.toml \
+  TWILIGHT_API_HOST=127.0.0.1 \
+  TWILIGHT_API_PORT=5000 \
+  TWILIGHT_SYSTEMD_USER=twilight \
+  bash deploy/setup-systemd.sh --restart
+```
 
-6. 给一键启动脚本执行权限：
+`twilight-scheduler` 保留为兼容旧部署的服务名，实际定时任务由 API 进程提供和管理。`twilight-bot` 在未启用 Telegram 或未配置 Bot Token 时会安全等待退出信号，不会反复失败重启。
 
-   ```bash
-   chmod +x start_backend_prod.sh
-   ```
+## 运行数据与备份
 
-7. 执行脚本启动后端。默认端口 `5000`。
-8. 在 Cloudflare 中为后端添加 DNS 记录指向你的服务器 IP，确保前端配置的 `NEXT_PUBLIC_API_URL` 与后端地址一致。
-9. 在 `config.toml` 中配置好跨源域名（`[API].cors_origins`）。
-10. 访问前端并注册账号；在 `config.toml` 中把 `[SAR].admin_uids` 改为你的账号 UID，重启后端后即成为管理员。
+默认运行数据：
 
-> **注意**
-> 目前在管理后台保存配置后，程序会自行关闭并 **不会自动重启**。
-> 请配合 systemd / docker / supervisor 等具备自动拉起能力的方式启动，
-> 或等待后续版本完善。
+- JSON 状态文件：`db/twilight_go_state.json`
+- 数据库备份目录：`db/backups/`
+- 上传目录：`uploads/`
+- 配置备份目录：`config_backups/`
 
-### 可选环境变量
+管理员可以在前端配置页执行数据库备份、恢复和迁移预检。恢复和迁移必须先预览、再二次确认；后端在实际写入前会自动创建保护性备份。备份恢复只接受备份目录内的普通 `.json` 文件。
 
-| 变量 | 用途 | 默认 |
-| ---- | ---- | ---- |
-| `TWILIGHT_CONFIG_FILE` | 主配置文件路径 | `<项目根>/config.toml` |
-| `TWILIGHT_CONFIG_LOCAL_FILE` | 本地覆盖配置（合并到主配置之上，已 `.gitignore`） | `<项目根>/config.local.toml` |
-| `TWILIGHT_CONFIG_BACKUP_RETENTION` | `config_backups/` 目录最多保留多少份历史 `.bak`；`<=0` 表示不裁剪 | `20` |
+## 本地配置与密钥
 
-> 启动期会自动迁移老 section、删孤立键、补缺失默认；任何变更前都会先备份到
-> `config_backups/`（权限 `0o600`），见 [SECURITY.md §8](./SECURITY.md#8-配置文件自动备份)。
+以下内容不应提交到 Git：
 
-## 获取帮助
+- `config.toml`
+- `.env`
+- `config.local.toml`
+- 1Panel 本地运行配置和环境变量文件。
+- Emby API Key、Telegram Bot Token、PostgreSQL 密码、Redis 密码。
 
-- 查看日志：`logs/twilight.log`
-- 提交 Issue：<https://github.com/Prejudice-Studio/Twilight/issues>
-- 参与讨论：<https://github.com/Prejudice-Studio/Twilight/discussions>
-- 代码仓库：<https://github.com/Prejudice-Studio/Twilight>
+`.gitignore` 已覆盖常见本地配置、运行数据和 1Panel 文件名模式；新增部署文件前仍应先确认是否包含密钥。

@@ -1,48 +1,4 @@
-# ==================== Python ====================
-# Byte-compiled / optimized / DLL files
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.nox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
-cover/
-
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-
-# Virtual environments
-venv/
-env/
-ENV/
-.venv
-
-# ==================== IDE ====================
+# IDE
 .vscode/
 .idea/
 *.swp
@@ -52,9 +8,13 @@ ENV/
 .cursorignore
 .cursorindexingignore
 
-# ==================== Environment & Config ====================
+# Environment and local config
 .env
 .env.local
+.env.development
+.env.production
+.env.staging
+.env.test
 .env.*.local
 .env.*.private
 .envrc
@@ -65,27 +25,35 @@ config.*.secrets.toml
 config.*.local.toml
 config.toml.backup
 config.toml.bak
+config.toml
+1panel*.env
+1panel*.toml
+1panel*.json
+1panel*.yaml
+1panel*.yml
+1panel*.conf
+.1panel/
+1panel/
+*.local
+*.secret
 
-# ==================== Project Specific ====================
-# Logs
+# Runtime data
 *.log
-logs/
+/logs/
 api_error.log
-
-# Database
-# 前导斜杠很重要：不加会误伤源码目录 `src/db/`。新增 `src/db/*.py` 后请
-# 用 `git check-ignore -v src/db/<file>.py` 二次确认未被忽略。
 *.db
+*.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
+*.sqlite-*
 /db/
 database.db
-
-# 配置文件备份目录（启动期 sweep + 管理员保存都会写入；按 TWILIGHT_CONFIG_BACKUP_RETENTION
-# 自动裁剪保留份数，但不应该入库）
 config_backups/
-
-# Uploads and temporary files
+backups/
+runtime/
+data/
 uploads/
 tmp/
 temp/
@@ -94,30 +62,7 @@ temp/
 *.temp
 *.pid
 
-# Routes generated file
-routes.txt
-
-# ==================== macOS ====================
-.DS_Store
-.AppleDouble
-.LSOverride
-
-# ==================== Windows ====================
-Thumbs.db
-*.lnk
-desktop.ini
-*.bat
-*.cmd
-*.ps1
-
-# ==================== Keys & Credentials ====================
-*.pem
-*.key
-*.p12
-
-# ==================== Frontend (Next.js/TypeScript) ====================
-# 用通用前缀，避免再有 webui/<sub>/ 子工程时漏配。next-env.d.ts 是
-# Next.js 官方建议提交的，不要加进来。
+# Frontend
 node_modules/
 .pnp
 .pnp.js
@@ -126,83 +71,83 @@ node_modules/
 out/
 .eslintcache
 .env*.local
-
-# 通用 TypeScript / 构建器缓存（任何深度都忽略）
 **/tsconfig.tsbuildinfo
 **/*.tsbuildinfo
 .vite/
 .parcel-cache/
-
-# OpenNext / Cloudflare Workers 部署中间产物
 .opennextjs/
 .wrangler/
-
-# Debug
+.vercel/
+.netlify/
+coverage/
+playwright-report/
+test-results/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+webui/.next-env.d.ts.lock
 
-# ==================== Build & Distribution ====================
-*.egg
-*.egg-info/
+# Go build outputs
 dist/
 build/
-.pybuilder/
-.ruff_cache/
-.mypy_cache/
-.dmypy.json
-dmypy.json
+/bin/
+/twilight
+/twilight.exe
+*.test
+coverage.out
+coverage.html
+*.coverprofile
+*.prof
+*.pprof
+.air.toml
 
-# ==================== Backup & History ====================
+# OS files
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+*.lnk
+desktop.ini
+*.bat
+*.cmd
+*.ps1
+
+# Keys and credentials
+*.pem
+*.key
+*.p12
+
+# Backup and patch artifacts
 *.backup
 *.orig
 *.rej
 *.patch
 *.bak
 
-# ==================== Local / Experimental ====================
-# 这些文件如果存在仅供本地实验，不应进入版本控制。
-migrate.py
-test_api.py
-test_external.py
-test_import.py
+# Local and generated artifacts
 OPTIMIZATION_SUMMARY.md
 DEPLOY_LOCAL.txt
 /tests
-config.toml
 /.claude
 /memory/
 .notes/
-
-# ==================== Editor swap & coverage extras ====================
 .vs/
 *.suo
 *.user
 *.sln.docstates
 .history/
 .aider*
-
-# ==================== AI / Tooling cache ====================
 .codex/
 .continue/
 .copilot/
-
-# ==================== Routes / Generated ====================
+routes.txt
 routes.json
 openapi.json
 schema.dump
-
-# ==================== Frontend specific (legacy aliases) ====================
-# 上方已经按通用 glob 忽略；以下条目仅做兼容兜底，删除也无功能影响。
-webui/.next-env.d.ts.lock
-
-# ==================== Large media / sample files ====================
 sample/
 samples/
 fixtures/local/
-
-# VS Code/Copilot local session artifacts
-.copilot/
 /.github/copilot-instructions.local.md
 opencode.json
+docs/AUDIT_REPORT.md
