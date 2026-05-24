@@ -211,6 +211,10 @@ func (a *App) telegramHandleCallback(ctx context.Context, callback map[string]an
 	if panel.ChatID == 0 && chatID != 0 {
 		panel.ChatID = chatID
 	}
+	if (panel.ChatID != 0 && chatID != 0 && panel.ChatID != chatID) || (panel.MessageID != 0 && messageID != 0 && panel.MessageID != messageID) {
+		_ = a.telegramAnswerCallbackQuery(ctx, callbackID, "面板来源不匹配，请重新打开。", true)
+		return
+	}
 	if !a.telegramAdminID(actorID) {
 		_ = a.telegramAnswerCallbackQuery(ctx, callbackID, "没有管理员权限。", true)
 		a.telegramSendUnauthorizedAndCleanup(ctx, panel.ChatID, panel.CommandMessageID)
@@ -269,6 +273,42 @@ func (a *App) telegramApplyPanelAction(ctx context.Context, panel telegramPanelC
 			_ = a.embySetUserEnabled(ctx, updated.EmbyID, a.embyShouldEnableUser(updated))
 		}
 		a.telegramEditPanelWithNotice(ctx, panel, updated, "用户状态已更新。")
+	case "grant_register":
+		if a.telegramProtectedTarget(target) {
+			a.telegramEditPanelWithNotice(ctx, panel, target, "管理员或受保护账号不需要通过群组面板授予注册资格。")
+			return
+		}
+		if target.EmbyID != "" {
+			a.telegramEditPanelWithNotice(ctx, panel, target, "目标用户已绑定 Emby，无需授予注册资格。")
+			return
+		}
+		if reached, current, limit := a.embyCapacityReached(target.UID); reached {
+			a.telegramEditPanelWithNotice(ctx, panel, target, fmt.Sprintf("Emby 名额已满: %d/%d。", current, limit))
+			return
+		}
+		days := a.cfg.InviteDefaultDays
+		if days == 0 {
+			days = a.cfg.EmbyDirectRegisterDays
+		}
+		if days == 0 {
+			days = 30
+		}
+		if days < -1 {
+			days = -1
+		}
+		updated, err := a.store.UpdateUser(target.UID, func(u *store.User) error {
+			u.PendingEmby = true
+			u.PendingEmbyDays = &days
+			if u.Role == store.RoleUnrecognized {
+				u.Role = store.RoleNormal
+			}
+			return nil
+		})
+		if err != nil {
+			a.telegramEditPanelWithNotice(ctx, panel, target, "授予注册资格失败: "+err.Error())
+			return
+		}
+		a.telegramEditPanelWithNotice(ctx, panel, updated, fmt.Sprintf("已授予 Emby 注册资格，有效天数: %d。", days))
 	case "delete":
 		if a.telegramProtectedTarget(target) {
 			a.telegramEditPanelWithNotice(ctx, panel, target, "管理员账号禁止通过 Telegram 面板删除。")
@@ -338,30 +378,51 @@ func (a *App) telegramEditPanelWithNotice(ctx context.Context, panel telegramPan
 }
 
 func (a *App) telegramGroupUserPanelText(u store.User) string {
-	return "群组用户面板\n\n" + telegramUserSummary(u) + "\n\n面板 1 分钟无操作会自动删除。"
+	return strings.Join([]string{
+		"Twilight 群组用户面板",
+		"",
+		"用户",
+		"- 用户名: " + u.Username,
+		fmt.Sprintf("- UID: %d", u.UID),
+		"",
+		"账号",
+		"- 角色: " + roleName(u.Role),
+		"- Web 状态: " + telegramActiveLabel(u.Active),
+		"- 到期状态: " + expireStatus(u.ExpiredAt),
+		"",
+		"绑定",
+		"- Telegram: " + telegramBoundLabel(u.TelegramID != 0),
+		"- Emby: " + telegramEmbyLabel(u),
+		"- 注册资格: " + telegramYesNoLabel(u.PendingEmby && u.EmbyID == ""),
+		"",
+		"提示: 面板 1 分钟无操作会自动删除；每次按钮操作都会重新校验管理员身份。",
+	}, "\n")
 }
 
 func (a *App) telegramGroupUserPanelMarkup(token string, u store.User, confirmDelete bool) any {
-	rows := [][]telegramInlineButton{{
+	panelRows := [][]telegramInlineButton{{
 		{Text: "刷新", Data: "gadm:act:refresh:" + token},
 	}}
 	if u.Active {
-		rows = append(rows, []telegramInlineButton{{Text: "禁用账号", Data: "gadm:act:disable:" + token}})
+		panelRows = append(panelRows, []telegramInlineButton{{Text: "禁用 Web 账号", Data: "gadm:act:disable:" + token}})
 	} else {
-		rows = append(rows, []telegramInlineButton{{Text: "启用账号", Data: "gadm:act:enable:" + token}})
+		panelRows = append(panelRows, []telegramInlineButton{{Text: "启用 Web 账号", Data: "gadm:act:enable:" + token}})
+	}
+	if u.EmbyID == "" && !u.PendingEmby && !a.telegramProtectedTarget(u) {
+		panelRows = append(panelRows, []telegramInlineButton{{Text: "授予注册资格", Data: "gadm:act:grant_register:" + token}})
 	}
 	if confirmDelete {
-		rows = append(rows, []telegramInlineButton{{Text: "确认删除用户", Data: "gadm:act:delete_confirm:" + token}})
+		panelRows = append(panelRows, []telegramInlineButton{{Text: "确认删除用户", Data: "gadm:act:delete_confirm:" + token}})
 	} else {
-		rows = append(rows, []telegramInlineButton{{Text: "删除用户", Data: "gadm:act:delete:" + token}})
+		panelRows = append(panelRows, []telegramInlineButton{{Text: "删除用户", Data: "gadm:act:delete:" + token}})
 	}
 	if u.TelegramID != 0 {
-		rows = append(rows, []telegramInlineButton{
+		panelRows = append(panelRows, []telegramInlineButton{
 			{Text: "移出群组", Data: "gadm:act:kick:" + token},
 			{Text: "封禁群组", Data: "gadm:act:ban:" + token},
 		})
 	}
-	return telegramInlineKeyboard(rows)
+	return telegramInlineKeyboard(panelRows)
 }
 
 func (a *App) telegramProtectedTarget(u store.User) bool {

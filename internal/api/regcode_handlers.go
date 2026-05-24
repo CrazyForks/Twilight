@@ -26,7 +26,7 @@ func (a *App) handleListRegcodes(w http.ResponseWriter, r *http.Request, _ Param
 				continue
 			}
 		}
-		if search != "" && !strings.Contains(strings.ToLower(code.Code+" "+code.Note), search) {
+		if search != "" && !strings.Contains(strings.ToLower(code.Code+" "+code.Note+" "+code.TargetUsername), search) {
 			continue
 		}
 		items = append(items, dto)
@@ -57,6 +57,10 @@ func (a *App) handleCreateRegcodes(w http.ResponseWriter, r *http.Request, _ Par
 	algorithm := firstNonEmpty(stringValue(payload, "random_algorithm"), a.cfg.RegCodeRandomAlgorithm, "base32-20")
 	codes := make([]string, 0, count)
 	targetUsername := strings.TrimSpace(stringValue(payload, "target_username"))
+	if targetUsername != "" && !validRegcodeTargetUsername(targetUsername) {
+		fail(w, http.StatusBadRequest, "目标用户名长度需为 3-32 个字符，且不能包含特殊路径或注入字符")
+		return
+	}
 	for i := 0; i < count; i++ {
 		code := generateRegCode(format, codeType, algorithm, days, i+1, validity, useLimit)
 		_ = a.store.UpsertRegCode(store.RegCode{Code: code, Type: codeType, ValidityTime: validity, UseCountLimit: useLimit, Days: days, Note: truncateString(stringValue(payload, "note"), 120), IsDecoy: boolValue(payload, "decoy", false), TargetUsername: targetUsername, Active: true})
@@ -81,6 +85,10 @@ func (a *App) handleDeleteRegcode(w http.ResponseWriter, r *http.Request, params
 		return
 	}
 	ok(w, "注册码已删除", nil)
+}
+
+func validRegcodeTargetUsername(username string) bool {
+	return len(username) >= 3 && len(username) <= 32 && !strings.ContainsAny(username, "/\\@:\x00<>\"'&")
 }
 
 func (a *App) handleBatchDeleteRegcodes(w http.ResponseWriter, r *http.Request, _ Params) {

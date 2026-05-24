@@ -100,6 +100,7 @@ export default function InviteCenterPage() {
   const [renewNote, setRenewNote] = useState("");
   const [renewing, setRenewing] = useState(false);
   const [generatedRenewCode, setGeneratedRenewCode] = useState<null | { code: string; target_username: string; days: number; validity_hours: number }>(null);
+  const [detachingChildUid, setDetachingChildUid] = useState<number | null>(null);
 
   const reload = useCallback(async () => {
     setLoading(true);
@@ -237,6 +238,30 @@ export default function InviteCenterPage() {
     }));
     if (res.success) {
       toast({ title: used ? "已停用" : "已删除" });
+      await reload();
+    } else {
+      toast({ title: "操作失败", description: res.message, variant: "destructive" });
+    }
+  };
+
+  const handleDetachExpiredChild = async (child: InviteMyStatus["children"][number]) => {
+    const ok = await confirm({
+      title: "断开该下级关系？",
+      description: child.has_emby
+        ? "该下级已到期。操作会删除他的 Emby 账号并断开邀请关系，但保留 Web 账号登录能力。"
+        : "该下级已到期。操作会断开邀请关系，但保留 Web 账号登录能力。",
+      tone: "danger",
+      confirmLabel: child.has_emby ? "删除 Emby 并断开" : "断开关系",
+    });
+    if (!ok) return;
+    setDetachingChildUid(child.uid);
+    const res = await api.detachExpiredInviteChild(child.uid).catch((err) => ({
+      success: false,
+      message: err instanceof Error ? err.message : "请求异常",
+    }));
+    setDetachingChildUid(null);
+    if (res.success) {
+      toast({ title: "已断开下级关系", variant: "success" });
       await reload();
     } else {
       toast({ title: "操作失败", description: res.message, variant: "destructive" });
@@ -431,6 +456,18 @@ export default function InviteCenterPage() {
                       <Button size="sm" variant="outline" className="h-7 px-2 text-[11px]" onClick={() => openRenewDialog(child)}>
                         <KeyRound className="mr-1 h-3 w-3" />
                         生成专属续期码
+                      </Button>
+                    )}
+                    {child.emby_expired && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        className="h-7 px-2 text-[11px]"
+                        onClick={() => void handleDetachExpiredChild(child)}
+                        disabled={detachingChildUid === child.uid}
+                      >
+                        {detachingChildUid === child.uid ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : <Trash2 className="mr-1 h-3 w-3" />}
+                        {child.has_emby ? "删除 Emby 并断开" : "断开关系"}
                       </Button>
                     )}
                   </div>

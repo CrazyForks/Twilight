@@ -76,6 +76,7 @@ export default function AdminRegcodesPage() {
     count: "1",
     format: "",
     randomAlgorithm: "",
+    targetUsername: "",
   });
   const [createDecoy, setCreateDecoy] = useState(false);
   const [isPermanentDays, setIsPermanentDays] = useState(false);
@@ -113,13 +114,13 @@ export default function AdminRegcodesPage() {
       setCreateDecoy(false);
       if (activeTab === "1") {
         setIsPermanentDays(false);
-        setCreateData({ days: "30", validityTime: "-1", useCountLimit: "1", count: "1", format: "", randomAlgorithm: "" });
+        setCreateData({ days: "30", validityTime: "-1", useCountLimit: "1", count: "1", format: "", randomAlgorithm: "", targetUsername: "" });
       } else if (activeTab === "2") {
         setIsPermanentDays(false);
-        setCreateData({ days: "30", validityTime: "72", useCountLimit: "1", count: "1", format: "", randomAlgorithm: "" });
+        setCreateData({ days: "30", validityTime: "72", useCountLimit: "1", count: "1", format: "", randomAlgorithm: "", targetUsername: "" });
       } else {
         setIsPermanentDays(true);
-        setCreateData({ days: "-1", validityTime: "-1", useCountLimit: "-1", count: "1", format: "", randomAlgorithm: "" });
+        setCreateData({ days: "-1", validityTime: "-1", useCountLimit: "-1", count: "1", format: "", randomAlgorithm: "", targetUsername: "" });
       }
   }, [activeTab, createOpen]);
 
@@ -143,6 +144,7 @@ export default function AdminRegcodesPage() {
         decoy: createDecoy,
         format: createData.format.trim() || undefined,
         random_algorithm: createData.randomAlgorithm || undefined,
+        target_username: createData.targetUsername.trim() || undefined,
       });
 
       if (res.success && res.data) {
@@ -362,14 +364,20 @@ export default function AdminRegcodesPage() {
   const randomAlgorithmDescriptions: Record<string, string> = {
     "base32-20": "20 位易抄写大写 Base32 风格字符，去掉易混淆字符，默认推荐。",
     "base32-24": "24 位易抄写大写 Base32 风格字符，更高强度，适合公开发放。",
+    "base32-32": "32 位易抄写大写 Base32 风格字符，适合高价值邀请码批量发放。",
     hex32: "32 位十六进制随机串，约 128-bit 强度，适合系统间导入导出。",
+    hex40: "40 位十六进制随机串，长度较长，适合机器处理。",
     hex20: "20 位十六进制随机串，旧默认格式，保留兼容。",
     "base32-16": "16 位大写 Base32 风格字符，去掉易混淆字符，适合人工抄写。",
     "alnum-24": "24 位大写字母 + 数字，更高强度，兼顾可读性和随机性。",
     "alnum-16": "16 位大写字母 + 数字，兼顾可读性和随机性。",
+    "alnum-32": "32 位大写字母 + 数字，适合高强度随机码。",
     "urlsafe-24": "24 位 URL 安全字符，包含大小写字母、数字、- 和 _。",
+    "urlsafe-32": "32 位 URL 安全字符，适合外部系统传递。",
     "digits-16": "16 位纯数字，比 12 位更安全，但仍低于字母数字混合。",
     "digits-12": "12 位纯数字，便于口头传递，但安全性低于字母数字混合。",
+    "symbols-16": "16 位混合字符，包含特殊字符，适合复制粘贴场景。",
+    "symbols-24": "24 位混合字符，包含特殊字符，随机性更高。",
     uuid: "标准 UUID v4，长度较长，唯一性强，适合系统间导入导出。",
     "legacy-sha1": "旧版 SHA1 截断格式，用于兼容历史卡码风格。",
   };
@@ -488,6 +496,18 @@ export default function AdminRegcodesPage() {
                   />
                 </div>
 
+                <div className="space-y-2">
+                  <Label>指定使用用户</Label>
+                  <Input
+                    value={createData.targetUsername}
+                    onChange={(e) => setCreateData({ ...createData, targetUsername: e.target.value })}
+                    placeholder="留空则不限制；填写用户名后仅该用户可用"
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    适用于注册码、续期码和白名单码。目标用户名需与 Web 账号用户名一致，比较时不区分大小写。
+                  </p>
+                </div>
+
                 <div className="space-y-2 rounded-xl border border-border/80 bg-muted/30 p-3">
                   <div className="flex items-center justify-between gap-3">
                     <div>
@@ -509,14 +529,20 @@ export default function AdminRegcodesPage() {
                         <SelectItem value="default">使用配置默认</SelectItem>
                         <SelectItem value="base32-20">base32-20 推荐</SelectItem>
                         <SelectItem value="base32-24">base32-24 高强度</SelectItem>
+                        <SelectItem value="base32-32">base32-32 超高强度</SelectItem>
                         <SelectItem value="hex32">hex32 128-bit</SelectItem>
+                        <SelectItem value="hex40">hex40 长码</SelectItem>
                         <SelectItem value="hex20">hex20 旧默认</SelectItem>
                         <SelectItem value="base32-16">base32-16 短码</SelectItem>
                         <SelectItem value="alnum-24">alnum-24 高强度</SelectItem>
                         <SelectItem value="alnum-16">alnum-16</SelectItem>
+                        <SelectItem value="alnum-32">alnum-32 超高强度</SelectItem>
                         <SelectItem value="urlsafe-24">urlsafe-24</SelectItem>
+                        <SelectItem value="urlsafe-32">urlsafe-32</SelectItem>
                         <SelectItem value="digits-16">digits-16</SelectItem>
                         <SelectItem value="digits-12">digits-12</SelectItem>
+                        <SelectItem value="symbols-16">symbols-16 含特殊字符</SelectItem>
+                        <SelectItem value="symbols-24">symbols-24 含特殊字符</SelectItem>
                         <SelectItem value="uuid">uuid</SelectItem>
                         <SelectItem value="legacy-sha1">legacy-sha1</SelectItem>
                       </SelectContent>
@@ -693,6 +719,7 @@ export default function AdminRegcodesPage() {
                         <span className="mt-2 flex flex-wrap gap-1">
                           {getTypeBadge(code.type)}
                           {getStatusBadge(code)}
+                          {code.target_username ? <Badge variant="secondary">仅 {code.target_username}</Badge> : null}
                           {code.is_decoy ? <Badge variant="destructive">假卡码</Badge> : <Badge variant="outline">正常卡码</Badge>}
                         </span>
                       </span>
@@ -819,6 +846,7 @@ export default function AdminRegcodesPage() {
                             {getTypeBadge(code.type)}
                             {code.is_decoy ? <Badge variant="destructive">假卡码</Badge> : <Badge variant="outline">正常卡码</Badge>}
                           </div>
+                          {code.target_username ? <div className="text-xs text-muted-foreground">仅限用户：{code.target_username}</div> : null}
                           <div className="flex gap-1">
                             <Input
                               value={noteDrafts[code.code] ?? code.note ?? ""}

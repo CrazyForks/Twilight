@@ -616,6 +616,25 @@ func TestInventoryCheckUsesEmbyProviderAndSeasons(t *testing.T) {
 	}
 }
 
+func TestEmbyURLsDoNotFallbackToInternalServerURL(t *testing.T) {
+	app := newTestApp(t)
+	app.cfg.EmbyURL = "http://127.0.0.1:8096"
+	app.cfg.EmbyURLList = nil
+	app.cfg.EmbyPublicURL = ""
+	_ = doJSON(app, http.MethodPost, "/api/v1/users/register", `{"username":"admin","password":"admin123456"}`, nil)
+	admin, _ := app.store.FindUserByUsername("admin")
+	_, _ = app.store.UpdateUser(admin.UID, func(u *store.User) error { u.EmbyID = "emby-admin"; return nil })
+	login := doJSON(app, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"admin123456"}`, nil)
+	cookie := findCookie(login.Result().Cookies(), "twilight_session")
+	resp := doJSONWithHeaders(app, http.MethodGet, "/api/v1/system/emby-urls", ``, []*http.Cookie{cookie}, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("emby urls status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	if strings.Contains(resp.Body.String(), app.cfg.EmbyURL) {
+		t.Fatalf("internal Emby URL leaked in user route response: %s", resp.Body.String())
+	}
+}
+
 func TestBangumiSearchUsesV0EndpointAndReturnsResults(t *testing.T) {
 	app := newTestApp(t)
 	bgm := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1407,6 +1426,263 @@ func TestMediaRequestInventoryIssueBypassesDuplicateGuard(t *testing.T) {
 	issue.Note = "字幕不同步"
 	if _, err := st.CreateMediaRequest(issue); err != nil {
 		t.Fatalf("inventory issue report should bypass duplicate guard: %v", err)
+	}
+}
+
+func TestRegCodeRandomAlgorithmsAndFormatFallback(t *testing.T) {
+	code := generateRegCode("TW-{type}", 1, "symbols-24", 30, 1, -1, 1)
+	if !strings.HasPrefix(code, "TW-REG-") {
+		t.Fatalf("format without random should append random part, got %q", code)
+	}
+	seenSpecial := false
+	for i := 0; i < 10; i++ {
+		symbolCode := generateRegCode("TW-{random}", 1, "symbols-24", 30, i+1, -1, 1)
+		if strings.ContainsAny(symbolCode, "!@$%^*_-+=.:") {
+			seenSpecial = true
+			break
+		}
+	}
+	if !seenSpecial {
+		t.Fatal("symbols algorithm did not produce any special characters in repeated samples")
+	}
+	uuidCode := generateRegCode("{random}", 1, "uuid", 30, 1, -1, 1)
+	if parts := strings.Split(uuidCode, "-"); len(parts) != 5 || len(uuidCode) != 36 {
+		t.Fatalf("uuid algorithm returned invalid shape: %q", uuidCode)
+	}
+}
+
+func TestTargetedRegcodesAreCreatedListedAndEnforced(t *testing.T) {
+	app := newTestApp(t)
+	_ = doJSON(app, http.MethodPost, "/api/v1/users/register", `{"username":"admin","password":"admin123456"}`, nil)
+	adminLogin := doJSON(app, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"admin123456"}`, nil)
+	adminCookie := findCookie(adminLogin.Result().Cookies(), "twilight_session")
+	created := doJSONWithHeaders(app, http.MethodPost, "/api/v1/admin/regcodes", `{"type":2,"days":10,"count":1,"target_username":"alpha","format":"TGT-{random}","random_algorithm":"digits-12"}`, []*http.Cookie{adminCookie}, map[string]string{"X-Twilight-Client": "webui"})
+	if created.Code != http.StatusOK {
+		t.Fatalf("create targeted regcode status=%d body=%s", created.Code, created.Body.String())
+	}
+	var env envelope
+	if err := json.Unmarshal(created.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	code := env.Data.(map[string]any)["codes"].([]any)[0].(string)
+	reg, ok := app.store.RegCode(code)
+	if !ok || reg.TargetUsername != "alpha" {
+		t.Fatalf("target username was not saved: %#v", reg)
+	}
+	list := doJSONWithHeaders(app, http.MethodGet, "/api/v1/admin/regcodes?search=alpha", ``, []*http.Cookie{adminCookie}, nil)
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"target_username":"alpha"`) {
+		t.Fatalf("target username was not searchable/listed, status=%d body=%s", list.Code, list.Body.String())
+	}
+
+	alpha, err := app.store.CreateUser(store.User{Username: "alpha", Role: store.RoleNormal, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beta, err := app.store.CreateUser(store.User{Username: "beta", Role: store.RoleNormal, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/use-code", strings.NewReader(`{"reg_code":"`+code+`"}`))
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, principal{User: beta}))
+	rr := httptest.NewRecorder()
+	app.handleUseCode(rr, req, nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("non-target user should not use targeted regcode, status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	reg, _ = app.store.RegCode(code)
+	if reg.UseCount != 0 {
+		t.Fatalf("target mismatch consumed regcode, use_count=%d", reg.UseCount)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/users/me/use-code", strings.NewReader(`{"reg_code":"`+code+`"}`))
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, principal{User: alpha}))
+	rr = httptest.NewRecorder()
+	app.handleUseCode(rr, req, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("target user should use targeted regcode, status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	if err := app.store.UpsertRegCode(store.RegCode{Code: "RENEW-ALPHA", Type: 2, Days: 5, ValidityTime: -1, UseCountLimit: 1, Active: true, TargetUsername: "alpha"}); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/users/me/renew", strings.NewReader(`{"reg_code":"RENEW-ALPHA"}`))
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, principal{User: beta}))
+	rr = httptest.NewRecorder()
+	app.handleRenew(rr, req, nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("renew endpoint should reject non-target user, status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	reg, _ = app.store.RegCode("RENEW-ALPHA")
+	if reg.UseCount != 0 {
+		t.Fatalf("target mismatch consumed renewal code, use_count=%d", reg.UseCount)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/users/me/renew", strings.NewReader(`{"reg_code":"RENEW-ALPHA"}`))
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, principal{User: alpha}))
+	rr = httptest.NewRecorder()
+	app.handleRenew(rr, req, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("target user should renew with targeted code, status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestInviteParentCanDetachExpiredChildAndKeepWebAccountActive(t *testing.T) {
+	app := newTestApp(t)
+	parent, err := app.store.CreateUser(store.User{Username: "parent", Role: store.RoleNormal, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := app.store.CreateUser(store.User{Username: "child", Role: store.RoleNormal, Active: true, ExpiredAt: time.Now().AddDate(0, 0, -1).Unix(), EmbyID: "emby-child", EmbyUsername: "child"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.store.UpsertInviteCode(store.InviteCode{Code: "INV-CHILD", UID: parent.UID, InviterUID: parent.UID, Days: 30, UseCountLimit: 1, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.store.ConsumeInviteCode("INV-CHILD", child.UID); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/invite/children/2/detach-expired", nil)
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, principal{User: parent}))
+	rr := httptest.NewRecorder()
+	app.handleDetachExpiredInviteChild(rr, req, Params{"uid": strconv.FormatInt(child.UID, 10)})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("detach status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, ok := app.store.ParentOf(child.UID); ok {
+		t.Fatal("child still has invite parent")
+	}
+	updated, ok := app.store.User(child.UID)
+	if !ok || !updated.Active || updated.EmbyID != "" || updated.EmbyUsername != "" || updated.PendingEmby {
+		t.Fatalf("child web account was not preserved while Emby was cleared: %#v", updated)
+	}
+}
+
+func TestInviteUseRevalidatesTreeAndBoundsExpiry(t *testing.T) {
+	app := newTestApp(t)
+	now := time.Now()
+	parentExpiry := now.AddDate(0, 0, 5).Unix()
+	parent, err := app.store.CreateUser(store.User{Username: "parent", Role: store.RoleNormal, Active: true, EmbyID: "emby-parent", ExpiredAt: parentExpiry})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := app.store.CreateUser(store.User{Username: "child", Role: store.RoleNormal, Active: true, ExpiredAt: now.AddDate(0, 0, 60).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.store.UpsertInviteCode(store.InviteCode{Code: "INV-BOUNDS", UID: parent.UID, InviterUID: parent.UID, Days: 30, UseCountLimit: 1, Active: true, CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/invite/use", strings.NewReader(`{"code":"INV-BOUNDS"}`))
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, principal{User: child}))
+	rr := httptest.NewRecorder()
+	app.handleInviteUse(rr, req, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("invite use status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	updated, _ := app.store.User(child.UID)
+	if updated.ExpiredAt > parentExpiry {
+		t.Fatalf("child expiry exceeded parent expiry: child=%d parent=%d", updated.ExpiredAt, parentExpiry)
+	}
+	if updated.PendingEmbyDays == nil || *updated.PendingEmbyDays > 5 {
+		t.Fatalf("pending emby days were not clamped to inviter expiry: %#v", updated.PendingEmbyDays)
+	}
+
+	otherParent, err := app.store.CreateUser(store.User{Username: "other-parent", Role: store.RoleNormal, Active: true, EmbyID: "emby-other", ExpiredAt: now.AddDate(0, 0, 30).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.store.UpsertInviteCode(store.InviteCode{Code: "INV-SECOND", UID: otherParent.UID, InviterUID: otherParent.UID, Days: 7, UseCountLimit: 1, Active: true, CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/invite/use", strings.NewReader(`{"code":"INV-SECOND"}`))
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, principal{User: child}))
+	rr = httptest.NewRecorder()
+	app.handleInviteUse(rr, req, nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("second parent should be rejected, status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestInviteUseRejectsExpiredInviterAndRootLimit(t *testing.T) {
+	app := newTestApp(t)
+	now := time.Now()
+	expiredParent, err := app.store.CreateUser(store.User{Username: "expired-parent", Role: store.RoleNormal, Active: true, EmbyID: "emby-expired", ExpiredAt: now.AddDate(0, 0, -1).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := app.store.CreateUser(store.User{Username: "candidate", Role: store.RoleNormal, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.store.UpsertInviteCode(store.InviteCode{Code: "INV-EXPIRED-PARENT", UID: expiredParent.UID, InviterUID: expiredParent.UID, Days: 30, UseCountLimit: 1, Active: true, CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/invite/use", strings.NewReader(`{"code":"INV-EXPIRED-PARENT"}`))
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, principal{User: candidate}))
+	rr := httptest.NewRecorder()
+	app.handleInviteUse(rr, req, nil)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expired inviter should be rejected, status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	app.cfg.InviteRootUserLimit = 1
+	root, err := app.store.CreateUser(store.User{Username: "root", Role: store.RoleNormal, Active: true, EmbyID: "emby-root", ExpiredAt: now.AddDate(0, 0, 30).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	child, err := app.store.CreateUser(store.User{Username: "child2", Role: store.RoleNormal, Active: true, EmbyID: "emby-child2", ExpiredAt: now.AddDate(0, 0, 20).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.store.UpsertInviteCode(store.InviteCode{Code: "INV-ROOT-CHILD", UID: root.UID, InviterUID: root.UID, Days: 10, UseCountLimit: 1, Active: true, CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.store.ConsumeInviteCode("INV-ROOT-CHILD", child.UID); err != nil {
+		t.Fatal(err)
+	}
+	if ok, _ := app.canInvite(child); ok {
+		t.Fatal("child should not be allowed to create more invites after root tree reaches limit")
+	}
+	grandchild, err := app.store.CreateUser(store.User{Username: "grandchild", Role: store.RoleNormal, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.store.UpsertInviteCode(store.InviteCode{Code: "INV-GRANDCHILD", UID: child.UID, InviterUID: child.UID, Days: 10, UseCountLimit: 1, Active: true, CreatedAt: now.Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/invite/use", strings.NewReader(`{"code":"INV-GRANDCHILD"}`))
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, principal{User: grandchild}))
+	rr = httptest.NewRecorder()
+	app.handleInviteUse(rr, req, nil)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("root limit should reject grandchild, status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestTelegramGrantRegisterActionSetsPendingEntitlement(t *testing.T) {
+	app := newTestApp(t)
+	app.cfg.InviteDefaultDays = 12
+	target, err := app.store.CreateUser(store.User{Username: "tg-target", Role: store.RoleUnrecognized, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	panel := telegramPanelContext{Token: "grant", TargetUID: target.UID, ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	app.telegramSavePanel(panel)
+	app.telegramApplyPanelAction(context.Background(), panel, "grant_register")
+	updated, _ := app.store.User(target.UID)
+	if !updated.PendingEmby || updated.PendingEmbyDays == nil || *updated.PendingEmbyDays != 12 || updated.Role != store.RoleNormal {
+		t.Fatalf("grant_register did not create pending entitlement: %#v days=%#v", updated, updated.PendingEmbyDays)
+	}
+
+	admin, err := app.store.CreateUser(store.User{Username: "protected-admin", Role: store.RoleAdmin, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	adminPanel := telegramPanelContext{Token: "admin-grant", TargetUID: admin.UID, ExpiresAt: time.Now().Add(time.Minute).Unix()}
+	app.telegramSavePanel(adminPanel)
+	app.telegramApplyPanelAction(context.Background(), adminPanel, "grant_register")
+	protected, _ := app.store.User(admin.UID)
+	if protected.PendingEmby {
+		t.Fatal("grant_register should not mutate protected admin accounts")
 	}
 }
 

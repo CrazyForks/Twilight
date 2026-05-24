@@ -1897,6 +1897,13 @@ class ApiClient {
     });
   }
 
+  async detachExpiredInviteChild(uid: number) {
+    return this.request<{ uid: number; detached: boolean; deleted_emby: boolean }>(
+      `/invite/children/${uid}/detach-expired`,
+      { method: "POST" },
+    );
+  }
+
   async useInviteCode(payload: { code: string; emby_username: string; emby_password: string }) {
     return this.request<{
       emby_id: string;
@@ -2451,6 +2458,7 @@ export interface Regcode {
   active?: boolean;
   status?: "available" | "disabled" | "used_up" | "expired";
   note?: string;
+  target_username?: string;
   used: boolean;
   used_by?: number | string;
   used_by_uids?: number[];
@@ -2469,6 +2477,7 @@ export interface CreateRegcodeData {
   decoy?: boolean;
   format?: string;
   random_algorithm?: string;
+  target_username?: string;
 }
 
 export interface ConfigFieldOption {

@@ -602,6 +602,11 @@ func (a *App) handleRenew(w http.ResponseWriter, r *http.Request, _ Params) {
 	if a.requireNonEmbyAdmin(w, r, p.User) {
 		return
 	}
+	preview, source, okPreview := a.previewCode(regCode, p.User)
+	if !okPreview || source != "regcode" || int(numeric(preview["type"])) != 2 {
+		fail(w, http.StatusBadRequest, "续期码无效、已用完、已过期或不属于当前用户")
+		return
+	}
 	// Consume the reg code (validates active, use count, expiry)
 	code, err := a.store.ConsumeRegCode(regCode, p.User.UID, p.User.TelegramID)
 	if err != nil {
@@ -1460,8 +1465,8 @@ func (a *App) handleSystemInfo(w http.ResponseWriter, r *http.Request, _ Params)
 		"version":     a.cfg.Version,
 		"api_version": "v1",
 		"features": map[string]any{
-			"register":             true,
-			"emby_direct_register": true,
+			"register":             a.cfg.RegisterEnabled,
+			"emby_direct_register": a.cfg.EmbyDirectRegisterEnabled,
 			"telegram":             a.cfg.TelegramMode,
 			"force_bind_telegram":  a.cfg.ForceBindTelegram,
 			"bangumi_sync":         a.cfg.BangumiEnabled,
@@ -1741,9 +1746,7 @@ func (a *App) handleEmbyURLs(w http.ResponseWriter, r *http.Request, _ Params) {
 		lines = append(lines, map[string]string{"name": line.Name, "url": line.URL})
 	}
 	if a.cfg.EmbyPublicURL != "" {
-		lines = append(lines, map[string]string{"name": "姒涙顓荤痪鑳熅", "url": a.cfg.EmbyPublicURL})
-	} else if len(lines) == 0 && a.cfg.EmbyURL != "" {
-		lines = append(lines, map[string]string{"name": "姒涙顓荤痪鑳熅", "url": a.cfg.EmbyURL})
+		lines = append(lines, map[string]string{"name": "默认线路", "url": a.cfg.EmbyPublicURL})
 	}
 	whitelist := []map[string]string{}
 	if u.Role == store.RoleAdmin || u.Role == store.RoleWhitelist {
@@ -1883,7 +1886,7 @@ func (a *App) handleEmbyStatus(w http.ResponseWriter, r *http.Request, _ Params)
 	if online {
 		_ = a.embyGet(r.Context(), "/Sessions", &sessions)
 	}
-	ok(w, "OK", map[string]any{"online": online, "server": a.cfg.EmbyURL, "server_name": firstNonEmpty(asString(info["ServerName"]), asString(info["Name"])), "version": firstNonEmpty(asString(info["Version"]), "unknown"), "operating_system": asString(info["OperatingSystem"]), "active_sessions": len(sessions), "total_sessions": len(sessions), "is_synced": current(r).User.EmbyID != "", "is_active": current(r).User.Active, "message": "OK"})
+	ok(w, "OK", map[string]any{"online": online, "server_name": firstNonEmpty(asString(info["ServerName"]), asString(info["Name"])), "version": firstNonEmpty(asString(info["Version"]), "unknown"), "operating_system": asString(info["OperatingSystem"]), "active_sessions": len(sessions), "total_sessions": len(sessions), "is_synced": current(r).User.EmbyID != "", "is_active": current(r).User.Active, "message": "OK"})
 }
 
 func (a *App) handleDeprecatedEmbyURLs(w http.ResponseWriter, r *http.Request, _ Params) {

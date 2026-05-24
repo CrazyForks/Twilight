@@ -357,7 +357,7 @@ func extractProtectedAdminConfig(content string) string {
 		return strings.TrimRight(strings.Join(adminLines, "\n"), "\n")
 	}
 	if len(rootLines) > 0 {
-		return "[Admin]\n" + strings.TrimRight(strings.Join(rootLines, "\n"), "\n")
+		return strings.TrimRight(strings.Join(rootLines, "\n"), "\n")
 	}
 	return ""
 }
@@ -472,9 +472,33 @@ type configFieldDef struct {
 	Options     []map[string]any
 }
 
+func regCodeRandomAlgorithmOptions() []map[string]any {
+	return []map[string]any{
+		{"label": "base32-20（默认推荐，易抄写）", "value": "base32-20"},
+		{"label": "base32-16（短码，易抄写）", "value": "base32-16"},
+		{"label": "base32-24（高强度，易抄写）", "value": "base32-24"},
+		{"label": "base32-32（超高强度，易抄写）", "value": "base32-32"},
+		{"label": "hex20（旧默认兼容）", "value": "hex20"},
+		{"label": "hex32（128-bit 十六进制）", "value": "hex32"},
+		{"label": "hex40（长十六进制）", "value": "hex40"},
+		{"label": "alnum-16（字母数字短码）", "value": "alnum-16"},
+		{"label": "alnum-24（字母数字高强度）", "value": "alnum-24"},
+		{"label": "alnum-32（字母数字超高强度）", "value": "alnum-32"},
+		{"label": "urlsafe-24（URL 安全字符）", "value": "urlsafe-24"},
+		{"label": "urlsafe-32（URL 安全长码）", "value": "urlsafe-32"},
+		{"label": "digits-12（纯数字，便于口述）", "value": "digits-12"},
+		{"label": "digits-16（纯数字增强）", "value": "digits-16"},
+		{"label": "symbols-16（含特殊字符）", "value": "symbols-16"},
+		{"label": "symbols-24（含特殊字符高强度）", "value": "symbols-24"},
+		{"label": "uuid（UUID v4 风格）", "value": "uuid"},
+		{"label": "legacy-sha1（旧风格 40 位 hex）", "value": "legacy-sha1"},
+	}
+}
+
 func configSectionDefs() []configSectionDef {
 	selectDriver := []map[string]any{{"label": "PostgreSQL（推荐）", "value": "postgres"}, {"label": "Go JSON 文件（兼容）", "value": "json"}}
 	selectUpdate := []map[string]any{{"label": "按间隔", "value": "interval"}, {"label": "每日固定时间", "value": "daily"}, {"label": "手动", "value": "manual"}}
+	selectRegCodeRandom := regCodeRandomAlgorithmOptions()
 	return []configSectionDef{
 		{Key: "Signin", Title: "签到", Description: "签到开关、每日随机奖励和连签奖励", Category: "policy", Fields: []configFieldDef{
 			{Key: "enabled", Label: "启用签到", Type: "bool", Description: "允许用户进入签到页面并领取每日积分"},
@@ -558,7 +582,7 @@ func configSectionDefs() []configSectionDef {
 			{Key: "emby_direct_register_days", Label: "自助注册天数", Type: "int", Description: "Emby 自助注册默认有效期"},
 			{Key: "user_limit", Label: "系统用户上限", Type: "int", Description: "-1 表示不限；达到上限后禁止新注册"},
 			{Key: "regcode_format", Label: "默认注册码格式", Type: "string", Description: "支持 {random}/{type}/{days}/{index}/{validity}/{limit}"},
-			{Key: "regcode_random_algorithm", Label: "默认注册码随机算法", Type: "string", Description: "支持 hex20、base32-16、base32-20、base32-24"},
+			{Key: "regcode_random_algorithm", Label: "默认注册码随机算法", Type: "select", Description: "创建注册码未指定算法时使用；包含易抄写、URL 安全和特殊字符预设", Options: selectRegCodeRandom},
 			{Key: "emby_user_limit", Label: "Emby 用户上限", Type: "int", Description: "-1 表示不限"},
 			{Key: "media_request_enabled", Label: "启用求片", Type: "bool", Description: "允许用户提交媒体请求"},
 			{Key: "max_concurrent_requests_per_user", Label: "每用户并发求片", Type: "int", Description: "-1 表示不限"},

@@ -274,6 +274,7 @@ func (a *App) registerStatsInviteSigninAnnouncementDemoRoutes() {
 	a.add(http.MethodPost, "/api/v1/invite/renew-codes", AuthUser, a.handleCreateInviteCode)
 	a.add(http.MethodGet, "/api/v1/invite/codes", AuthUser, a.handleInviteCodes)
 	a.add(http.MethodDelete, "/api/v1/invite/codes/:code", AuthUser, a.handleDeleteInviteCode)
+	a.add(http.MethodPost, "/api/v1/invite/children/:uid/detach-expired", AuthUser, a.handleDetachExpiredInviteChild)
 	a.add(http.MethodPost, "/api/v1/invite/check", AuthPublic, a.handleInviteCheck)
 	a.add(http.MethodPost, "/api/v1/invite/use", AuthUser, a.handleInviteUse)
 	a.add(http.MethodGet, "/api/v1/signin/config", AuthPublic, a.handleSigninConfig)

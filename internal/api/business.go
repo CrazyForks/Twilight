@@ -336,6 +336,7 @@ func regcodeDTO(code store.RegCode) map[string]any {
 		"active":               code.Active,
 		"status":               regcodeStatus(code),
 		"note":                 code.Note,
+		"target_username":      code.TargetUsername,
 		"created_time":         created,
 		"used_by":              joinInt64(code.UsedByUIDs),
 		"used_by_uids":         code.UsedByUIDs,
@@ -352,27 +353,24 @@ func joinInt64(values []int64) string {
 }
 
 func generateRegCode(format string, codeType int, algorithm string, days int, index int, validity int64, useLimit int) string {
-	randomLength := 20
-	random := strings.ToUpper(randomCode(randomLength))
 	switch strings.ToLower(strings.TrimSpace(algorithm)) {
-	case "hex20", "hex":
-		random = strings.ToUpper(randomCode(20))
-	case "base32-16":
-		randomLength = 16
-		fallthrough
-	case "base32-20", "base32", "":
-		if randomLength == 20 {
-			randomLength = 20
-		}
-		random = base32Code(randomLength)
-	case "base32-24":
-		random = base32Code(24)
+	case "base32-16", "base32-20", "base32", "", "base32-24", "base32-32",
+		"hex20", "hex", "hex32", "hex40",
+		"alnum-16", "alnum-24", "alnum-32",
+		"urlsafe-24", "urlsafe-32",
+		"digits-12", "digits-16",
+		"symbols-16", "symbols-24",
+		"uuid", "legacy-sha1":
 	default:
-		random = strings.ToUpper(randomCode(20))
+		algorithm = "base32-20"
 	}
+	random := regCodeRandomPart(algorithm)
 	typeName := map[int]string{1: "REG", 2: "REN", 3: "VIP"}[codeType]
 	if strings.TrimSpace(format) == "" {
 		format = "TW-{type}-{random}"
+	}
+	if !strings.Contains(format, "{random}") {
+		format += "-{random}"
 	}
 	replacements := map[string]string{
 		"{type}":     typeName,
@@ -389,14 +387,69 @@ func generateRegCode(format string, codeType int, algorithm string, days int, in
 	return strings.ToUpper(code)
 }
 
+func regCodeRandomPart(algorithm string) string {
+	switch strings.ToLower(strings.TrimSpace(algorithm)) {
+	case "hex20", "hex":
+		return strings.ToUpper(randomCode(20))
+	case "hex32":
+		return strings.ToUpper(randomCode(32))
+	case "hex40":
+		return strings.ToUpper(randomCode(40))
+	case "base32-16":
+		return base32Code(16)
+	case "base32-24":
+		return base32Code(24)
+	case "base32-32":
+		return base32Code(32)
+	case "alnum-16":
+		return randomFromAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 16)
+	case "alnum-24":
+		return randomFromAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 24)
+	case "alnum-32":
+		return randomFromAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", 32)
+	case "urlsafe-24":
+		return randomFromAlphabet("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", 24)
+	case "urlsafe-32":
+		return randomFromAlphabet("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_", 32)
+	case "digits-12":
+		return randomFromAlphabet("0123456789", 12)
+	case "digits-16":
+		return randomFromAlphabet("0123456789", 16)
+	case "symbols-16":
+		return randomFromAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789!@$%^*_-+=.:", 16)
+	case "symbols-24":
+		return randomFromAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789!@$%^*_-+=.:", 24)
+	case "uuid":
+		return regCodeUUID()
+	case "legacy-sha1":
+		return strings.ToUpper(randomCode(40))
+	default:
+		return base32Code(20)
+	}
+}
+
 func base32Code(length int) string {
-	const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	return randomFromAlphabet("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", length)
+}
+
+func randomFromAlphabet(alphabet string, length int) string {
+	if length <= 0 || alphabet == "" {
+		return ""
+	}
 	var b strings.Builder
 	for b.Len() < length {
 		n, _ := strconv.ParseInt(randomCode(2), 16, 64)
 		b.WriteByte(alphabet[int(n)%len(alphabet)])
 	}
 	return b.String()
+}
+
+func regCodeUUID() string {
+	raw := randomCode(32)
+	if len(raw) < 32 {
+		return strings.ToUpper(raw)
+	}
+	return fmt.Sprintf("%s-%s-4%s-%s%s-%s", raw[0:8], raw[8:12], raw[13:16], string("89AB"[int(raw[16])%4]), raw[17:20], raw[20:32])
 }
 
 func legacyGenerateRegCode(format string, codeType int, algorithm string) string {
@@ -445,9 +498,23 @@ func (a *App) previewCode(code string, user store.User) (map[string]any, string,
 		if _, hasParent := a.store.ParentOf(user.UID); hasParent {
 			return nil, "", false
 		}
+		if invite.InviterUID == user.UID {
+			return nil, "", false
+		}
+		if invite.TargetUsername != "" && !strings.EqualFold(invite.TargetUsername, user.Username) {
+			return nil, "", false
+		}
 		inviter := ""
 		if u, ok := a.store.User(invite.InviterUID); ok {
+			if !u.Active {
+				return nil, "", false
+			}
+			if maxDays, _ := a.maxCodeDays(u); maxDays <= 0 {
+				return nil, "", false
+			}
 			inviter = u.Username
+		} else {
+			return nil, "", false
 		}
 		return codePreview("invite", 1, invite.Days, inviter), "invite", true
 	}
@@ -591,20 +658,53 @@ func inviteCodeDTO(code store.InviteCode) map[string]any {
 }
 
 func (a *App) maxCodeDays(user store.User) (int, string) {
-	if a.cfg.PermanentInviteMaxDays <= 0 {
-		a.cfg.PermanentInviteMaxDays = 365
+	permanentMaxDays := a.cfg.PermanentInviteMaxDays
+	if permanentMaxDays <= 0 {
+		permanentMaxDays = 365
 	}
 	if user.ExpiredAt < 0 || user.ExpiredAt >= 253402214400 {
-		return a.cfg.PermanentInviteMaxDays, ""
+		return permanentMaxDays, ""
 	}
 	if user.ExpiredAt <= time.Now().Unix() {
 		return 0, "邀请人 Emby 有效期已到期，不能生成邀请码"
 	}
 	days := int((user.ExpiredAt - time.Now().Unix() + 86399) / 86400)
-	if days > a.cfg.PermanentInviteMaxDays {
-		days = a.cfg.PermanentInviteMaxDays
+	if days > permanentMaxDays {
+		days = permanentMaxDays
 	}
 	return days, ""
+}
+
+func (a *App) inviteRootUID(uid int64) int64 {
+	root := uid
+	seen := map[int64]bool{uid: true}
+	for {
+		rel, ok := a.store.ParentOf(root)
+		if !ok || seen[rel.ParentUID] {
+			return root
+		}
+		root = rel.ParentUID
+		seen[root] = true
+	}
+}
+
+func (a *App) inviteDescendantCount(uid int64) int {
+	count := 0
+	queue := []int64{uid}
+	seen := map[int64]bool{uid: true}
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		for _, rel := range a.store.ChildrenOf(current) {
+			if seen[rel.ChildUID] {
+				continue
+			}
+			seen[rel.ChildUID] = true
+			count++
+			queue = append(queue, rel.ChildUID)
+		}
+	}
+	return count
 }
 
 func (a *App) inviteDepth(uid int64) int {
@@ -701,6 +801,12 @@ func (a *App) canInvite(user store.User) (bool, string) {
 	}
 	if a.inviteDepth(user.UID) >= a.cfg.InviteMaxDepth {
 		return false, fmt.Sprintf("已达到最大邀请层级 (%d)，不能再向下邀请", a.cfg.InviteMaxDepth)
+	}
+	if a.cfg.InviteRootUserLimit > 0 {
+		rootUID := a.inviteRootUID(user.UID)
+		if a.inviteDescendantCount(rootUID) >= a.cfg.InviteRootUserLimit {
+			return false, fmt.Sprintf("邀请树人数已达上限 (%d)，不能继续邀请", a.cfg.InviteRootUserLimit)
+		}
 	}
 	if a.cfg.InviteLimit != -1 {
 		active := 0

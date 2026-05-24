@@ -28,6 +28,8 @@ func (a *App) handleUseCode(w http.ResponseWriter, r *http.Request, _ Params) {
 	}
 	days := intValue(preview, "days", 30)
 	grantsEmby := source == "invite" || int(numeric(preview["type"])) == 1 || int(numeric(preview["type"])) == 3
+	var inviteForUse store.InviteCode
+	var inviterForUse store.User
 	if grantsEmby && p.User.EmbyID == "" {
 		if reached, current, limit := a.embyCapacityReached(p.User.UID); reached {
 			fail(w, http.StatusConflict, "Emby 用户数量已达上限 "+strconv.Itoa(current)+"/"+strconv.Itoa(limit))
@@ -36,18 +38,52 @@ func (a *App) handleUseCode(w http.ResponseWriter, r *http.Request, _ Params) {
 	}
 
 	if source == "invite" {
-		invite, _ := a.store.InviteCode(code)
-		if invite.InviterUID == p.User.UID {
+		invite, okInvite := a.store.InviteCode(code)
+		if !okInvite || !invite.Active {
+			fail(w, http.StatusNotFound, "邀请码无效或已停用")
+			return
+		}
+		inviteForUse = invite
+		if inviteForUse.InviterUID == p.User.UID {
 			fail(w, http.StatusBadRequest, "不能使用自己生成的邀请码")
 			return
 		}
-		if invite.TargetUsername != "" && !strings.EqualFold(invite.TargetUsername, p.User.Username) {
+		if _, hasParent := a.store.ParentOf(p.User.UID); hasParent {
+			fail(w, http.StatusBadRequest, "当前账号已存在邀请上级，不能重复加入邀请树")
+			return
+		}
+		if inviteForUse.TargetUsername != "" && !strings.EqualFold(inviteForUse.TargetUsername, p.User.Username) {
 			fail(w, http.StatusForbidden, "此邀请码仅限指定用户使用")
 			return
 		}
 		if p.User.EmbyID != "" {
 			fail(w, http.StatusBadRequest, "当前账号已绑定 Emby，不能使用邀请码")
 			return
+		}
+		inviter, okInviter := a.store.User(inviteForUse.InviterUID)
+		if !okInviter || !inviter.Active {
+			fail(w, http.StatusForbidden, "邀请人状态不可用")
+			return
+		}
+		inviterForUse = inviter
+		if a.inviteDepth(inviterForUse.UID) >= a.cfg.InviteMaxDepth {
+			fail(w, http.StatusForbidden, "邀请树层级已达上限")
+			return
+		}
+		if a.cfg.InviteRootUserLimit > 0 {
+			rootUID := a.inviteRootUID(inviterForUse.UID)
+			if a.inviteDescendantCount(rootUID) >= a.cfg.InviteRootUserLimit {
+				fail(w, http.StatusForbidden, "邀请树人数已达上限")
+				return
+			}
+		}
+		maxDays, reason := a.maxCodeDays(inviterForUse)
+		if maxDays <= 0 {
+			fail(w, http.StatusForbidden, firstNonEmpty(reason, "邀请人有效期不足"))
+			return
+		}
+		if days <= 0 || days > maxDays {
+			days = maxDays
 		}
 		if _, err := a.store.ConsumeInviteCode(code, p.User.UID); statusFromError(w, err) {
 			return
@@ -86,7 +122,9 @@ func (a *App) handleUseCode(w http.ResponseWriter, r *http.Request, _ Params) {
 				u.PendingEmbyDays = &days
 			}
 		}
-		if u.Role != store.RoleWhitelist {
+		if source == "invite" {
+			u.ExpiredAt = boundedInviteExpiry(addDaysToExpiry(u.ExpiredAt, days, time.Now()), inviterForUse.ExpiredAt)
+		} else if u.Role != store.RoleWhitelist {
 			u.ExpiredAt = addDaysToExpiry(u.ExpiredAt, days, time.Now())
 		}
 		return nil

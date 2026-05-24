@@ -95,6 +95,52 @@ func (a *App) handleDeleteInviteCode(w http.ResponseWriter, r *http.Request, par
 	ok(w, "invite code deleted", nil)
 }
 
+func (a *App) handleDetachExpiredInviteChild(w http.ResponseWriter, r *http.Request, params Params) {
+	if !a.cfg.InviteEnabled {
+		fail(w, http.StatusForbidden, "邀请功能未开启")
+		return
+	}
+	uid, _ := int64Param(params, "uid")
+	user := current(r).User
+	rel, okRel := a.store.ParentOf(uid)
+	if !okRel || rel.ParentUID != user.UID {
+		fail(w, http.StatusForbidden, "只能断开自己的直属下级")
+		return
+	}
+	child, okChild := a.store.User(uid)
+	if !okChild {
+		fail(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if child.ExpiredAt <= 0 || child.ExpiredAt >= time.Now().Unix() {
+		fail(w, http.StatusBadRequest, "只能断开已到期的下级")
+		return
+	}
+	deletedEmby := false
+	if child.EmbyID != "" && a.cfg.EmbyURL != "" {
+		if err := a.embyDelete(r.Context(), "/Users/"+urlPathEscape(child.EmbyID)); err != nil {
+			fail(w, http.StatusBadGateway, "删除下级 Emby 账号失败："+err.Error())
+			return
+		}
+		deletedEmby = true
+	}
+	updated, err := a.store.UpdateUser(uid, func(u *store.User) error {
+		u.Active = true
+		u.EmbyID = ""
+		u.EmbyUsername = ""
+		u.PendingEmby = false
+		u.PendingEmbyDays = nil
+		return nil
+	})
+	if statusFromError(w, err) {
+		return
+	}
+	if err := a.store.DetachInvite(uid); statusFromError(w, err) {
+		return
+	}
+	ok(w, "已断开下级关系", map[string]any{"uid": uid, "detached": true, "deleted_emby": deletedEmby || child.EmbyID != "", "user": publicUser(updated)})
+}
+
 func (a *App) handleInviteCheck(w http.ResponseWriter, r *http.Request, _ Params) {
 	if !a.cfg.InviteEnabled {
 		fail(w, http.StatusForbidden, "邀请功能未开启")
@@ -108,7 +154,18 @@ func (a *App) handleInviteCheck(w http.ResponseWriter, r *http.Request, _ Params
 	}
 	inviter := ""
 	if u, okUser := a.store.User(invite.InviterUID); okUser {
+		if !u.Active {
+			fail(w, http.StatusNotFound, "邀请码无效或已停用")
+			return
+		}
+		if maxDays, _ := a.maxCodeDays(u); maxDays <= 0 {
+			fail(w, http.StatusNotFound, "邀请码无效或已停用")
+			return
+		}
 		inviter = u.Username
+	} else {
+		fail(w, http.StatusNotFound, "邀请码无效或已停用")
+		return
 	}
 	ok(w, "OK", map[string]any{"days": invite.Days, "inviter": inviter})
 }
@@ -138,6 +195,39 @@ func (a *App) handleInviteUse(w http.ResponseWriter, r *http.Request, _ Params) 
 		fail(w, http.StatusForbidden, "此邀请码仅限指定用户使用")
 		return
 	}
+	if invite.InviterUID == user.UID {
+		fail(w, http.StatusBadRequest, "不能使用自己生成的邀请码")
+		return
+	}
+	if _, hasParent := a.store.ParentOf(user.UID); hasParent {
+		fail(w, http.StatusBadRequest, "当前账号已存在邀请上级，不能重复加入邀请树")
+		return
+	}
+	inviter, okInviter := a.store.User(invite.InviterUID)
+	if !okInviter || !inviter.Active {
+		fail(w, http.StatusForbidden, "邀请人状态不可用")
+		return
+	}
+	if a.inviteDepth(inviter.UID) >= a.cfg.InviteMaxDepth {
+		fail(w, http.StatusForbidden, "邀请树层级已达上限")
+		return
+	}
+	if a.cfg.InviteRootUserLimit > 0 {
+		rootUID := a.inviteRootUID(inviter.UID)
+		if a.inviteDescendantCount(rootUID) >= a.cfg.InviteRootUserLimit {
+			fail(w, http.StatusForbidden, "邀请树人数已达上限")
+			return
+		}
+	}
+	maxDays, reason := a.maxCodeDays(inviter)
+	if maxDays <= 0 {
+		fail(w, http.StatusForbidden, firstNonEmpty(reason, "邀请人有效期不足"))
+		return
+	}
+	effectiveDays := invite.Days
+	if effectiveDays <= 0 || effectiveDays > maxDays {
+		effectiveDays = maxDays
+	}
 	if reached, current, limit := a.embyCapacityReached(user.UID); reached {
 		fail(w, http.StatusConflict, fmt.Sprintf("Emby 用户数量已达上限 %d/%d", current, limit))
 		return
@@ -148,12 +238,19 @@ func (a *App) handleInviteUse(w http.ResponseWriter, r *http.Request, _ Params) 
 	u, err := a.store.UpdateUser(user.UID, func(u *store.User) error {
 		u.EmbyUsername = firstNonEmpty(stringValue(payload, "emby_username"), u.Username)
 		u.PendingEmby = true
-		u.PendingEmbyDays = &invite.Days
-		u.ExpiredAt = addDaysToExpiry(u.ExpiredAt, invite.Days, time.Now())
+		u.PendingEmbyDays = &effectiveDays
+		u.ExpiredAt = boundedInviteExpiry(addDaysToExpiry(u.ExpiredAt, effectiveDays, time.Now()), inviter.ExpiredAt)
 		return nil
 	})
 	if statusFromError(w, err) {
 		return
 	}
-	ok(w, "invite code used", map[string]any{"user": publicUser(u)})
+	ok(w, "invite code used", map[string]any{"user": publicUser(u), "days": effectiveDays, "inviter_uid": invite.InviterUID})
+}
+
+func boundedInviteExpiry(candidate, inviterExpiredAt int64) int64 {
+	if inviterExpiredAt > 0 && inviterExpiredAt < permanentExpiryUnix && (candidate < 0 || candidate > inviterExpiredAt) {
+		return inviterExpiredAt
+	}
+	return candidate
 }
