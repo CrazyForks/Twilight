@@ -51,7 +51,7 @@ func (a *App) handleCreateRegcodes(w http.ResponseWriter, r *http.Request, _ Par
 	days := intValue(payload, "days", 30)
 	codeType := intValue(payload, "type", 1)
 	if codeType < 1 || codeType > 3 {
-		fail(w, http.StatusBadRequest, "invalid regcode type")
+		failWithCode(w, http.StatusBadRequest, ErrRegcodeTypeInvalid, "注册码类型无效")
 		return
 	}
 	validity := int64(intValue(payload, "validity_time", -1))
@@ -61,7 +61,7 @@ func (a *App) handleCreateRegcodes(w http.ResponseWriter, r *http.Request, _ Par
 	codes := make([]string, 0, count)
 	targetUsername := strings.TrimSpace(stringValue(payload, "target_username"))
 	if targetUsername != "" && !validRegcodeTargetUsername(targetUsername) {
-		fail(w, http.StatusBadRequest, "目标用户名长度需为 3-32 个字符，且不能包含特殊路径或注入字符")
+		failWithCode(w, http.StatusBadRequest, ErrRegcodeTargetBad, "目标用户名长度需为 3-32 个字符，且不能包含特殊路径或注入字符")
 		return
 	}
 	seen := map[string]bool{}
@@ -79,7 +79,7 @@ func (a *App) handleCreateRegcodes(w http.ResponseWriter, r *http.Request, _ Par
 			break
 		}
 		if code == "" {
-			fail(w, http.StatusConflict, "注册码生成冲突，请调整格式或随机算法后重试")
+			failWithCode(w, http.StatusConflict, ErrRegcodeGenerateConflict, "注册码生成冲突，请调整格式或随机算法后重试")
 			return
 		}
 		seen[code] = true
@@ -97,7 +97,7 @@ func (a *App) handleUpdateRegcode(w http.ResponseWriter, r *http.Request, params
 	}
 	reg, okReg := a.store.RegCode(params["code"])
 	if !okReg {
-		fail(w, http.StatusNotFound, "注册码不存在")
+		failWithCode(w, http.StatusNotFound, ErrRegcodeNotFound, "注册码不存在")
 		return
 	}
 	reg.Note = stringValue(decodeMap(r), "note")
@@ -125,21 +125,21 @@ func (a *App) handleBatchDeleteRegcodes(w http.ResponseWriter, r *http.Request, 
 	}
 	payload := decodeMap(r)
 	if stringValue(payload, "confirm") != confirmBatchDeleteRegcodes {
-		fail(w, http.StatusBadRequest, "missing confirm "+confirmBatchDeleteRegcodes)
+		failWithCode(w, http.StatusBadRequest, ErrRegcodeBatchConfirm, "missing confirm "+confirmBatchDeleteRegcodes)
 		return
 	}
 	codes := regcodePayloadCodes(payload["codes"])
 	if len(codes) == 0 {
-		fail(w, http.StatusBadRequest, "请选择要删除的注册码")
+		failWithCode(w, http.StatusBadRequest, ErrRegcodeBatchEmpty, "请选择要删除的注册码")
 		return
 	}
 	if len(codes) > 200 {
-		fail(w, http.StatusBadRequest, "单次最多删除 200 个注册码")
+		failWithCode(w, http.StatusBadRequest, ErrRegcodeBatchTooLarge, "单次最多删除 200 个注册码")
 		return
 	}
 	deleted, missing, err := a.store.DeleteRegCodes(codes)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "批量删除注册码失败")
+		failWithCode(w, http.StatusInternalServerError, ErrRegcodeBatchFailed, "批量删除注册码失败")
 		return
 	}
 	ok(w, "注册码已批量删除", map[string]any{
@@ -153,7 +153,7 @@ func (a *App) handleBatchDeleteRegcodes(w http.ResponseWriter, r *http.Request, 
 func (a *App) handleRegcodeUsers(w http.ResponseWriter, r *http.Request, params Params) {
 	reg, okReg := a.store.RegCode(params["code"])
 	if !okReg {
-		fail(w, http.StatusNotFound, "注册码不存在")
+		failWithCode(w, http.StatusNotFound, ErrRegcodeNotFound, "注册码不存在")
 		return
 	}
 	users := []map[string]any{}

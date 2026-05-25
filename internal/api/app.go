@@ -130,6 +130,7 @@ func New(cfg config.Config, st *store.Store) (*App, error) {
 	// `*` + credentials 组合；早期管理员若误填 `*` 会得到一个静默无效的配置。
 	// 这里在启动 / reload 时强提示，配 .Error 让审计/告警系统能抓到。
 	validateCORSOriginsStartup(cfg.CORSOrigins)
+	validateTrustedProxyStartup(cfg.TrustProxyHeaders, cfg.TrustedProxyCIDRs)
 	ConfigureRuntimeLoggingStore(st, cfg.ZapLevel(), cfg.RuntimeLogLimit)
 	return app, nil
 }
@@ -267,6 +268,10 @@ func (a *App) reloadConfigLocked() (map[string]any, error) {
 	// reload 也走一遍 CORS 校验，捕获 hot reload 引入的错配置。
 	if !sameStringSlice(previous.CORSOrigins, next.CORSOrigins) {
 		validateCORSOriginsStartup(next.CORSOrigins)
+	}
+	if previous.TrustProxyHeaders != next.TrustProxyHeaders ||
+		!sameStringSlice(previous.TrustedProxyCIDRs, next.TrustedProxyCIDRs) {
+		validateTrustedProxyStartup(next.TrustProxyHeaders, next.TrustedProxyCIDRs)
 	}
 	ConfigureRuntimeLoggingStore(a.store, next.ZapLevel(), next.RuntimeLogLimit)
 	reinitialized = append(reinitialized, "runtime_logger")
@@ -644,6 +649,7 @@ func (a *App) applyCORS(w http.ResponseWriter, r *http.Request) bool {
 //     因此这里强制 zap.Error 让监控/SRE 抓到错配置；
 //   - 同时把无法 normalize 的 origin（拼写错误 / 含路径 / 含 query）
 //     列出来，给运维一个可定位的失败信号。
+//
 // 函数本身不返回 error，仅打印 —— App 不会因为 CORS 错配置启动失败，
 // 因为反代/容器重启场景下这往往是非致命的退化。
 func validateCORSOriginsStartup(origins []string) {
@@ -679,6 +685,61 @@ func validateCORSOriginsStartup(origins []string) {
 	if len(invalid) > 0 {
 		zap.L().Warn(
 			"cors_origins 含无法解析的条目，已忽略；条目必须是 scheme://host[:port]，无 path/query/fragment",
+			zap.Strings("invalid_entries", invalid),
+		)
+	}
+}
+
+// validateTrustedProxyStartup 在启动 / reload 时核验"信任代理头 + 上游 CIDR"
+// 这对配置：
+//   - TrustProxyHeaders=true 但 TrustedProxyCIDRs 为空：保留旧行为（信任所有
+//     上游），但打 Error 提醒——任何客户端都可以伪造 X-Forwarded-For 绕过 IP
+//     限流 / 黑名单；
+//   - 单条 CIDR 解析失败：打 Warn 列出出错条目，调用方仍然按剩余可用条目工作；
+//   - TrustProxyHeaders=false 且 CIDRs 非空：打 Info 提示 CIDRs 当前不会生效，
+//     避免运维误以为已经启用。
+func validateTrustedProxyStartup(trust bool, cidrs []string) {
+	if !trust {
+		if len(cidrs) > 0 {
+			zap.L().Info(
+				"trusted_proxy_cidrs 已配置但 trust_proxy_headers=false；当前不会消费任何代理头",
+				zap.Strings("trusted_proxy_cidrs", cidrs),
+			)
+		}
+		return
+	}
+	var invalid []string
+	var valid int
+	for _, raw := range cidrs {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			continue
+		}
+		if !strings.Contains(entry, "/") {
+			if net.ParseIP(entry) == nil {
+				invalid = append(invalid, entry)
+				continue
+			}
+			valid++
+			continue
+		}
+		if _, _, err := net.ParseCIDR(entry); err != nil {
+			invalid = append(invalid, entry)
+			continue
+		}
+		valid++
+	}
+	if valid == 0 {
+		zap.L().Error(
+			"trust_proxy_headers=true 但 trusted_proxy_cidrs 未配置任何有效条目；"+
+				"任何调用方都可伪造 X-Forwarded-For 绕过 IP 限流 / 黑名单。"+
+				"请补 API.trusted_proxy_cidrs（CIDR 或单 IP，逗号分隔）",
+			zap.Strings("configured_cidrs", cidrs),
+		)
+	}
+	if len(invalid) > 0 {
+		zap.L().Warn(
+			"trusted_proxy_cidrs 含无法解析的条目，已忽略；条目必须是 IP 或 CIDR (a.b.c.d/N)",
 			zap.Strings("invalid_entries", invalid),
 		)
 	}
@@ -787,6 +848,7 @@ func (a *App) issueSessionCookies(w http.ResponseWriter, sessionToken string, ex
 //  1. 必须有 csrf cookie
 //  2. 必须有 X-CSRF-Token header
 //  3. 两者使用 subtle.ConstantTimeCompare 比对
+//
 // 任一失败返回 false。调用点应回 403 + AUTH_CSRF_MISSING。
 func (a *App) verifyCSRFToken(r *http.Request) bool {
 	cookie, err := r.Cookie(a.csrfCookieName())
@@ -815,7 +877,7 @@ func sameSite(value string) http.SameSite {
 }
 
 func (a *App) clientIP(r *http.Request) string {
-	if a.cfg.TrustProxyHeaders {
+	if a.cfg.TrustProxyHeaders && upstreamIsTrustedProxy(r.RemoteAddr, a.cfg.TrustedProxyCIDRs) {
 		for _, header := range []string{"CF-Connecting-IP", "X-Real-IP"} {
 			if value := parseClientIPHeader(r.Header.Get(header)); value != "" {
 				return value
@@ -832,6 +894,47 @@ func (a *App) clientIP(r *http.Request) string {
 		return r.RemoteAddr
 	}
 	return host
+}
+
+// upstreamIsTrustedProxy 判断 r.RemoteAddr 的对端是否落在 cfg.TrustedProxyCIDRs
+// 列表里。返回 true 时，clientIP 才会消费 X-Forwarded-For / X-Real-IP / CF-* 这
+// 些可被任意调用方伪造的代理头；否则一律走 RemoteAddr。
+//
+// 兼容回落：cidrs 为空时保留旧行为（信任所有对端），由启动期 WARN 引导运维补
+// 配置；这样不会让仅依赖 TrustProxyHeaders=true 的旧部署一夜失效。
+func upstreamIsTrustedProxy(remoteAddr string, cidrs []string) bool {
+	if len(cidrs) == 0 {
+		return true
+	}
+	host := remoteAddr
+	if h, _, err := net.SplitHostPort(remoteAddr); err == nil {
+		host = h
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil {
+		return false
+	}
+	for _, raw := range cidrs {
+		entry := strings.TrimSpace(raw)
+		if entry == "" {
+			continue
+		}
+		// 允许直接写单个 IP（不带 /N）：等价于 /32 或 /128。
+		if !strings.Contains(entry, "/") {
+			if peer := net.ParseIP(entry); peer != nil && peer.Equal(ip) {
+				return true
+			}
+			continue
+		}
+		_, network, err := net.ParseCIDR(entry)
+		if err != nil {
+			continue
+		}
+		if network.Contains(ip) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseClientIPHeader(value string) string {

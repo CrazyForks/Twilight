@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"go.uber.org/zap"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/prejudice-studio/twilight/internal/redis"
 	"github.com/prejudice-studio/twilight/internal/security"
@@ -20,6 +22,11 @@ type sessionStore struct {
 	redis  *redis.Client
 	st     *store.Store
 	prefix string
+
+	// redis 写 / 读失败导致路径退到 memory + postgres 时累加，便于运维通过
+	// /system/stats 观察是否进入降级。值持续增长意味着 redis 不可用，登录会
+	// 话存活仍由 postgres 兜底，但 ttl 失效不再实时同步多副本。
+	fallbackCount atomic.Int64
 }
 
 type sessionRecord struct {
@@ -109,6 +116,7 @@ func (s *sessionStore) Create(ctx context.Context, uid int64) (string, time.Time
 		if err := s.redis.SetEX(ctx, s.prefix+token, int(s.ttl/time.Second), string(payload)); err == nil {
 			redisOK = true
 		} else {
+			s.fallbackCount.Add(1)
 			zap.L().Warn("redis session create failed; using memory+pg fallback", zap.Error(err))
 		}
 	}
@@ -156,6 +164,7 @@ func (s *sessionStore) Get(ctx context.Context, token string) (int64, bool) {
 			return 0, false
 		}
 		if err != nil {
+			s.fallbackCount.Add(1)
 			zap.L().Warn("redis session read failed; checking fallbacks", zap.Error(err))
 		}
 		// Redis miss (not error) - check PostgreSQL for sessions that survived Redis restart
@@ -295,4 +304,14 @@ func (s *sessionStore) ActiveCount() int {
 		}
 	}
 	return count
+}
+
+// FallbackCount 报告自启动以来 redis session 失败回退到内存 / postgres 的累计
+// 次数。值持续增长意味着 redis 不可用：sessions 仍能通过 postgres 维持登录，
+// 但跨副本 ttl 同步不再走 redis；运维应优先恢复 redis。
+func (s *sessionStore) FallbackCount() int64 {
+	if s == nil {
+		return 0
+	}
+	return s.fallbackCount.Load()
 }

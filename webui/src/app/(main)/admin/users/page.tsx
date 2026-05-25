@@ -12,7 +12,6 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
-  Edit,
   UserX,
   Link2,
   AlertTriangle,
@@ -20,7 +19,6 @@ import {
   UserCheck,
   CalendarClock,
   Send,
-  Unlink,
   Eye,
   EyeOff,
 } from "lucide-react";
@@ -39,21 +37,12 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useConfirm } from "@/components/ui/confirm-dialog";
 import { useAsyncResource } from "@/hooks/use-async-resource";
@@ -70,6 +59,24 @@ import {
   toggleSetMember,
   usersListParams,
 } from "./admin-users-helpers";
+import { renderExpireCell, renderRoleBadge, UserActionsMenu } from "./admin-users-cells";
+import {
+  BatchLibraryDialog,
+  BindEmbyDialog,
+  BulkEnableDialog,
+  BulkExpireDialog,
+  CleanupInvalidUsersDialog,
+  DeleteUserDialog,
+  EditUserDialog,
+  ForceEmbyPasswordDialog,
+  KickUnboundDialog,
+  LibraryAccessDialog,
+  NoEmbyKickDialog,
+  RenewUserDialog,
+  ResetPasswordDialog,
+  StandaloneEmbyCreateDialog,
+  ToggleActiveDialog,
+} from "./admin-users-dialogs";
 
 export default function AdminUsersPage() {
   const { toast } = useToast();
@@ -1390,140 +1397,42 @@ export default function AdminUsersPage() {
     return <PageError message={error} onRetry={() => void loadUsers()} />;
   }
 
-  const getRoleBadge = (role: number) => {
-    switch (role) {
-      case 0:
-        return <Badge variant="gradient">管理员</Badge>;
-      case 2:
-        return <Badge variant="success">白名单</Badge>;
-      default:
-        return <Badge variant="secondary">普通用户</Badge>;
-    }
-  };
-
-  /**
-   * 根据 emby_bound / expired_at / pending_emby 渲染到期时间单元格。
-   * - 未绑定 Emby（emby_bound===false / pending_emby / expired_at===0）→"未绑定"
-   * - -1 / "-1" → "永久"
-   * - 真实时间戳 → 用 formatDate；已过期红字
-   */
-  const renderExpireCell = (user: UserInfo) => {
-    const exp = user.expired_at;
-    const isUnbound =
-      user.emby_bound === false ||
-      Boolean(user.pending_emby) ||
-      exp === 0 ||
-      exp === "0";
-    if (isUnbound) {
-      return <span className="text-muted-foreground italic">未绑定</span>;
-    }
-    if (exp === -1 || exp === "-1" || exp == null) {
-      return <span className="text-emerald-500">永久</span>;
-    }
-    const expMs = typeof exp === "number" && exp < 10000000000 ? exp * 1000 : Number(exp);
-    const expired = !Number.isNaN(expMs) && expMs < Date.now();
-    return (
-      <span className={expired ? "text-destructive" : undefined}>
-        {formatDate(exp)}
-      </span>
-    );
-  };
+  const getRoleBadge = renderRoleBadge;
 
   const renderUserActions = (user: UserInfo) => (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon">
-          <MoreHorizontal className="h-4 w-4" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => handleOpenEdit(user)}>
-          <Edit className="mr-2 h-4 w-4" />
-          编辑信息
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => {
-            setSelectedUser(user);
-            setRenewMode("renew");
-            setRenewPermanent(false);
-            setRenewDays("30");
-            setRenewOpen(true);
-          }}
-        >
-          <RefreshCw className="mr-2 h-4 w-4" />
-          续期
-        </DropdownMenuItem>
-        {(user.expired_at === -1 || user.expired_at === "-1") && user.role !== 0 && Boolean(user.emby_id) && (
-          <DropdownMenuItem
-            onClick={() => {
-              setSelectedUser(user);
-              setRenewMode("cancelPermanent");
-              setRenewPermanent(false);
-              setRenewDays("30");
-              setRenewOpen(true);
-            }}
-          >
-            <CalendarClock className="mr-2 h-4 w-4" />
-            取消永久到期
-          </DropdownMenuItem>
-        )}
-        <DropdownMenuItem onClick={() => handleResetPassword(user)}>
-          <Key className="mr-2 h-4 w-4" />
-          重置密码
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => handleOpenBindEmby(user)}>
-          <Link2 className="mr-2 h-4 w-4" />
-          绑定 Emby
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => void handleOpenLibraries(user)} disabled={!Boolean(user.emby_id)}>
-          <Eye className="mr-2 h-4 w-4" />
-          媒体库权限
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => void handleSetLibrarySelfService(user, !Boolean(user.library_self_service))}
-          disabled={isActionLoading}
-        >
-          {user.library_self_service ? <EyeOff className="mr-2 h-4 w-4" /> : <Eye className="mr-2 h-4 w-4" />}
-          {user.library_self_service ? "关闭自助显隐权" : "开启自助显隐权"}
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => handleSyncBindings({ uid: user.uid })}>
-          <RefreshCw className="mr-2 h-4 w-4" />
-          同步绑定状态
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => handleForceUnbind(user)}>
-          <Unlink className="mr-2 h-4 w-4" />
-          强制解绑
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => handleClearRegistrationQueue(user)}>
-          <CalendarClock className="mr-2 h-4 w-4" />
-          清理注册队列用户
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => handleGrantRegistrationEntitlement(user)}
-          disabled={Boolean(user.emby_id) || !user.active}
-        >
-          <UserPlus className="mr-2 h-4 w-4" />
-          给予队列用户注册权利
-        </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => handleGrantRegistrationEntitlementAndDequeue(user)}
-          disabled={Boolean(user.emby_id) || !user.active}
-        >
-          <UserCheck className="mr-2 h-4 w-4" />
-          授权并移出未处理队列
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => handleToggleActive(user)}>
-          <Ban className="mr-2 h-4 w-4" />
-          {user.active ? "禁用" : "启用"}
-        </DropdownMenuItem>
-        <DropdownMenuItem className="text-destructive" onClick={() => handleDelete(user)}>
-          <Trash2 className="mr-2 h-4 w-4" />
-          删除
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+    <UserActionsMenu
+      user={user}
+      isActionLoading={isActionLoading}
+      handlers={{
+        onEdit: handleOpenEdit,
+        onRenew: (u) => {
+          setSelectedUser(u);
+          setRenewMode("renew");
+          setRenewPermanent(false);
+          setRenewDays("30");
+          setRenewOpen(true);
+        },
+        onCancelPermanent: (u) => {
+          setSelectedUser(u);
+          setRenewMode("cancelPermanent");
+          setRenewPermanent(false);
+          setRenewDays("30");
+          setRenewOpen(true);
+        },
+        onResetPassword: handleResetPassword,
+        onBindEmby: handleOpenBindEmby,
+        onOpenLibraries: (u) => void handleOpenLibraries(u),
+        onToggleLibrarySelfService: (u) =>
+          void handleSetLibrarySelfService(u, !Boolean(u.library_self_service)),
+        onSyncBindings: (u) => handleSyncBindings({ uid: u.uid }),
+        onForceUnbind: handleForceUnbind,
+        onClearRegistrationQueue: handleClearRegistrationQueue,
+        onGrantRegistrationEntitlement: handleGrantRegistrationEntitlement,
+        onGrantRegistrationEntitlementAndDequeue: handleGrantRegistrationEntitlementAndDequeue,
+        onToggleActive: handleToggleActive,
+        onDelete: handleDelete,
+      }}
+    />
   );
 
   const bulkEnableBlocked = activeFilter === "true";
@@ -2116,347 +2025,65 @@ export default function AdminUsersPage() {
         </div>
       )}
 
-      <Dialog open={batchLibraryOpen} onOpenChange={(open) => { if (!batchLibraryLoading) setBatchLibraryOpen(open); }}>
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>批量设置媒体库显隐</DialogTitle>
-            <DialogDescription>
-              将对 {selectedUserIds.size} 个已选用户应用 Emby 媒体库显示策略。未绑定 Emby 的用户会自动跳过。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>操作方式</Label>
-              <Select value={batchLibraryAction} onValueChange={(value) => setBatchLibraryAction(value as typeof batchLibraryAction)}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="show">显示选中的媒体库</SelectItem>
-                  <SelectItem value="hide">隐藏选中的媒体库</SelectItem>
-                  <SelectItem value="set">仅显示选中的媒体库</SelectItem>
-                  <SelectItem value="enable_all">显示全部媒体库</SelectItem>
-                  <SelectItem value="disable_all">隐藏全部媒体库</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {batchLibraryAction !== "enable_all" && batchLibraryAction !== "disable_all" && (
-              <div className="max-h-72 space-y-2 overflow-auto rounded-md border p-3">
-                {batchLibraryLoading ? (
-                  <div className="flex h-24 items-center justify-center">
-                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                  </div>
-                ) : batchLibraries.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">Emby 没有返回可操作的媒体库。</p>
-                ) : (
-                  batchLibraries.map((library) => (
-                    <label key={library.id} className="flex items-center justify-between gap-3 rounded-md px-2 py-2 hover:bg-muted/60">
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm font-medium">{library.name || library.id}</span>
-                        {library.type && <span className="block text-xs text-muted-foreground">{library.type}</span>}
-                      </span>
-                      <input
-                        type="checkbox"
-                        checked={batchLibrarySelectedIds.has(library.id)}
-                        onChange={() => toggleBatchLibrary(library.id)}
-                        className="h-4 w-4"
-                      />
-                    </label>
-                  ))
-                )}
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBatchLibraryOpen(false)} disabled={batchLibraryLoading}>
-              取消
-            </Button>
-            <Button onClick={() => void applyBatchLibraryAction()} disabled={batchLibraryLoading}>
-              {batchLibraryLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              应用设置
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <BatchLibraryDialog
+        open={batchLibraryOpen}
+        onOpenChange={setBatchLibraryOpen}
+        selectedUserCount={selectedUserIds.size}
+        action={batchLibraryAction}
+        onActionChange={setBatchLibraryAction}
+        libraries={batchLibraries}
+        selectedIds={batchLibrarySelectedIds}
+        onToggleLibrary={toggleBatchLibrary}
+        isLoading={batchLibraryLoading}
+        onApply={() => void applyBatchLibraryAction()}
+      />
 
       {/* Edit Dialog */}
-      <Dialog open={editOpen} onOpenChange={setEditOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>编辑用户信息</DialogTitle>
-            <DialogDescription>
-              编辑用户 {selectedUser?.username} 的详细信息
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>角色</Label>
-              <Select
-                value={editForm.role.toString()}
-                onValueChange={(v) => setEditForm({ ...editForm, role: parseInt(v) })}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="0">管理员</SelectItem>
-                  <SelectItem value="1">普通用户</SelectItem>
-                  <SelectItem value="2">白名单</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Emby ID（可选）</Label>
-              <Input
-                placeholder="输入 Emby 用户 ID"
-                value={editForm.emby_id}
-                onChange={(e) => setEditForm({ ...editForm, emby_id: e.target.value })}
-              />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                id="active"
-                checked={editForm.active}
-                onChange={(e) => setEditForm({ ...editForm, active: e.target.checked })}
-                className="h-4 w-4 rounded border-gray-300"
-              />
-              <Label htmlFor="active" className="cursor-pointer">
-                启用账号
-              </Label>
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setEditOpen(false)}>
-              取消
-            </Button>
-            <Button onClick={handleEdit} disabled={isActionLoading}>
-              {isActionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              保存更改
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <EditUserDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        user={selectedUser}
+        form={editForm}
+        onFormChange={setEditForm}
+        onSubmit={handleEdit}
+        isLoading={isActionLoading}
+      />
 
       {/* Library Access Dialog */}
-      <Dialog open={libraryOpen} onOpenChange={(open) => { if (!libraryLoading) setLibraryOpen(open); }}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>媒体库权限</DialogTitle>
-            <DialogDescription>
-              {libraryTarget ? `调整 ${libraryTarget.username} 的 Emby 媒体库显示/隐藏权限` : "调整用户媒体库权限"}
-            </DialogDescription>
-          </DialogHeader>
-
-          {libraryLoading && !libraryAccess ? (
-            <div className="flex items-center gap-2 rounded-lg bg-accent/50 p-4 text-sm text-muted-foreground">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              正在加载媒体库权限
-            </div>
-          ) : !libraryAccess?.has_emby ? (
-            <div className="rounded-lg bg-accent/50 p-4 text-sm text-muted-foreground">
-              该用户尚未绑定 Emby 账号，无法设置媒体库权限。
-            </div>
-          ) : libraryAccess ? (
-            <div className="space-y-4">
-              <div className="flex flex-col gap-3 rounded-lg border bg-card/60 p-3 sm:flex-row sm:items-center sm:justify-between">
-                <div className="space-y-1">
-                  <Label>自助显隐授权</Label>
-                  <p className="text-xs text-muted-foreground">
-                    只控制该用户能否在个人设置里自行操作；下方按钮才会改变当前媒体库可见状态。
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant={libraryAccess.self_service_enabled ? "success" : "outline"}>
-                    {libraryAccess.self_service_enabled ? "已开启" : "未开启"}
-                  </Badge>
-                  {libraryTarget && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={libraryLoading || isActionLoading}
-                      onClick={() => void handleSetLibrarySelfService(libraryTarget, !libraryAccess.self_service_enabled)}
-                    >
-                      {libraryAccess.self_service_enabled ? "关闭授权" : "开启授权"}
-                    </Button>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-card/60 p-3">
-                <Badge variant={libraryAccess.enable_all ? "default" : "secondary"}>
-                  {libraryAccess.enable_all ? "策略：显示全部" : "策略：按选择显示"}
-                </Badge>
-                <Badge variant="outline">可见 {libraryAccess.libraries.length}/{libraryAccess.all_libraries.length}</Badge>
-                {libraryAccess.blocked_names.length > 0 && (
-                  <Badge variant="outline">隐藏：{libraryAccess.blocked_names.join("、")}</Badge>
-                )}
-              </div>
-
-              <div className="flex flex-wrap gap-2">
-                <Button variant="outline" size="sm" disabled={libraryLoading} onClick={() => void updateTargetLibraries({ action: "enable_all" })}>
-                  <Eye className="mr-2 h-4 w-4" />
-                  显示全部
-                </Button>
-                <Button variant="outline" size="sm" disabled={libraryLoading} onClick={() => void updateTargetLibraries({ action: "disable_all" })}>
-                  <EyeOff className="mr-2 h-4 w-4" />
-                  隐藏全部
-                </Button>
-                {libraryAccess.default_hidden_libraries.length > 0 && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={libraryLoading}
-                    onClick={() => void updateTargetLibraries({ action: "hide", library_names: libraryAccess.default_hidden_libraries })}
-                  >
-                    隐藏默认库
-                  </Button>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>选择可见媒体库</Label>
-                <div className="grid max-h-72 gap-2 overflow-y-auto rounded-lg border p-3 sm:grid-cols-2">
-                  {libraryAccess.all_libraries.map((lib) => {
-                    const selected = selectedLibraryIds.has(lib.id);
-                    return (
-                      <button
-                        key={lib.id}
-                        type="button"
-                        className={`rounded-lg border p-3 text-left transition-colors ${selected ? "border-primary bg-primary/10" : "bg-background hover:bg-accent"}`}
-                        onClick={() => toggleSelectedLibrary(lib.id)}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="font-medium">{lib.name}</span>
-                          <Badge variant={selected ? "default" : "secondary"}>{selected ? "显示" : "隐藏"}</Badge>
-                        </div>
-                        {lib.type && <p className="mt-1 text-xs text-muted-foreground">{lib.type}</p>}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-
-              {libraryAccess.self_service_libraries.length > 0 && (
-                <div className="space-y-2 rounded-lg border p-3">
-                  <Label>可自助操作的媒体库（全局配置）</Label>
-                  <p className="text-xs text-muted-foreground">
-                    这些库来自 Emby 配置；这里的“显示/隐藏”会直接调整当前用户可见状态。
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    {libraryAccess.self_service_libraries.map((name) => (
-                      <div key={name} className="flex items-center gap-2 rounded-md bg-accent/50 px-2 py-1">
-                        <span className="text-sm">{name}</span>
-                        <Button variant="ghost" size="sm" disabled={libraryLoading} onClick={() => void updateTargetLibraries({ action: "show", library_names: [name] })}>
-                          显示
-                        </Button>
-                        <Button variant="ghost" size="sm" disabled={libraryLoading} onClick={() => void updateTargetLibraries({ action: "hide", library_names: [name] })}>
-                          隐藏
-                        </Button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : null}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setLibraryOpen(false)} disabled={libraryLoading}>
-              关闭
-            </Button>
-            <Button onClick={() => void saveSelectedLibraries()} disabled={libraryLoading || !libraryAccess || !libraryAccess.has_emby || libraryAccess.all_libraries.length === 0}>
-              {libraryLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              保存选择
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <LibraryAccessDialog
+        open={libraryOpen}
+        onOpenChange={setLibraryOpen}
+        target={libraryTarget}
+        access={libraryAccess}
+        selectedIds={selectedLibraryIds}
+        isLoading={libraryLoading}
+        isActionLoading={isActionLoading}
+        onToggleSelected={toggleSelectedLibrary}
+        onUpdateLibraries={(payload) => void updateTargetLibraries(payload)}
+        onSetSelfService={(user, enabled) => void handleSetLibrarySelfService(user, enabled)}
+        onSave={() => void saveSelectedLibraries()}
+      />
 
       {/* Cleanup Invalid Users Dialog */}
-      <Dialog open={cleanupOpen} onOpenChange={(open) => { setCleanupOpen(open); if (!open) setCleanupPreview(null); }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>清理无效用户</DialogTitle>
-            <DialogDescription>
-              删除未绑定 Telegram 且未绑定 Emby 的非管理员 / 白名单用户
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>最少注册天数</Label>
-              <Input
-                type="number"
-                min={1}
-                placeholder="注册超过多少天的无效用户"
-                value={cleanupMinDays}
-                onChange={(e) => {
-                  setCleanupMinDays(e.target.value);
-                  setCleanupPreview(null);
-                }}
-              />
-              <p className="text-xs text-muted-foreground">
-                仅清理注册超过 {cleanupMinDays || 7} 天的无效用户
-              </p>
-            </div>
-
-            {cleanupPreview !== null && (
-              <div className="space-y-2">
-                <Label>匹配到 {cleanupPreview.length} 个无效用户</Label>
-                {cleanupPreview.length > 0 ? (
-                  <div className="max-h-48 overflow-y-auto rounded-md border">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b bg-muted/50">
-                          <th className="px-3 py-2 text-left">用户名</th>
-                          <th className="px-3 py-2 text-left">注册时间</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {cleanupPreview.map((u: any) => (
-                          <tr key={u.uid} className="border-b">
-                            <td className="px-3 py-1.5">{u.username}</td>
-                            <td className="px-3 py-1.5 text-muted-foreground">
-                              {u.register_time ? new Date(u.register_time * 1000).toLocaleDateString() : "-"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">没有符合条件的无效用户</p>
-                )}
-              </div>
-            )}
-          </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setCleanupOpen(false)}>
-              取消
-            </Button>
-            <Button
-              variant="outline"
-              onClick={handleCleanupPreview}
-              disabled={cleanupLoading}
-            >
-              {cleanupLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              预览
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleCleanupConfirm}
-              disabled={cleanupLoading || !cleanupPreview || cleanupPreview.length === 0}
-            >
-              {cleanupLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              确认清理
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <CleanupInvalidUsersDialog
+        open={cleanupOpen}
+        onOpenChange={(open) => {
+          setCleanupOpen(open);
+          if (!open) setCleanupPreview(null);
+        }}
+        minDays={cleanupMinDays}
+        onMinDaysChange={(next) => {
+          setCleanupMinDays(next);
+          setCleanupPreview(null);
+        }}
+        preview={cleanupPreview}
+        onPreview={handleCleanupPreview}
+        onConfirm={handleCleanupConfirm}
+        isLoading={cleanupLoading}
+      />
 
       {/* 一键踢出未绑定 Emby 的系统账号 */}
-      <Dialog
+      <NoEmbyKickDialog
         open={noEmbyOpen}
         onOpenChange={(open) => {
           setNoEmbyOpen(open);
@@ -2465,155 +2092,27 @@ export default function AdminUsersPage() {
             setNoEmbyConfirmText("");
           }
         }}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>踢出未绑 Emby 账号</DialogTitle>
-            <DialogDescription>
-              删除未绑定 Emby 的系统账号。管理员 / 白名单 / 未识别角色 / 当前正在 Emby
-              注册队列里的 UID 一律跳过。可选限制最少注册天数。
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4 text-sm">
-            <div className="grid gap-3 sm:grid-cols-[1fr_auto] sm:items-end">
-              <div className="space-y-2">
-                <Label>最少注册天数</Label>
-                <Input
-                  type="number"
-                  min={0}
-                  value={noEmbyMinDays}
-                  onChange={(e) => {
-                    setNoEmbyMinDays(e.target.value);
-                    setNoEmbyPreview(null);
-                  }}
-                  placeholder="0 表示不卡注册时间"
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  {noEmbyMinDaysParsed > 0
-                    ? `仅清理注册超过 ${noEmbyMinDaysParsed} 天的账号`
-                    : "无视注册时间，匹配所有未绑 Emby 的账号"}
-                </p>
-              </div>
-              <label className="flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-3 py-2">
-                <input
-                  type="checkbox"
-                  checked={noEmbyPreserveDirect}
-                  onChange={(e) => {
-                    setNoEmbyPreserveDirect(e.target.checked);
-                    setNoEmbyPreview(null);
-                  }}
-                  className="h-4 w-4 rounded border-gray-300"
-                />
-                <span className="text-xs">
-                  保留可直接补建 Emby 的用户
-                  <span className="block text-[10px] text-muted-foreground">
-                    (已绑 Telegram 的待激活账号)
-                  </span>
-                </span>
-              </label>
-            </div>
-
-            <p className="rounded-md border border-amber-500/40 bg-amber-500/5 px-3 py-2 text-amber-700 dark:text-amber-300">
-              ⚠️ 请先「预览」确认范围后再确认执行。
-            </p>
-
-            {noEmbyPreview && (
-              <div className="space-y-2">
-                <Label>
-                  匹配到 {noEmbyPreview.candidate_count} 个待清理账号
-                </Label>
-                <div className="flex flex-wrap gap-1.5 text-[10px]">
-                  <Badge variant="outline">管理员 {noEmbyPreview.skipped_admins}</Badge>
-                  <Badge variant="outline">白名单 {noEmbyPreview.skipped_whitelist}</Badge>
-                  <Badge variant="outline">未识别 {noEmbyPreview.skipped_unrecognized}</Badge>
-                  <Badge variant="outline">注册队列 {noEmbyPreview.skipped_in_queue}</Badge>
-                  {noEmbyPreview.skipped_pending_register > 0 && (
-                    <Badge variant="outline">可补建 Emby {noEmbyPreview.skipped_pending_register}</Badge>
-                  )}
-                  {noEmbyPreview.skipped_too_recent > 0 && (
-                    <Badge variant="outline">注册时间不够 {noEmbyPreview.skipped_too_recent}</Badge>
-                  )}
-                </div>
-                {noEmbyPreview.candidate_count > 0 ? (
-                  <div className="max-h-56 overflow-y-auto rounded-md border">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b bg-muted/50">
-                          <th className="px-3 py-2 text-left">UID</th>
-                          <th className="px-3 py-2 text-left">用户名</th>
-                          <th className="px-3 py-2 text-left">注册时间</th>
-                          <th className="px-3 py-2 text-left">状态</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {noEmbyPreview.candidates.slice(0, 200).map((u) => (
-                          <tr key={u.uid} className="border-b">
-                            <td className="px-3 py-1.5 font-mono text-xs">{u.uid}</td>
-                            <td className="px-3 py-1.5">{u.username}</td>
-                            <td className="px-3 py-1.5 text-muted-foreground">
-                              {u.register_time ? new Date(u.register_time * 1000).toLocaleDateString() : "-"}
-                            </td>
-                            <td className="px-3 py-1.5 text-xs">
-                              {u.pending_emby ? "待激活" : "未绑定"}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                    {noEmbyPreview.candidates.length > 200 && (
-                      <p className="px-3 py-1.5 text-xs text-muted-foreground">
-                        仅展示前 200 个，实际仍会按候选总数执行
-                      </p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-sm text-muted-foreground">没有需要清理的账号</p>
-                )}
-              </div>
-            )}
-
-            {noEmbyPreview && noEmbyPreview.candidate_count > 0 && (
-              <div className="space-y-2">
-                <Label>输入「确认」以执行</Label>
-                <Input
-                  value={noEmbyConfirmText}
-                  onChange={(e) => setNoEmbyConfirmText(e.target.value)}
-                  placeholder="确认"
-                />
-              </div>
-            )}
-          </div>
-          <DialogFooter className="gap-2 sm:gap-0">
-            <Button variant="outline" onClick={() => setNoEmbyOpen(false)}>
-              取消
-            </Button>
-            <Button
-              variant="outline"
-              onClick={handleNoEmbyPreview}
-              disabled={noEmbyLoading}
-            >
-              {noEmbyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              预览
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleNoEmbyConfirm}
-              disabled={
-                noEmbyLoading ||
-                !noEmbyPreview ||
-                noEmbyPreview.candidate_count === 0 ||
-                noEmbyConfirmText.trim() !== "确认"
-              }
-            >
-              {noEmbyLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              确认踢出
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        minDays={noEmbyMinDays}
+        onMinDaysChange={(next) => {
+          setNoEmbyMinDays(next);
+          setNoEmbyPreview(null);
+        }}
+        minDaysParsed={noEmbyMinDaysParsed}
+        preserveDirect={noEmbyPreserveDirect}
+        onPreserveDirectChange={(next) => {
+          setNoEmbyPreserveDirect(next);
+          setNoEmbyPreview(null);
+        }}
+        preview={noEmbyPreview}
+        confirmText={noEmbyConfirmText}
+        onConfirmTextChange={setNoEmbyConfirmText}
+        onPreview={handleNoEmbyPreview}
+        onConfirm={handleNoEmbyConfirm}
+        isLoading={noEmbyLoading}
+      />
 
       {/* Reset User Password Dialog（区分系统 / Emby / 两者） */}
-      <Dialog
+      <ResetPasswordDialog
         open={resetPwdOpen}
         onOpenChange={(open) => {
           setResetPwdOpen(open);
@@ -2623,123 +2122,24 @@ export default function AdminUsersPage() {
             setResetPwdCustom("");
           }
         }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>重置密码 · {resetPwdUser?.username}</DialogTitle>
-            <DialogDescription>
-              可单独重置系统登录密码或 Emby 播放密码；同时支持自定义新密码或随机生成。
-            </DialogDescription>
-          </DialogHeader>
-
-          {resetPwdResult ? (
-            <div className="space-y-3">
-              <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5">
-                <p className="text-sm">
-                  <span className="text-muted-foreground">重置范围：</span>
-                  <span className="font-medium">
-                    {resetPwdResult.scope === "system"
-                      ? "仅系统密码"
-                      : resetPwdResult.scope === "emby"
-                        ? "仅 Emby 密码"
-                        : "系统 + Emby"}
-                  </span>
-                </p>
-                <p className="text-sm text-muted-foreground">
-                  {resetPwdResult.auto_generated ? "随机生成" : "管理员指定"}的新密码：
-                </p>
-                <code className="block break-all rounded bg-background px-2 py-1.5 text-base font-mono">
-                  {resetPwdResult.new_password}
-                </code>
-                <p className="text-xs text-muted-foreground">
-                  请尽快告知用户。本对话框关闭后无法再次查看明文。
-                </p>
-              </div>
-              <DialogFooter className="gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(resetPwdResult.new_password);
-                    toast({ title: "已复制到剪贴板", variant: "success" });
-                  }}
-                >
-                  复制密码
-                </Button>
-                <Button onClick={() => setResetPwdOpen(false)}>完成</Button>
-              </DialogFooter>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>重置范围</Label>
-                <Select
-                  value={resetPwdScope}
-                  onValueChange={(v) => setResetPwdScope(v as typeof resetPwdScope)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="both" disabled={!resetPwdUser?.emby_bound}>
-                      系统 + Emby（同一个密码）
-                    </SelectItem>
-                    <SelectItem value="system">仅系统登录密码</SelectItem>
-                    <SelectItem value="emby" disabled={!resetPwdUser?.emby_bound}>
-                      仅 Emby 密码
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                {!resetPwdUser?.emby_bound && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400">
-                    该用户未绑定 Emby，只能重置系统密码。
-                  </p>
-                )}
-              </div>
-
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={resetPwdAuto}
-                  onChange={(e) => setResetPwdAuto(e.target.checked)}
-                  className="h-4 w-4 rounded border-gray-300"
-                />
-                <span>随机生成 12 位强密码</span>
-              </label>
-
-              {!resetPwdAuto && (
-                <div className="space-y-2">
-                  <Label>自定义新密码</Label>
-                  <Input
-                    type="text"
-                    value={resetPwdCustom}
-                    onChange={(e) => setResetPwdCustom(e.target.value)}
-                    placeholder="≥ 8 位，含大小写字母 + 数字"
-                    autoComplete="new-password"
-                  />
-                  <p className="text-[11px] text-muted-foreground">
-                    至少 8 位，且包含大小写字母与数字。
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-
-          {!resetPwdResult && (
-            <DialogFooter className="gap-2">
-              <Button variant="outline" onClick={() => setResetPwdOpen(false)}>
-                取消
-              </Button>
-              <Button onClick={handleResetPasswordSubmit} disabled={resetPwdLoading}>
-                {resetPwdLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                重置密码
-              </Button>
-            </DialogFooter>
-          )}
-        </DialogContent>
-      </Dialog>
+        user={resetPwdUser}
+        scope={resetPwdScope}
+        onScopeChange={setResetPwdScope}
+        auto={resetPwdAuto}
+        onAutoChange={setResetPwdAuto}
+        custom={resetPwdCustom}
+        onCustomChange={setResetPwdCustom}
+        result={resetPwdResult}
+        onSubmit={handleResetPasswordSubmit}
+        onCopyPassword={(pwd) => {
+          void navigator.clipboard.writeText(pwd);
+          toast({ title: "已复制到剪贴板", variant: "success" });
+        }}
+        isLoading={resetPwdLoading}
+      />
 
       {/* Force-set Emby Password Dialog */}
-      <Dialog
+      <ForceEmbyPasswordDialog
         open={forcePwdOpen}
         onOpenChange={(open) => {
           setForcePwdOpen(open);
@@ -2750,829 +2150,184 @@ export default function AdminUsersPage() {
             setForcePwdResult(null);
           }
         }}
-      >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>强制重置 Emby 密码</DialogTitle>
-            <DialogDescription>
-              通过 Emby 用户名直接重置密码。即使该 Emby 账号没有绑定本地系统账号也可执行。
-            </DialogDescription>
-          </DialogHeader>
-          {forcePwdResult ? (
-            <div className="space-y-3">
-              <div className="rounded-lg border bg-muted/30 p-3 space-y-1.5">
-                <p className="text-sm">
-                  <span className="text-muted-foreground">Emby 用户：</span>
-                  <span className="font-medium break-all">{forcePwdResult.emby_username}</span>
-                </p>
-                <p className="text-sm">
-                  <span className="text-muted-foreground">绑定本地账号：</span>
-                  <span className="font-medium">{forcePwdResult.linked_local_user ? "是" : "否"}</span>
-                </p>
-                <p className="text-sm">
-                  <span className="text-muted-foreground">新密码：</span>
-                </p>
-                <code className="block break-all rounded bg-background px-2 py-1.5 text-base font-mono">
-                  {forcePwdResult.new_password}
-                </code>
-                <p className="text-xs text-muted-foreground">请尽快将新密码告知用户。该密码仅本次显示。</p>
-              </div>
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    void navigator.clipboard.writeText(forcePwdResult.new_password);
-                    toast({ title: "已复制到剪贴板", variant: "success" });
-                  }}
-                >
-                  复制密码
-                </Button>
-                <Button onClick={() => setForcePwdOpen(false)}>完成</Button>
-              </DialogFooter>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Emby 用户名</Label>
-                <Input
-                  placeholder="输入要重置密码的 Emby 用户名"
-                  value={forcePwdEmbyName}
-                  onChange={(e) => setForcePwdEmbyName(e.target.value)}
-                />
-              </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="checkbox"
-                  id="forcePwdAuto"
-                  checked={forcePwdAuto}
-                  onChange={(e) => setForcePwdAuto(e.target.checked)}
-                  className="h-4 w-4 rounded"
-                />
-                <Label htmlFor="forcePwdAuto" className="cursor-pointer">
-                  自动生成 12 位强密码
-                </Label>
-              </div>
-              {!forcePwdAuto && (
-                <div className="space-y-2">
-                  <Label>新密码</Label>
-                  <Input
-                    type="text"
-                    placeholder="至少 8 位，含大小写字母和数字"
-                    value={forcePwdNewPwd}
-                    onChange={(e) => setForcePwdNewPwd(e.target.value)}
-                  />
-                </div>
-              )}
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setForcePwdOpen(false)}>
-                  取消
-                </Button>
-                <Button onClick={handleForceSetEmbyPassword} disabled={forcePwdLoading}>
-                  {forcePwdLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  确认重置
-                </Button>
-              </DialogFooter>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
+        embyName={forcePwdEmbyName}
+        onEmbyNameChange={setForcePwdEmbyName}
+        newPwd={forcePwdNewPwd}
+        onNewPwdChange={setForcePwdNewPwd}
+        auto={forcePwdAuto}
+        onAutoChange={setForcePwdAuto}
+        result={forcePwdResult}
+        onSubmit={handleForceSetEmbyPassword}
+        onCopyPassword={(pwd) => {
+          void navigator.clipboard.writeText(pwd);
+          toast({ title: "已复制到剪贴板", variant: "success" });
+        }}
+        isLoading={forcePwdLoading}
+      />
 
       {/* Renew Dialog */}
-      <Dialog open={renewOpen} onOpenChange={(open) => {
-        setRenewOpen(open);
-        if (!open) setRenewPermanent(false);
-      }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>{renewMode === "cancelPermanent" ? "取消永久有效期" : "用户续期"}</DialogTitle>
-            <DialogDescription>
-              {renewMode === "cancelPermanent"
-                ? `将用户 ${selectedUser?.username} 改为指定天数后到期`
-                : `为用户 ${selectedUser?.username} 延长账号时间`}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label>{renewMode === "cancelPermanent" ? "改为多少天后到期" : "续期天数"}</Label>
-              <Input
-                type="number"
-                placeholder="输入续期天数"
-                value={renewDays}
-                onChange={(e) => setRenewDays(e.target.value)}
-                disabled={renewPermanent}
-              />
-            </div>
-            {renewMode !== "cancelPermanent" && <label className="flex items-center gap-2 rounded-md border bg-muted/30 p-3 text-sm">
-              <input
-                type="checkbox"
-                checked={renewPermanent}
-                onChange={(e) => setRenewPermanent(e.target.checked)}
-                className="h-4 w-4"
-              />
-              设置为永久有效
-            </label>}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setRenewOpen(false)}>
-              取消
-            </Button>
-            <Button onClick={handleRenew} disabled={isActionLoading}>
-              {isActionLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {renewMode === "cancelPermanent" ? "确认取消永久" : "确认续期"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <RenewUserDialog
+        open={renewOpen}
+        onOpenChange={setRenewOpen}
+        user={selectedUser}
+        mode={renewMode}
+        days={renewDays}
+        onDaysChange={setRenewDays}
+        permanent={renewPermanent}
+        onPermanentChange={setRenewPermanent}
+        onSubmit={handleRenew}
+        isLoading={isActionLoading}
+      />
 
       {/* 删除（含邀请树级联）对话框 */}
-      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>删除用户 {deleteTarget?.username}</DialogTitle>
-            <DialogDescription>
-              本地账户与（可选）Emby 账户的删除不可恢复。请同时选择是否级联删除该用户邀请的下级。
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 text-sm">
-            <div className="space-y-2">
-              <Label className="text-xs uppercase tracking-wider text-muted-foreground">删除范围</Label>
-              <Select
-                value={deleteScope}
-                onValueChange={(v) => setDeleteScope(v as "with_emby" | "local_only" | "emby_only")}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {deleteTarget?.emby_id && (
-                    <SelectItem value="with_emby">同时删除本地账户 + Emby 账户</SelectItem>
-                  )}
-                  <SelectItem value="local_only">仅删除本地账户</SelectItem>
-                  {deleteTarget?.emby_id && (
-                    <SelectItem value="emby_only">仅删除 Emby 账户（不动本地）</SelectItem>
-                  )}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2 rounded-md border bg-muted/30 p-3">
-              <div className="flex items-center justify-between gap-2">
-                <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                  邀请树级联深度
-                </Label>
-                <span className="text-[10px] text-muted-foreground">
-                  当前：{cascadeDepth === 0 ? "整棵子树" : `${cascadeDepth} 层`}
-                </span>
-              </div>
-
-              {/* 预设快捷键 */}
-              <div className="flex flex-wrap gap-1.5">
-                {[1, 2, 3, 5, 0].map((preset) => (
-                  <Button
-                    key={preset}
-                    type="button"
-                    size="sm"
-                    variant={cascadeDepth === preset ? "default" : "outline"}
-                    className="h-7 px-2 text-[11px]"
-                    onClick={() => setCascadeDepth(preset)}
-                  >
-                    {preset === 0 ? "全部" : `${preset} 层`}
-                  </Button>
-                ))}
-              </div>
-
-              {/* 自定义输入 */}
-              <div className="flex items-center gap-2">
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  min={0}
-                  max={999}
-                  value={cascadeDepth}
-                  onChange={(e) => {
-                    const v = parseInt(e.target.value, 10);
-                    if (Number.isNaN(v)) {
-                      setCascadeDepth(1);
-                    } else {
-                      setCascadeDepth(Math.max(0, Math.min(999, v)));
-                    }
-                  }}
-                  placeholder="自定义层级，输入 0 表示整棵子树"
-                  className="h-9"
-                />
-              </div>
-
-              <p className="text-[11px] text-muted-foreground leading-relaxed">
-                {cascadeDepth === 1 ? (
-                  <>仅处理该用户本人；被他邀请的下级会自动成为新树根，互相之间不再有上下级关系。</>
-                ) : cascadeDepth === 0 ? (
-                  <>
-                    将沿邀请关系，一路处理该用户及其
-                    <span className="font-semibold text-foreground"> 全部后代</span>
-                    （
-                    {deleteScope === "with_emby"
-                      ? "本地账号 + Emby 账号"
-                      : deleteScope === "local_only"
-                        ? "仅本地账号，Emby 保留"
-                        : "仅 Emby 账号，本地账号与邀请关系保留"}
-                    ）。请二次确认！
-                  </>
-                ) : (
-                  <>
-                    将一并处理该用户向下 {cascadeDepth - 1} 层的所有下级（
-                    {deleteScope === "with_emby"
-                      ? "本地 + Emby"
-                      : deleteScope === "local_only"
-                        ? "仅本地"
-                        : "仅 Emby"}
-                    ）。
-                  </>
-                )}
-              </p>
-              {deleteScope === "emby_only" && cascadeDepth !== 1 && (
-                <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                  注意：「仅删除 Emby」级联只会删除下级用户的 Emby 账号，本地账号与邀请关系完全保留。
-                </p>
-              )}
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={isDeleting}>
-              取消
-            </Button>
-            <Button variant="destructive" onClick={confirmDelete} disabled={isDeleting}>
-              {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              确认删除
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DeleteUserDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        target={deleteTarget}
+        scope={deleteScope}
+        onScopeChange={setDeleteScope}
+        cascadeDepth={cascadeDepth}
+        onCascadeDepthChange={setCascadeDepth}
+        onConfirm={confirmDelete}
+        isLoading={isDeleting}
+      />
 
       {/* 启停（支持邀请树级联） */}
-      <Dialog open={toggleOpen} onOpenChange={setToggleOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>
-              {toggleTarget?.active ? "禁用" : "启用"}用户 {toggleTarget?.username}
-            </DialogTitle>
-            <DialogDescription>
-              {toggleTarget?.active
-                ? "禁用后用户将无法登录系统与 Emby，但邀请树结构（上下级关系、已发出邀请码）完全不变；重新启用即可恢复访问。"
-                : "启用后用户可以重新登录系统与 Emby。"}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3 text-sm">
-            {toggleTarget?.active && (
-              <div className="space-y-1.5">
-                <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                  原因（可选）
-                </Label>
-                <Input
-                  value={toggleReason}
-                  onChange={(e) => setToggleReason(e.target.value)}
-                  placeholder="将记入操作日志，留空也可"
-                  maxLength={200}
-                />
-              </div>
-            )}
-
-            <div className="space-y-2 rounded-md border bg-muted/30 p-3">
-              <div className="flex items-center justify-between gap-2">
-                <Label className="text-xs uppercase tracking-wider text-muted-foreground">
-                  邀请树级联深度
-                </Label>
-                <span className="text-[10px] text-muted-foreground">
-                  当前：{toggleCascadeDepth === 0 ? "整棵子树" : `${toggleCascadeDepth} 层`}
-                </span>
-              </div>
-
-              <div className="flex flex-wrap gap-1.5">
-                {[1, 2, 3, 5, 0].map((preset) => (
-                  <Button
-                    key={preset}
-                    type="button"
-                    size="sm"
-                    variant={toggleCascadeDepth === preset ? "default" : "outline"}
-                    className="h-7 px-2 text-[11px]"
-                    onClick={() => setToggleCascadeDepth(preset)}
-                  >
-                    {preset === 0 ? "全部" : `${preset} 层`}
-                  </Button>
-                ))}
-              </div>
-
-              <Input
-                type="number"
-                inputMode="numeric"
-                min={0}
-                max={999}
-                value={toggleCascadeDepth}
-                onChange={(e) => {
-                  const v = parseInt(e.target.value, 10);
-                  if (Number.isNaN(v)) {
-                    setToggleCascadeDepth(1);
-                  } else {
-                    setToggleCascadeDepth(Math.max(0, Math.min(999, v)));
-                  }
-                }}
-                placeholder="自定义层级，输入 0 表示整棵子树"
-                className="h-9"
-              />
-
-              <p className="text-[11px] text-muted-foreground leading-relaxed">
-                {toggleCascadeDepth === 1 ? (
-                  <>仅处理该用户本人；下级账号不受影响。</>
-                ) : toggleCascadeDepth === 0 ? (
-                  <>
-                    将
-                    <span className="font-semibold text-foreground">
-                      {toggleTarget?.active ? "禁用" : "启用"}
-                    </span>
-                    该用户及其全部后代（沿邀请关系递归）。已经处于目标状态的会被跳过。
-                  </>
-                ) : (
-                  <>
-                    将{toggleTarget?.active ? "禁用" : "启用"}该用户及向下 {toggleCascadeDepth - 1} 层的所有下级；
-                    其他管理员账号会被跳过。
-                  </>
-                )}
-              </p>
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setToggleOpen(false)} disabled={isToggling}>
-              取消
-            </Button>
-            <Button
-              variant={toggleTarget?.active ? "destructive" : "default"}
-              onClick={confirmToggleActive}
-              disabled={isToggling}
-            >
-              {isToggling && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {toggleTarget?.active ? "确认禁用" : "确认启用"}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <ToggleActiveDialog
+        open={toggleOpen}
+        onOpenChange={setToggleOpen}
+        target={toggleTarget}
+        reason={toggleReason}
+        onReasonChange={setToggleReason}
+        cascadeDepth={toggleCascadeDepth}
+        onCascadeDepthChange={setToggleCascadeDepth}
+        onConfirm={confirmToggleActive}
+        isLoading={isToggling}
+      />
 
       {/* 绑定 Emby 对话框 */}
-      <Dialog
+      <BindEmbyDialog
         open={bindOpen}
         onOpenChange={(open) => {
           setBindOpen(open);
           if (!open) setBindConflict(null);
         }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Link2 className="h-5 w-5" />
-              绑定 Emby 账号
-            </DialogTitle>
-            <DialogDescription>
-              将一个已存在的 Emby 账号强制绑定到系统账号 {bindTarget?.username}（UID {bindTarget?.uid}）。
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="bind-emby-name">Emby 用户名</Label>
-              <Input
-                id="bind-emby-name"
-                value={bindEmbyName}
-                onChange={(e) => {
-                  setBindEmbyName(e.target.value);
-                  setBindConflict(null);
-                }}
-                placeholder="输入要绑定的 Emby 用户名"
-                disabled={bindSubmitting}
-              />
-              <p className="text-xs text-muted-foreground">
-                若该 Emby 已被其他系统账号占用，将出现确认按钮以“夺取”绑定。
-              </p>
-            </div>
-
-            {bindConflict && (
-              <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-                <div className="mb-1 flex items-center gap-2 text-amber-600 dark:text-amber-400">
-                  <AlertTriangle className="h-4 w-4" />
-                  <span className="font-medium">绑定冲突</span>
-                </div>
-                <p>
-                  Emby 用户 <span className="font-mono">{bindConflict.emby_username}</span> 当前已绑定到
-                  系统账号 <span className="font-mono">{bindConflict.conflict_username}</span>
-                  （UID {bindConflict.conflict_uid}）。
-                </p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  确认“夺取”将清空旧账号的 EMBYID，旧账号会被标记为“待重新绑定 Emby”状态。
-                </p>
-              </div>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBindOpen(false)} disabled={bindSubmitting}>
-              取消
-            </Button>
-            {bindConflict ? (
-              <Button
-                variant="destructive"
-                onClick={() => void submitBindEmby(true)}
-                disabled={bindSubmitting}
-              >
-                {bindSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                确认夺取并绑定
-              </Button>
-            ) : (
-              <Button onClick={() => void submitBindEmby(false)} disabled={bindSubmitting}>
-                {bindSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                绑定
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        target={bindTarget}
+        embyName={bindEmbyName}
+        onEmbyNameChange={(next) => {
+          setBindEmbyName(next);
+          setBindConflict(null);
+        }}
+        conflict={bindConflict}
+        onSubmit={(force) => void submitBindEmby(force)}
+        isSubmitting={bindSubmitting}
+      />
 
       {/* 一键踢出 TG 群里未绑账号的成员 */}
-      <Dialog open={kickOpen} onOpenChange={(v) => { if (!kickLoading) setKickOpen(v); }}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Send className="h-5 w-5" />
-              一键踢出未绑 Web 账号的 TG 成员
-            </DialogTitle>
-            <DialogDescription>
-              Bot API 没法主动枚举群成员，本功能依赖 Bot 长期被动累积的“花名册”
-              （chat_member 事件 + 群消息观察）。Bot 必须在群里是有“封禁成员”权限的管理员。
-              群管理员、Bot、配置中的 ADMIN_ID 与所有持有 Web 账号的人都会被自动排除；
-              踢出策略是 ban + 立即 unban（临时移除，仍可重新加入）。
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3 text-sm">
-            {kickRoster && (
-              <div className="rounded-md border bg-muted/30 p-3 space-y-1 text-xs">
-                <p className="font-medium">花名册概况（chat_id: {kickRoster.chat_id || "—"}）</p>
-                <p>活跃: {kickRoster.active ?? 0}　已离群: {kickRoster.inactive ?? 0}　Bot: {kickRoster.bots ?? 0}</p>
-                {kickRoster.first_seen_at && (
-                  <p className="text-muted-foreground">
-                    最早观察：{formatDate(kickRoster.first_seen_at)}
-                    　最新观察：{formatDate(kickRoster.last_seen_at || kickRoster.first_seen_at)}
-                  </p>
-                )}
-              </div>
-            )}
-
-            {kickLoading && !kickPreview ? (
-              <div className="flex items-center justify-center py-6">
-                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                <span className="ml-2 text-xs text-muted-foreground">正在统计候选人...</span>
-              </div>
-            ) : kickPreview ? (
-              <div className="rounded-md border p-3 space-y-1 text-xs">
-                <p>花名册成员: <strong>{kickPreview.roster_size}</strong>（含 bot {kickPreview.bots_in_roster}）</p>
-                <p>系统内活跃且已绑 Emby: <strong>{kickPreview.preserved_bound}</strong></p>
-                <p>群管理员排除: <strong>{kickPreview.admins_excluded}</strong></p>
-                <p>排除总数: <strong>{kickPreview.excluded_total}</strong></p>
-                <p className="text-destructive">
-                  实际待踢: <strong>{kickPreview.targets}</strong>
-                  <span className="ml-2 text-muted-foreground font-normal">
-                    （无账号 {kickPreview.reason_no_account} · 无 Emby {kickPreview.reason_no_emby} · 已禁用 {kickPreview.reason_disabled}）
-                  </span>
-                </p>
-                {kickPreview.preview_targets && kickPreview.preview_targets.length > 0 && (
-                  <div className="pt-1">
-                    <p className="text-muted-foreground">前 {kickPreview.preview_targets.length} 个目标：</p>
-                    <p className="break-all text-[10px] text-muted-foreground">
-                      {kickPreview.preview_targets
-                        .map((t) => `${t.tg_id}(${t.reason})`)
-                        .join(", ")}
-                    </p>
-                  </div>
-                )}
-              </div>
-            ) : null}
-
-            {kickResult ? (
-              <div className="rounded-md border border-emerald-500/40 bg-emerald-500/5 p-3 space-y-1 text-xs">
-                <p className="font-medium text-emerald-600 dark:text-emerald-400">执行结果</p>
-                <p>已踢出: {kickResult.kicked}　跳过: {kickResult.skipped}</p>
-                <p>已不在群: {kickResult.not_in_group}　失败: {kickResult.failed}</p>
-              </div>
-            ) : (
-              <div className="space-y-1.5 rounded-md border border-destructive/40 bg-destructive/5 p-3">
-                <Label className="text-xs uppercase tracking-wider text-destructive">二次确认</Label>
-                <p className="text-xs text-muted-foreground">
-                  请在下方输入 <span className="font-mono text-foreground">确认</span> 二字以继续执行：
-                </p>
-                <Input
-                  value={kickConfirmText}
-                  onChange={(e) => setKickConfirmText(e.target.value)}
-                  placeholder="确认"
-                  className="h-9"
-                  disabled={kickLoading}
-                />
-              </div>
-            )}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setKickOpen(false)} disabled={kickLoading}>
-              关闭
-            </Button>
-            {!kickResult && (
-              <Button
-                variant="destructive"
-                onClick={handleKickConfirm}
-                disabled={
-                  kickLoading ||
-                  kickConfirmText.trim() !== "确认" ||
-                  !kickPreview ||
-                  (kickPreview && kickPreview.targets === 0)
-                }
-              >
-                {kickLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                确认踢出 {kickPreview ? kickPreview.targets : 0} 人
-              </Button>
-            )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      {/* 一键踢出 TG 群里未绑账号的成员 */}
+      <KickUnboundDialog
+        open={kickOpen}
+        onOpenChange={setKickOpen}
+        loading={kickLoading}
+        roster={kickRoster}
+        preview={kickPreview}
+        result={kickResult}
+        confirmText={kickConfirmText}
+        onConfirmTextChange={setKickConfirmText}
+        onConfirm={handleKickConfirm}
+      />
 
       {/* 一键批量到期调控 */}
-      <Dialog open={bulkExpireOpen} onOpenChange={setBulkExpireOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <CalendarClock className="h-5 w-5" />
-              一键批量调控到期时间
-            </DialogTitle>
-            <DialogDescription>
-              将根据上方筛选条件（角色/状态/Emby 绑定）批量覆盖普通用户的到期时间。
-              管理员、白名单与未开通 Emby 的账号默认会被跳过，避免误伤。
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 text-sm">
-            <div className="space-y-2">
-              <Label className="text-xs uppercase tracking-wider text-muted-foreground">目标到期时间</Label>
-              <div className="flex flex-wrap items-center gap-2">
-                <Button
-                  type="button"
-                  size="sm"
-                  variant={bulkExpireMode === "permanent" ? "default" : "outline"}
-                  onClick={() => setBulkExpireMode("permanent")}
-                >
-                  永久
-                </Button>
-                <div className="flex items-center gap-1.5">
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={bulkExpireMode === "days" ? "default" : "outline"}
-                    onClick={() => setBulkExpireMode("days")}
-                  >
-                    自定义天数
-                  </Button>
-                  <Input
-                    type="number"
-                    min={1}
-                    value={bulkExpireDays}
-                    onChange={(e) => {
-                      setBulkExpireDays(e.target.value);
-                      setBulkExpireMode("days");
-                    }}
-                    placeholder="天数"
-                    className="h-8 w-24"
-                  />
-                  <span className="text-xs text-muted-foreground">天</span>
-                </div>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                {bulkExpireMode === "permanent"
-                  ? "将设置为永久（EXPIRED_AT=-1）。"
-                  : "从当前时间起 N 天后过期。"}
-              </p>
-            </div>
-
-            <div className="rounded-md border bg-muted/30 p-3 space-y-2">
-              <p className="text-xs font-medium">作用范围（当前筛选条件）</p>
-              <div className="text-xs text-muted-foreground space-y-0.5">
-                <p>角色：{roleFilter === "all" ? "全部" : roleFilter === "0" ? "管理员" : roleFilter === "1" ? "普通用户" : "白名单"}</p>
-                <p>启用状态：{activeFilter === "all" ? "全部" : activeFilter === "true" ? "仅已启用" : "仅已禁用"}</p>
-                <p>Emby 绑定：{embyFilter === "all" ? "全部" : embyFilter === "bound" ? "已绑定" : "未绑定"}</p>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-xs uppercase tracking-wider text-muted-foreground">额外选项</Label>
-              <div className="space-y-1.5">
-                <label className="flex items-start gap-2 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={bulkExpireIncludeAdmin}
-                    onChange={(e) => setBulkExpireIncludeAdmin(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded"
-                  />
-                  <span>
-                    包含管理员账号（默认跳过；包含后<strong>仍不会改你自己</strong>，除非把“永久”选项手动改成具体天数前请慎重）
-                  </span>
-                </label>
-                <label className="flex items-start gap-2 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={bulkExpireIncludeWhitelist}
-                    onChange={(e) => setBulkExpireIncludeWhitelist(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded"
-                  />
-                  <span>包含白名单用户（一旦取消勾选，白名单的“永久”标签将被覆盖）</span>
-                </label>
-                <p className="rounded-md border border-muted-foreground/20 bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
-                  ⚠ 未绑定 Emby 的账号一律强制跳过，「未开通」sentinel（EXPIRED_AT=0）由系统保护，无法通过批量操作覆盖。
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-1.5 rounded-md border border-destructive/40 bg-destructive/5 p-3">
-              <Label className="text-xs uppercase tracking-wider text-destructive">
-                二次确认
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                请在下方输入 <span className="font-mono text-foreground">确认</span> 二字以继续：
-              </p>
-              <Input
-                value={bulkExpireConfirmText}
-                onChange={(e) => setBulkExpireConfirmText(e.target.value)}
-                placeholder="确认"
-                className="h-9"
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBulkExpireOpen(false)} disabled={bulkExpireLoading}>
-              取消
-            </Button>
-            <Button
-              variant="destructive"
-              onClick={handleBulkExpire}
-              disabled={bulkExpireLoading || bulkExpireConfirmText.trim() !== "确认"}
-            >
-              {bulkExpireLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              执行批量调控
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <BulkExpireDialog
+        open={bulkExpireOpen}
+        onOpenChange={setBulkExpireOpen}
+        mode={bulkExpireMode}
+        onModeChange={setBulkExpireMode}
+        days={bulkExpireDays}
+        onDaysChange={setBulkExpireDays}
+        includeAdmin={bulkExpireIncludeAdmin}
+        onIncludeAdminChange={setBulkExpireIncludeAdmin}
+        includeWhitelist={bulkExpireIncludeWhitelist}
+        onIncludeWhitelistChange={setBulkExpireIncludeWhitelist}
+        confirmText={bulkExpireConfirmText}
+        onConfirmTextChange={setBulkExpireConfirmText}
+        filterSummary={{
+          role:
+            roleFilter === "all"
+              ? "全部"
+              : roleFilter === "0"
+                ? "管理员"
+                : roleFilter === "1"
+                  ? "普通用户"
+                  : "白名单",
+          active:
+            activeFilter === "all"
+              ? "全部"
+              : activeFilter === "true"
+                ? "仅已启用"
+                : "仅已禁用",
+          emby:
+            embyFilter === "all"
+              ? "全部"
+              : embyFilter === "bound"
+                ? "已绑定"
+                : "未绑定",
+        }}
+        onSubmit={handleBulkExpire}
+        isLoading={bulkExpireLoading}
+      />
 
       {/* 批量启用已禁用账号 */}
-      <Dialog open={bulkEnableOpen} onOpenChange={setBulkEnableOpen}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <UserCheck className="h-5 w-5" />
-              批量启用已禁用账号
-            </DialogTitle>
-            <DialogDescription>
-              将按当前搜索、角色、状态与 Emby 筛选查找已禁用账号，并同步启用对应 Emby 账户。
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 text-sm">
-            <div className="rounded-md border bg-muted/30 p-3 space-y-2">
-              <p className="text-xs font-medium">作用范围（当前筛选条件）</p>
-              <div className="text-xs text-muted-foreground space-y-0.5">
-                <p>搜索：{search.trim() || "无"}</p>
-                <p>角色：{roleFilter === "all" ? "全部" : roleFilter === "0" ? "管理员" : roleFilter === "1" ? "普通用户" : "白名单"}</p>
-                <p>启用状态：{activeFilter === "all" ? "全部（实际只处理已禁用）" : activeFilter === "true" ? "仅已启用（不会匹配禁用账号）" : "仅已禁用"}</p>
-                <p>Emby 绑定：{embyFilter === "all" ? "全部" : embyFilter === "bound" ? "已绑定" : "未绑定"}</p>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label className="text-xs uppercase tracking-wider text-muted-foreground">额外选项</Label>
-              <div className="space-y-1.5">
-                <label className="flex items-start gap-2 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={bulkEnableIncludeAdmin}
-                    onChange={(e) => setBulkEnableIncludeAdmin(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded"
-                  />
-                  <span>包含管理员账号（默认跳过，避免误恢复管理员访问权限）</span>
-                </label>
-                <label className="flex items-start gap-2 text-xs cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={bulkEnableIncludeWhitelist}
-                    onChange={(e) => setBulkEnableIncludeWhitelist(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded"
-                  />
-                  <span>包含白名单用户（默认跳过）</span>
-                </label>
-                <p className="rounded-md border border-muted-foreground/20 bg-muted/40 px-3 py-2 text-[11px] text-muted-foreground">
-                  未识别角色会被后端强制跳过；单次最多启用 5000 个账号。
-                </p>
-              </div>
-            </div>
-
-            <div className="space-y-1.5 rounded-md border border-amber-500/40 bg-amber-500/5 p-3">
-              <Label className="text-xs uppercase tracking-wider text-amber-700 dark:text-amber-300">
-                二次确认
-              </Label>
-              <p className="text-xs text-muted-foreground">
-                请在下方输入 <span className="font-mono text-foreground">确认</span> 二字以继续：
-              </p>
-              <Input
-                value={bulkEnableConfirmText}
-                onChange={(e) => setBulkEnableConfirmText(e.target.value)}
-                placeholder="确认"
-                className="h-9"
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setBulkEnableOpen(false)} disabled={bulkEnableLoading}>
-              取消
-            </Button>
-            <Button
-              onClick={handleBulkEnableDisabled}
-              disabled={bulkEnableLoading || bulkEnableConfirmText.trim() !== "确认" || bulkEnableBlocked}
-            >
-              {bulkEnableLoading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              执行批量启用
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <BulkEnableDialog
+        open={bulkEnableOpen}
+        onOpenChange={setBulkEnableOpen}
+        includeAdmin={bulkEnableIncludeAdmin}
+        onIncludeAdminChange={setBulkEnableIncludeAdmin}
+        includeWhitelist={bulkEnableIncludeWhitelist}
+        onIncludeWhitelistChange={setBulkEnableIncludeWhitelist}
+        confirmText={bulkEnableConfirmText}
+        onConfirmTextChange={setBulkEnableConfirmText}
+        filterSummary={{
+          search: search.trim() || "无",
+          role:
+            roleFilter === "all"
+              ? "全部"
+              : roleFilter === "0"
+                ? "管理员"
+                : roleFilter === "1"
+                  ? "普通用户"
+                  : "白名单",
+          active:
+            activeFilter === "all"
+              ? "全部（实际只处理已禁用）"
+              : activeFilter === "true"
+                ? "仅已启用（不会匹配禁用账号）"
+                : "仅已禁用",
+          emby:
+            embyFilter === "all"
+              ? "全部"
+              : embyFilter === "bound"
+                ? "已绑定"
+                : "未绑定",
+        }}
+        blocked={bulkEnableBlocked}
+        onSubmit={handleBulkEnableDisabled}
+        isLoading={bulkEnableLoading}
+      />
 
       {/* 新建独立 Emby 账号 */}
-      <Dialog open={standaloneOpen} onOpenChange={setStandaloneOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <UserPlus className="h-5 w-5" />
-              新建独立 Emby 账号
-            </DialogTitle>
-            <DialogDescription>
-              直接调用 Emby API 创建一个新账号；该账号不会写入本地用户表、不参与 Twilight 系统的过期/权限管理。
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4 py-2">
-            <div className="space-y-2">
-              <Label htmlFor="standalone-name">Emby 用户名</Label>
-              <Input
-                id="standalone-name"
-                value={standaloneName}
-                onChange={(e) => setStandaloneName(e.target.value)}
-                placeholder="如 guest123"
-                disabled={standaloneSubmitting}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="standalone-pwd">Emby 密码</Label>
-              <Input
-                id="standalone-pwd"
-                type="password"
-                value={standalonePwd}
-                onChange={(e) => setStandalonePwd(e.target.value)}
-                placeholder="至少 8 位，含大小写和数字"
-                disabled={standaloneSubmitting}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="standalone-email">邮箱（可选）</Label>
-              <Input
-                id="standalone-email"
-                value={standaloneEmail}
-                onChange={(e) => setStandaloneEmail(e.target.value)}
-                placeholder="仅做备注，不会同步到 Emby"
-                disabled={standaloneSubmitting}
-              />
-            </div>
-          </div>
-
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => setStandaloneOpen(false)}
-              disabled={standaloneSubmitting}
-            >
-              取消
-            </Button>
-            <Button onClick={handleCreateStandaloneEmby} disabled={standaloneSubmitting}>
-              {standaloneSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              创建
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <StandaloneEmbyCreateDialog
+        open={standaloneOpen}
+        onOpenChange={setStandaloneOpen}
+        form={{ name: standaloneName, pwd: standalonePwd, email: standaloneEmail }}
+        onFormChange={(next) => {
+          setStandaloneName(next.name);
+          setStandalonePwd(next.pwd);
+          setStandaloneEmail(next.email);
+        }}
+        onSubmit={handleCreateStandaloneEmby}
+        isSubmitting={standaloneSubmitting}
+      />
     </div>
   );
 }

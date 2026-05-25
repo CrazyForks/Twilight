@@ -5,9 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/csv"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,9 +20,7 @@ import (
 	"github.com/prejudice-studio/twilight/internal/validate"
 )
 
-var uploadFilenamePattern = regexp.MustCompile(`^[a-f0-9]{16}\.(jpg|png|gif|webp|bmp)$`)
 var demoActionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$`)
-var backgroundGradientPattern = regexp.MustCompile(`(?i)^(linear-gradient|radial-gradient|conic-gradient|repeating-linear-gradient|repeating-radial-gradient)\s*\(`)
 var telegramPublicUsernamePattern = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_]{4,31}$`)
 
 func (a *App) handleRoot(w http.ResponseWriter, r *http.Request, _ Params) {
@@ -49,293 +45,6 @@ func (a *App) handleDocs(w http.ResponseWriter, r *http.Request, _ Params) {
 	_, _ = w.Write([]byte(`<!doctype html><meta charset="utf-8"><title>Twilight Go API</title><h1>Twilight Go API</h1><p>OpenAPI JSON: <a href="/api/v1/openapi.json">/api/v1/openapi.json</a></p>`))
 }
 
-func (a *App) handleLogin(w http.ResponseWriter, r *http.Request, _ Params) {
-	if !a.allowRate(r.Context(), rateKey("login:", a.clientIP(r)), a.cfg.RateLimitLoginPerMinute, time.Minute) {
-		failWithCode(w, http.StatusTooManyRequests, ErrLoginRateLimited, "登录过于频繁，请稍后再试")
-		return
-	}
-	payload := decodeMap(r)
-	username := stringValue(payload, "username")
-	password := stringValue(payload, "password")
-	if username == "" || password == "" {
-		fail(w, http.StatusBadRequest, "用户名和密码不能为空")
-		return
-	}
-	// 双桶限速：除按 IP 之外，再按用户名维度独立计数。
-	// 仅 IP 桶时存在两类绕过：
-	//   1) NAT/CGNAT 邻居共享同一公网 IP，正常用户被恶意邻居拖累；
-	//   2) 攻击者用代理池 / IPv6 大池子各 ≤60/min 撞同一账号，单账号锁定失效。
-	// user 桶预算更紧（10 次 / 5 分钟），且必须在解析到 username 之后才能算 key；
-	// 这里把"username 是否存在"判断放在桶之后，避免攻击者通过响应时间差做账号
-	// 枚举（无论账号是否存在，都消耗 user 桶配额）。
-	if a.cfg.RateLimitLoginUserPer5m > 0 {
-		userKey := strings.ToLower(strings.TrimSpace(username))
-		if userKey != "" && !a.allowRate(r.Context(), rateKey("login:user:", userKey), a.cfg.RateLimitLoginUserPer5m, 5*time.Minute) {
-			failWithCode(w, http.StatusTooManyRequests, ErrLoginRateLimited, "登录过于频繁，请稍后再试")
-			return
-		}
-	}
-	u, okUser := a.store.FindUserByUsername(username)
-	if !okUser || !security.VerifyPassword(password, u.PasswordHash) {
-		failWithCode(w, http.StatusUnauthorized, ErrLoginInvalid, "用户名或密码错误")
-		return
-	}
-	if !u.Active {
-		failWithCode(w, http.StatusForbidden, ErrAccountDisabled, "账号已被禁用")
-		return
-	}
-	token, expires, err := a.sessions.Create(r.Context(), u.UID)
-	if err != nil {
-		failWithCode(w, http.StatusInternalServerError, ErrSessionCreateFailed, "创建会话失败")
-		return
-	}
-	csrf, err := a.issueSessionCookies(w, token, expires)
-	if err != nil {
-		failWithCode(w, http.StatusInternalServerError, ErrSessionCreateFailed, "创建 CSRF 令牌失败")
-		return
-	}
-	deviceID := firstNonEmpty(r.Header.Get("X-Twilight-Device"), r.UserAgent(), a.clientIP(r))
-	_ = a.store.UpsertDevice(store.Device{UID: u.UID, DeviceID: deviceID, DeviceName: firstNonEmpty(r.UserAgent(), "unknown"), Client: "web", FirstSeen: time.Now().Unix(), LastSeen: time.Now().Unix()})
-	_ = a.store.AddLoginLog(store.LoginLog{UID: u.UID, IP: a.clientIP(r), DeviceID: deviceID, DeviceName: firstNonEmpty(r.UserAgent(), "unknown"), Client: "web", Time: time.Now().Unix()})
-	ok(w, "登录成功", map[string]any{"token": token, "csrf_token": csrf, "user": publicUser(u)})
-}
-
-func (a *App) handleLoginByAPIKey(w http.ResponseWriter, r *http.Request, _ Params) {
-	payload := decodeMap(r)
-	key := stringValue(payload, "apikey")
-	if key == "" {
-		failWithCode(w, http.StatusBadRequest, ErrAPIKeyEmpty, "API Key 不能为空")
-		return
-	}
-	_, u, okKey := a.store.FindAPIKeyByHash(hashAPIKey(key))
-	if !okKey {
-		failWithCode(w, http.StatusUnauthorized, ErrAPIKeyInvalid, "API Key 无效")
-		return
-	}
-	token, expires, err := a.sessions.Create(r.Context(), u.UID)
-	if err != nil {
-		failWithCode(w, http.StatusInternalServerError, ErrSessionCreateFailed, "创建会话失败")
-		return
-	}
-	csrf, err := a.issueSessionCookies(w, token, expires)
-	if err != nil {
-		failWithCode(w, http.StatusInternalServerError, ErrSessionCreateFailed, "创建 CSRF 令牌失败")
-		return
-	}
-	ok(w, "登录成功", map[string]any{"token": token, "csrf_token": csrf, "user": publicUser(u)})
-}
-
-func (a *App) handleDirectLoginUnavailable(w http.ResponseWriter, r *http.Request, _ Params) {
-	failWithCode(w, http.StatusForbidden, ErrDirectLoginDisabled, "直接登录未启用")
-}
-
-func (a *App) handleForgotPassword(w http.ResponseWriter, r *http.Request, _ Params) {
-	ip := a.clientIP(r)
-	if !a.allowRate(r.Context(), rateKey("forgot-password:ip:", ip), a.cfg.RateLimitForgotPasswordIPPer10m, 10*time.Minute) {
-		failWithCode(w, http.StatusTooManyRequests, ErrPasswordResetTooMany, "重置密码尝试过于频繁，请稍后再试")
-		return
-	}
-	payload := decodeMap(r)
-	embyUsername := stringValue(payload, "emby_username")
-	embyPassword := stringValue(payload, "emby_password")
-	if embyUsername == "" || embyPassword == "" {
-		failWithCode(w, http.StatusBadRequest, ErrEmbyMissingCreds, "缺少 Emby 用户名或密码")
-		return
-	}
-	if len(embyUsername) > 100 || len(embyPassword) > 200 {
-		failWithCode(w, http.StatusBadRequest, ErrEmbyInputTooLong, "输入内容过长")
-		return
-	}
-	if !a.allowRate(r.Context(), rateKey("forgot-password:user:", strings.ToLower(embyUsername)), a.cfg.RateLimitForgotPasswordUserPer30m, 30*time.Minute) {
-		failWithCode(w, http.StatusTooManyRequests, ErrPasswordResetTooMany, "该账号重置密码尝试过于频繁，请稍后再试")
-		return
-	}
-	embyUser, okAuth, err := a.embyAuthenticateByName(r.Context(), embyUsername, embyPassword)
-	if err != nil {
-		failWithCode(w, http.StatusUnauthorized, ErrEmbyAuthFailed, "Emby 鉴权失败")
-		return
-	}
-	if !okAuth {
-		failWithCode(w, http.StatusUnauthorized, ErrLoginInvalid, "Emby 用户名或密码错误")
-		return
-	}
-	embyID := firstNonEmpty(asString(embyUser["Id"]), asString(embyUser["ID"]), asString(embyUser["id"]))
-	u, okUser := a.store.FindUserByEmbyID(embyID)
-	if !okUser {
-		failWithCode(w, http.StatusNotFound, ErrEmbyAccountUnlinked, "该 Emby 账号未关联面板账号")
-		return
-	}
-	if !u.Active {
-		failWithCode(w, http.StatusForbidden, ErrAccountDisabled, "账号已被禁用")
-		return
-	}
-	newPassword := "Twilight-" + randomCode(18)
-	hash, err := security.HashPassword(newPassword)
-	if err != nil {
-		failWithCode(w, http.StatusInternalServerError, ErrPasswordHashFailed, "密码处理失败")
-		return
-	}
-	u, err = a.store.UpdateUser(u.UID, func(u *store.User) error { u.PasswordHash = hash; return nil })
-	if statusFromError(w, err) {
-		return
-	}
-	if u.EmbyID != "" && a.cfg.EmbyURL != "" {
-		_ = a.embySetUserEnabled(r.Context(), u.EmbyID, a.embyShouldEnableUser(u))
-	}
-	a.sessions.DeleteUser(r.Context(), u.UID)
-	ok(w, "密码已重置", map[string]any{"username": u.Username, "new_password": newPassword})
-}
-
-func (a *App) handleLogout(w http.ResponseWriter, r *http.Request, _ Params) {
-	p := current(r)
-	a.sessions.Delete(r.Context(), p.Token)
-	a.clearSessionCookie(w)
-	ok(w, "logged out", nil)
-}
-
-func (a *App) handleLogoutAll(w http.ResponseWriter, r *http.Request, _ Params) {
-	p := current(r)
-	a.sessions.DeleteUser(r.Context(), p.User.UID)
-	a.clearSessionCookie(w)
-	ok(w, "all sessions logged out", nil)
-}
-
-func (a *App) handleRefresh(w http.ResponseWriter, r *http.Request, _ Params) {
-	p := current(r)
-	a.sessions.Delete(r.Context(), p.Token)
-	token, expires, err := a.sessions.Create(r.Context(), p.User.UID)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "刷新会话失败")
-		return
-	}
-	csrf, err := a.issueSessionCookies(w, token, expires)
-	if err != nil {
-		fail(w, http.StatusInternalServerError, "刷新 CSRF 令牌失败")
-		return
-	}
-	ok(w, "刷新成功", map[string]any{"token": token, "csrf_token": csrf, "user": publicUser(p.User)})
-}
-
-func (a *App) handleCurrentUser(w http.ResponseWriter, r *http.Request, _ Params) {
-	ok(w, "OK", publicUser(current(r).User))
-}
-
-func (a *App) handleRegister(w http.ResponseWriter, r *http.Request, _ Params) {
-	if !a.allowRate(r.Context(), rateKey("register:", a.clientIP(r)), a.cfg.RateLimitRegisterPer10m, 10*time.Minute) {
-		failWithCode(w, http.StatusTooManyRequests, ErrRegisterRateLimited, "注册过于频繁，请稍后再试")
-		return
-	}
-	if !a.cfg.RegisterEnabled && a.store.UserCount() > 0 {
-		failWithCode(w, http.StatusForbidden, ErrRegisterDisabled, "系统注册未开启")
-		return
-	}
-	payload := decodeMap(r)
-	username := stringValue(payload, "username")
-	password := stringValue(payload, "password")
-	telegramBindCode := strings.ToUpper(strings.TrimSpace(stringValue(payload, "telegram_bind_code")))
-	if err := validate.ValidateUsername(username); err != nil {
-		failWithCode(w, http.StatusBadRequest, ErrUsernameInvalid, err.Error())
-		return
-	}
-	if err := validate.ValidatePasswordStrength(password); err != nil {
-		failWithCode(w, http.StatusBadRequest, ErrPasswordWeak, err.Error())
-		return
-	}
-	if reached, current, limit := a.systemUserLimitReached(); reached {
-		failWithCode(w, http.StatusConflict, ErrUserLimitReached, fmt.Sprintf("系统用户数量已达上限 %d/%d", current, limit))
-		return
-	}
-	var telegramID int64
-	var telegramUsername string
-	if a.cfg.ForceBindTelegram || telegramBindCode != "" {
-		if telegramBindCode == "" {
-			failWithCode(w, http.StatusBadRequest, ErrTGBindRequired, "需要先完成 Telegram 绑定")
-			return
-		}
-		if !telegramBindCodePattern.MatchString(telegramBindCode) {
-			failWithCode(w, http.StatusBadRequest, ErrTGBindCodeFormat, "Telegram 绑定码格式不正确")
-			return
-		}
-		bind, okBind := a.store.BindCode(telegramBindCode)
-		switch {
-		case !okBind || bind.ExpiresAt <= time.Now().Unix():
-			if okBind {
-				_ = a.store.DeleteBindCode(telegramBindCode)
-			}
-			failWithCode(w, http.StatusBadRequest, ErrTGBindCodeExpired, "绑定码无效或已过期")
-			return
-		case bind.Scene != "register" || bind.UID != 0:
-			failWithCode(w, http.StatusBadRequest, ErrTGBindCodeSceneBad, "绑定码场景无效")
-			return
-		case !bind.Confirmed || bind.TelegramID == 0:
-			failWithCode(w, http.StatusBadRequest, ErrTGBindCodeNotConfirm, "绑定码尚未在 Telegram 中确认")
-			return
-		}
-		if existing, okUser := a.store.FindUserByTelegramID(bind.TelegramID); okUser {
-			failWithCode(w, http.StatusConflict, ErrTGAlreadyBound, "该 Telegram 已绑定到账号 "+existing.Username)
-			return
-		}
-		telegramID = bind.TelegramID
-		telegramUsername = bind.TelegramUsername
-	}
-	passwordHash, err := security.HashPassword(password)
-	if err != nil {
-		failWithCode(w, http.StatusInternalServerError, ErrPasswordHashFailed, "密码处理失败")
-		return
-	}
-	role := store.RoleNormal
-	if a.store.UserCount() == 0 {
-		role = store.RoleAdmin
-	}
-	u, err := a.store.CreateUser(store.User{Username: username, Email: stringValue(payload, "email"), PasswordHash: passwordHash, Role: role, TelegramID: telegramID, TelegramUsername: telegramUsername})
-	if statusFromError(w, err) {
-		return
-	}
-	if telegramBindCode != "" {
-		_ = a.store.DeleteBindCode(telegramBindCode)
-	}
-	if a.configuredAdminMatch(u.UID, u.Username) {
-		if promoted, err := a.store.UpdateUser(u.UID, func(user *store.User) error {
-			user.Role = store.RoleAdmin
-			user.Active = true
-			return nil
-		}); err == nil {
-			u = promoted
-			role = store.RoleAdmin
-		}
-	}
-	created(w, "注册成功", map[string]any{"user": publicUser(u), "first_admin": role == store.RoleAdmin})
-}
-
-func (a *App) handleRegisterAvailability(w http.ResponseWriter, r *http.Request, _ Params) {
-	username := strings.TrimSpace(r.URL.Query().Get("username"))
-	available := true
-	message := ""
-	if username != "" {
-		_, found := a.store.FindUserByUsername(username)
-		available = !found
-		if !available {
-			message = "用户名已被使用"
-		}
-	}
-	currentUsers := a.store.UserCount()
-	canRegister := a.cfg.RegisterEnabled || currentUsers == 0
-	if a.cfg.UserLimit > 0 && currentUsers >= a.cfg.UserLimit {
-		canRegister = false
-		available = false
-		message = fmt.Sprintf("系统用户数量已达上限 %d/%d", currentUsers, a.cfg.UserLimit)
-	}
-	ok(w, "OK", map[string]any{
-		"enabled":           a.cfg.RegisterEnabled,
-		"can_register":      canRegister,
-		"requires_reg_code": a.cfg.RegisterCodeLimit,
-		"available":         available,
-		"message":           message,
-		"current_users":     currentUsers,
-		"max_users":         a.cfg.UserLimit,
-		"emby_user_limit":   a.cfg.EmbyUserLimit,
-	})
-}
 func (a *App) handleUpdateMe(w http.ResponseWriter, r *http.Request, _ Params) {
 	p := current(r)
 	if a.requireNonEmbyAdmin(w, r, p.User) {
@@ -344,20 +53,20 @@ func (a *App) handleUpdateMe(w http.ResponseWriter, r *http.Request, _ Params) {
 	payload := decodeMap(r)
 	if !a.cfg.BangumiEnabled {
 		if _, ok := payload["bgm_mode"]; ok {
-			fail(w, http.StatusForbidden, "Bangumi sync is disabled")
+			failWithCode(w, http.StatusForbidden, ErrBangumiSyncDisabled, "Bangumi 同步未开启")
 			return
 		}
 		if token := stringValue(payload, "bgm_token"); token != "" {
-			fail(w, http.StatusForbidden, "Bangumi sync is disabled")
+			failWithCode(w, http.StatusForbidden, ErrBangumiSyncDisabled, "Bangumi 同步未开启")
 			return
 		}
 	}
 	if token := stringValue(payload, "bgm_token"); len(token) > 4096 {
-		fail(w, http.StatusBadRequest, "Bangumi Token 过长")
+		failWithCode(w, http.StatusBadRequest, ErrBangumiTokenTooLong, "Bangumi Token 过长")
 		return
 	}
 	if boolValue(payload, "bgm_mode", false) && p.User.BGMToken == "" && stringValue(payload, "bgm_token") == "" {
-		fail(w, http.StatusBadRequest, "启用 Bangumi 同步前请先填写个人 Token")
+		failWithCode(w, http.StatusBadRequest, ErrBangumiTokenMissing, "启用 Bangumi 同步前请先填写个人 Token")
 		return
 	}
 	u, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error {
@@ -395,7 +104,7 @@ func (a *App) handleUpdateUsername(w http.ResponseWriter, r *http.Request, _ Par
 	payload := decodeMap(r)
 	username := stringValue(payload, "new_username")
 	if username == "" {
-		fail(w, http.StatusBadRequest, "missing new_username")
+		failWithCode(w, http.StatusBadRequest, ErrUserNewUsernameRequired, "请填写新用户名")
 		return
 	}
 	if err := validate.ValidateUsername(username); err != nil {
@@ -448,7 +157,7 @@ func (a *App) handleGeneratedPassword(w http.ResponseWriter, r *http.Request, _ 
 	password := "Twilight-" + randomCode(12)
 	hash, err := security.HashPassword(password)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "密码处理失败")
+		failWithCode(w, http.StatusInternalServerError, ErrPasswordHashFailed, "密码处理失败")
 		return
 	}
 	_, err = a.store.UpdateUser(p.User.UID, func(u *store.User) error { u.PasswordHash = hash; return nil })
@@ -464,17 +173,17 @@ func (a *App) handleChangeEmbyPassword(w http.ResponseWriter, r *http.Request, _
 		return
 	}
 	if p.User.EmbyID == "" {
-		fail(w, http.StatusBadRequest, "user has no linked Emby account")
+		failWithCode(w, http.StatusBadRequest, ErrEmbyAccountUnlinked, "当前账号未关联 Emby")
 		return
 	}
 	payload := decodeMap(r)
 	newPassword := stringValue(payload, "new_password")
 	if okPass, msg := validateStrongPassword(newPassword, "Emby password"); !okPass {
-		fail(w, http.StatusBadRequest, msg)
+		failWithCode(w, http.StatusBadRequest, ErrPasswordWeak, msg)
 		return
 	}
 	if err := a.embySetPassword(r.Context(), p.User.EmbyID, newPassword); err != nil {
-		fail(w, http.StatusBadGateway, "failed to update Emby password")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyPasswordUpdateFailed, "更新 Emby 密码失败，请稍后重试")
 		return
 	}
 	ok(w, "Emby password updated", nil)
@@ -483,40 +192,40 @@ func (a *App) handleChangeEmbyPassword(w http.ResponseWriter, r *http.Request, _
 func (a *App) handleBindEmby(w http.ResponseWriter, r *http.Request, _ Params) {
 	p := current(r)
 	if p.User.EmbyID != "" {
-		fail(w, http.StatusBadRequest, "user already has linked Emby account")
+		failWithCode(w, http.StatusBadRequest, ErrEmbyAlreadyLinked, "当前账号已关联 Emby 账号")
 		return
 	}
 	payload := decodeMap(r)
 	embyUsername := stringValue(payload, "emby_username")
 	embyPassword := stringValue(payload, "emby_password")
 	if embyUsername == "" {
-		fail(w, http.StatusBadRequest, "missing Emby username")
+		failWithCode(w, http.StatusBadRequest, ErrEmbyMissingCreds, "请填写 Emby 用户名")
 		return
 	}
 	embyUser, okAuth, err := a.embyAuthenticateByName(r.Context(), embyUsername, embyPassword)
 	if err != nil {
-		fail(w, http.StatusBadGateway, "failed to authenticate with Emby")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyAuthFailed, "Emby 鉴权失败，请稍后重试或检查上游 Emby 状态")
 		return
 	}
 	if !okAuth {
-		fail(w, http.StatusUnauthorized, "invalid Emby username or password")
+		failWithCode(w, http.StatusUnauthorized, ErrEmbyAuthFailed, "Emby 用户名或密码错误")
 		return
 	}
 	embyID := firstNonEmpty(asString(embyUser["Id"]), asString(embyUser["ID"]), asString(embyUser["id"]))
 	if embyID == "" {
-		fail(w, http.StatusBadGateway, "Emby did not return a user id")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyCreateNoID, "Emby 未返回用户 ID")
 		return
 	}
 	// Security: prevent non-admin users from binding Emby administrator accounts
 	if p.User.Role != store.RoleAdmin {
 		policy := embyPolicy(embyUser)
 		if boolish(policy["IsAdministrator"]) {
-			fail(w, http.StatusForbidden, "安全限制：不允许绑定 Emby 管理员账号。如需绑定，请联系系统管理员。")
+			failWithCode(w, http.StatusForbidden, ErrEmbyAdminLinkForbidden, "安全限制：不允许绑定 Emby 管理员账号。如需绑定，请联系系统管理员。")
 			return
 		}
 	}
 	if existing, okExisting := a.store.FindUserByEmbyID(embyID); okExisting && existing.UID != p.User.UID {
-		fail(w, http.StatusConflict, "Emby account is already linked to another user")
+		failWithCode(w, http.StatusConflict, ErrEmbyLinkedOtherUser, "该 Emby 账号已关联其他用户")
 		return
 	}
 	u, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error {
@@ -537,38 +246,38 @@ func (a *App) handleBindEmby(w http.ResponseWriter, r *http.Request, _ Params) {
 func (a *App) handleRegisterEmby(w http.ResponseWriter, r *http.Request, params Params) {
 	p := current(r)
 	if p.User.EmbyID != "" {
-		fail(w, http.StatusBadRequest, "user already has linked Emby account")
+		failWithCode(w, http.StatusBadRequest, ErrEmbyAlreadyLinked, "当前账号已关联 Emby 账号")
 		return
 	}
 	if !p.User.PendingEmby && !a.cfg.EmbyDirectRegisterEnabled {
-		fail(w, http.StatusBadRequest, "current account has no Emby registration entitlement")
+		failWithCode(w, http.StatusBadRequest, ErrEmbyNoRegistrationGrant, "当前账号没有 Emby 注册资格")
 		return
 	}
 	payload := decodeMap(r)
 	embyUsername := stringValue(payload, "emby_username")
 	embyPassword := stringValue(payload, "emby_password")
 	if embyUsername == "" {
-		fail(w, http.StatusBadRequest, "missing Emby username")
+		failWithCode(w, http.StatusBadRequest, ErrEmbyMissingCreds, "请填写 Emby 用户名")
 		return
 	}
 	if okPass, msg := validateStrongPassword(embyPassword, "Emby password"); !okPass {
-		fail(w, http.StatusBadRequest, msg)
+		failWithCode(w, http.StatusBadRequest, ErrPasswordWeak, msg)
 		return
 	}
 	if existing, exists, err := a.embyUserByName(r.Context(), embyUsername); err != nil {
-		fail(w, http.StatusBadGateway, "failed to check Emby username")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyUsernameLookupFailed, "查询 Emby 用户名失败，请稍后重试")
 		return
 	} else if exists {
-		fail(w, http.StatusConflict, "Emby username already exists: "+asString(existing["Name"]))
+		failWithCode(w, http.StatusConflict, ErrEmbyUsernameTaken, "Emby 用户名已存在："+asString(existing["Name"]))
 		return
 	}
 	if reached, current, limit := a.embyCapacityReached(p.User.UID); reached {
-		fail(w, http.StatusConflict, fmt.Sprintf("Emby 用户数量已达上限 %d/%d", current, limit))
+		failWithCode(w, http.StatusConflict, ErrEmbyCapacityReached, fmt.Sprintf("Emby 用户数量已达上限 %d/%d", current, limit))
 		return
 	}
 	createdUser, err := a.embyCreateUser(r.Context(), embyUsername, embyPassword)
 	if err != nil {
-		fail(w, http.StatusBadGateway, "failed to create Emby user")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyCreateFailed, "创建 Emby 用户失败，请稍后重试")
 		return
 	}
 	embyID := asString(createdUser["Id"])
@@ -621,7 +330,7 @@ func (a *App) handleRenew(w http.ResponseWriter, r *http.Request, _ Params) {
 	payload := decodeMap(r)
 	regCode := stringValue(payload, "reg_code")
 	if regCode == "" {
-		fail(w, http.StatusBadRequest, "续期需要提供注册码")
+		failWithCode(w, http.StatusBadRequest, ErrRenewCodeRequired, "续期需要提供注册码")
 		return
 	}
 	if a.requireNonEmbyAdmin(w, r, p.User) {
@@ -629,7 +338,7 @@ func (a *App) handleRenew(w http.ResponseWriter, r *http.Request, _ Params) {
 	}
 	preview, source, okPreview := a.previewCode(regCode, p.User)
 	if !okPreview || source != "regcode" || int(numeric(preview["type"])) != 2 {
-		fail(w, http.StatusBadRequest, "续期码无效、已用完、已过期或不属于当前用户")
+		failWithCode(w, http.StatusBadRequest, ErrRenewCodeInvalid, "续期码无效、已用完、已过期或不属于当前用户")
 		return
 	}
 	if a.rejectRegcodeWriteIfStorageMismatch(w) {
@@ -638,7 +347,7 @@ func (a *App) handleRenew(w http.ResponseWriter, r *http.Request, _ Params) {
 	// Consume the reg code (validates active, use count, expiry)
 	code, err := a.store.ConsumeRegCode(regCode, p.User.UID, p.User.TelegramID)
 	if err != nil {
-		fail(w, http.StatusBadRequest, "注册码无效、已用完或已过期")
+		failWithCode(w, http.StatusBadRequest, ErrRegcodeInvalid, "注册码无效、已用完或已过期")
 		return
 	}
 	days := int64(code.Days)
@@ -661,7 +370,7 @@ func (a *App) handleQueueStatus(w http.ResponseWriter, r *http.Request, _ Params
 
 func (a *App) handleRegisterBindCode(w http.ResponseWriter, r *http.Request, _ Params) {
 	if !a.allowRate(r.Context(), rateKey("register-bind-code:", a.clientIP(r)), a.cfg.RateLimitRegisterPer10m, 10*time.Minute) {
-		fail(w, http.StatusTooManyRequests, "绑定码请求过于频繁")
+		failWithCode(w, http.StatusTooManyRequests, ErrBindCodeRateLimited, "绑定码请求过于频繁")
 		return
 	}
 	a.createBindCode(w, 0, "register")
@@ -669,7 +378,7 @@ func (a *App) handleRegisterBindCode(w http.ResponseWriter, r *http.Request, _ P
 
 func (a *App) handleUserBindCode(w http.ResponseWriter, r *http.Request, _ Params) {
 	if !a.allowRate(r.Context(), rateKey("user-bind-code:", current(r).User.UID), a.cfg.RateLimitLoginPerMinute, time.Minute) {
-		fail(w, http.StatusTooManyRequests, "绑定码请求过于频繁")
+		failWithCode(w, http.StatusTooManyRequests, ErrBindCodeRateLimited, "绑定码请求过于频繁")
 		return
 	}
 	a.createBindCode(w, current(r).User.UID, "user")
@@ -687,7 +396,7 @@ func (a *App) createBindCode(w http.ResponseWriter, uid int64, scene string) {
 		break
 	}
 	if code == "" {
-		fail(w, http.StatusConflict, "绑定码生成冲突，请重试")
+		failWithCode(w, http.StatusConflict, ErrBindCodeConflict, "绑定码生成冲突，请重试")
 		return
 	}
 	now := time.Now().Unix()
@@ -717,7 +426,7 @@ func (a *App) handleBindConfirm(w http.ResponseWriter, r *http.Request, _ Params
 	code := strings.ToUpper(stringValue(payload, "code"))
 	bind, okBind := a.store.BindCode(code)
 	if !okBind {
-		fail(w, http.StatusNotFound, "绑定码不存在")
+		failWithCode(w, http.StatusNotFound, ErrBindCodeNotFound, "绑定码不存在")
 		return
 	}
 	bind.Confirmed = true
@@ -736,7 +445,7 @@ func (a *App) handleUnbindTelegram(w http.ResponseWriter, r *http.Request, _ Par
 	p := current(r)
 	// Enforce force-bind policy: non-admin users cannot unbind when force_bind_telegram is enabled
 	if a.cfg.ForceBindTelegram && p.User.Role != store.RoleAdmin {
-		fail(w, http.StatusForbidden, "当前系统要求强制绑定 Telegram，无法解绑")
+		failWithCode(w, http.StatusForbidden, ErrTGUnbindForbidden, "当前系统要求强制绑定 Telegram，无法解绑")
 		return
 	}
 	u, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error { u.TelegramID = 0; u.TelegramUsername = ""; return nil })
@@ -749,7 +458,7 @@ func (a *App) handleUnbindTelegram(w http.ResponseWriter, r *http.Request, _ Par
 func (a *App) handleTelegramRebindRequest(w http.ResponseWriter, r *http.Request, _ Params) {
 	u := current(r).User
 	if u.TelegramID == 0 {
-		fail(w, http.StatusBadRequest, "当前账号未绑定 Telegram")
+		failWithCode(w, http.StatusBadRequest, ErrTGNotBound, "当前账号未绑定 Telegram")
 		return
 	}
 	req, err := a.store.CreateRebindRequest(store.RebindRequest{UID: u.UID, Username: u.Username, OldTelegramID: u.TelegramID, Reason: truncateString(stringValue(decodeMap(r), "reason"), 500)})
@@ -784,82 +493,6 @@ func (a *App) handleDevices(w http.ResponseWriter, r *http.Request, params Param
 	ok(w, "OK", items)
 }
 
-func (a *App) handleLibraries(w http.ResponseWriter, r *http.Request, params Params) {
-	// Route: list all Emby libraries (no user context needed)
-	if strings.Contains(r.URL.Path, "/emby/libraries") || strings.Contains(r.URL.Path, "/admin/emby/libraries") {
-		remoteLibraries, err := a.embyLibraries(r.Context())
-		if err != nil {
-			fail(w, http.StatusBadGateway, "无法连接 Emby 服务器，请检查 Emby 是否在线: "+err.Error())
-			return
-		}
-		ok(w, "OK", remoteLibraries)
-		return
-	}
-
-	// Pre-check: Emby must be configured
-	if a.cfg.EmbyURL == "" {
-		fail(w, http.StatusServiceUnavailable, "Emby 未配置")
-		return
-	}
-
-	// Resolve target user: admin routes pass :uid, user routes use session
-	targetUser := current(r).User
-	if params["uid"] != "" {
-		uid, _ := int64Param(params, "uid")
-		if u, okUser := a.store.User(uid); okUser {
-			targetUser = u
-		} else {
-			fail(w, http.StatusNotFound, "user not found")
-			return
-		}
-	}
-
-	// PUT: modify library visibility
-	if r.Method == http.MethodPut {
-		if targetUser.EmbyID == "" {
-			fail(w, http.StatusBadRequest, "user has no linked Emby account")
-			return
-		}
-		body := decodeMap(r)
-		action := firstNonEmpty(stringValue(body, "action"), "set")
-		names := normalizeLibraryNames(stringSlice(body["library_names"]))
-		ids := stringSlice(body["library_ids"])
-
-		// Non-admin users: enforce self-service restrictions
-		if current(r).User.Role != store.RoleAdmin {
-			// Security: block non-admin users with Emby admin accounts
-			if a.requireNonEmbyAdmin(w, r, current(r).User) {
-				return
-			}
-			if !targetUser.LibrarySelfService {
-				fail(w, http.StatusForbidden, "library self-service is not enabled")
-				return
-			}
-			if action != "show" && action != "hide" {
-				fail(w, http.StatusForbidden, "unsupported self-service action")
-				return
-			}
-			allowed := map[string]bool{}
-			for _, name := range normalizeLibraryNames(a.cfg.EmbySelfServiceLibraries) {
-				allowed[strings.ToLower(name)] = true
-			}
-			for _, name := range names {
-				if !allowed[strings.ToLower(name)] {
-					fail(w, http.StatusForbidden, "library is not self-service enabled")
-					return
-				}
-			}
-		}
-		if err := a.embySetLibrariesByAction(r.Context(), targetUser, action, ids, names, boolValue(body, "enable_all", false)); err != nil {
-			fail(w, http.StatusBadGateway, err.Error())
-			return
-		}
-	}
-
-	// GET or after successful PUT: return current library access state
-	ok(w, "OK", a.embyLibraryAccess(r.Context(), targetUser, current(r).User.Role == store.RoleAdmin))
-}
-
 func (a *App) handleSessions(w http.ResponseWriter, r *http.Request, _ Params) {
 	if a.cfg.EmbyURL == "" {
 		ok(w, "OK", []any{})
@@ -867,7 +500,7 @@ func (a *App) handleSessions(w http.ResponseWriter, r *http.Request, _ Params) {
 	}
 	var remote []map[string]any
 	if err := a.embyGet(r.Context(), "/Sessions", &remote); err != nil {
-		fail(w, http.StatusBadGateway, "failed to read Emby sessions")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyRemoteSessionsFail, "failed to read Emby sessions")
 		return
 	}
 	user := current(r).User
@@ -925,7 +558,7 @@ func (a *App) handleBlockDevice(w http.ResponseWriter, r *http.Request, params P
 	}
 	deviceID := params["device_id"]
 	if deviceID == "" {
-		fail(w, http.StatusBadRequest, "设备 ID 不能为空")
+		failWithCode(w, http.StatusBadRequest, ErrDeviceIDRequired, "设备 ID 不能为空")
 		return
 	}
 	if err := a.store.UpdateDevice(uid, deviceID, func(d *store.Device) { d.Blocked = true; d.Trusted = false }); statusFromError(w, err) {
@@ -946,7 +579,7 @@ func (a *App) handleTrustDevice(w http.ResponseWriter, r *http.Request, params P
 func (a *App) handleDeleteDevice(w http.ResponseWriter, r *http.Request, params Params) {
 	deviceID := params["device_id"]
 	if deviceID == "" {
-		fail(w, http.StatusBadRequest, "设备 ID 不能为空")
+		failWithCode(w, http.StatusBadRequest, ErrDeviceIDRequired, "设备 ID 不能为空")
 		return
 	}
 	if err := a.store.DeleteDevice(current(r).User.UID, deviceID); statusFromError(w, err) {
@@ -963,7 +596,7 @@ func (a *App) handleAddIPBlacklist(w http.ResponseWriter, r *http.Request, _ Par
 	payload := decodeMap(r)
 	ip := stringValue(payload, "ip")
 	if ip == "" {
-		fail(w, http.StatusBadRequest, "IP 不能为空")
+		failWithCode(w, http.StatusBadRequest, ErrIPRequired, "IP 不能为空")
 		return
 	}
 	hours := intValue(payload, "hours", -1)
@@ -980,7 +613,7 @@ func (a *App) handleAddIPBlacklist(w http.ResponseWriter, r *http.Request, _ Par
 func (a *App) handleDeleteIPBlacklist(w http.ResponseWriter, r *http.Request, _ Params) {
 	ip := stringValue(decodeMap(r), "ip")
 	if ip == "" {
-		fail(w, http.StatusBadRequest, "IP 不能为空")
+		failWithCode(w, http.StatusBadRequest, ErrIPRequired, "IP 不能为空")
 		return
 	}
 	if err := a.store.RemoveIPBlacklist(ip); statusFromError(w, err) {
@@ -997,510 +630,6 @@ func (a *App) handleSuspicious(w http.ResponseWriter, r *http.Request, _ Params)
 		items = append(items, map[string]any{"uid": log.UID, "ip": log.IP, "device": log.DeviceName, "time": log.Time, "reason": firstNonEmpty(log.Reason, "blocked")})
 	}
 	ok(w, "OK", items)
-}
-
-func (a *App) handleGetBackground(w http.ResponseWriter, r *http.Request, params Params) {
-	uid, _ := int64Param(params, "uid")
-	u, okUser := a.store.User(uid)
-	if !okUser {
-		fail(w, http.StatusNotFound, "user not found")
-		return
-	}
-	ok(w, "OK", map[string]any{"background": u.Background})
-}
-
-func (a *App) handleUpdateBackground(w http.ResponseWriter, r *http.Request, _ Params) {
-	p := current(r)
-	payload := decodeMap(r)
-	bg, err := sanitizedBackgroundConfig(payload)
-	if err != nil {
-		fail(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	u, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error { u.Background = bg; return nil })
-	if statusFromError(w, err) {
-		return
-	}
-	ok(w, "background updated", map[string]any{"background": u.Background})
-}
-
-func sanitizedBackgroundConfig(payload map[string]any) (string, error) {
-	if len(payload) == 0 {
-		return "", fmt.Errorf("背景配置不能为空")
-	}
-	if raw := firstNonEmpty(stringValue(payload, "background"), stringValue(payload, "url")); raw != "" {
-		var nested map[string]any
-		if err := json.Unmarshal([]byte(raw), &nested); err == nil && len(nested) > 0 {
-			payload = nested
-		} else {
-			css, err := sanitizeBackgroundCSSValue(raw)
-			if err != nil {
-				return "", err
-			}
-			return mustJSON(map[string]any{"lightBg": css, "darkBg": css}), nil
-		}
-	}
-
-	lightBg, err := sanitizeBackgroundCSSValue(stringValue(payload, "lightBg"))
-	if err != nil {
-		return "", err
-	}
-	darkBg, err := sanitizeBackgroundCSSValue(stringValue(payload, "darkBg"))
-	if err != nil {
-		return "", err
-	}
-	lightImage, err := sanitizeBackgroundImageValue(stringValue(payload, "lightBgImage"))
-	if err != nil {
-		return "", err
-	}
-	darkImage, err := sanitizeBackgroundImageValue(stringValue(payload, "darkBgImage"))
-	if err != nil {
-		return "", err
-	}
-	if lightBg == "" && darkBg == "" && lightImage == "" && darkImage == "" {
-		return "", fmt.Errorf("背景配置不能为空")
-	}
-
-	cfg := map[string]any{
-		"lightBg":      lightBg,
-		"darkBg":       darkBg,
-		"lightBgImage": lightImage,
-		"darkBgImage":  darkImage,
-		"lightFlow":    boolValue(payload, "lightFlow", false),
-		"darkFlow":     boolValue(payload, "darkFlow", false),
-		"lightBlur":    clamp(intValue(payload, "lightBlur", 0), 0, 30),
-		"darkBlur":     clamp(intValue(payload, "darkBlur", 0), 0, 30),
-		"lightOpacity": clamp(intValue(payload, "lightOpacity", 100), 10, 100),
-		"darkOpacity":  clamp(intValue(payload, "darkOpacity", 100), 10, 100),
-	}
-	return mustJSON(cfg), nil
-}
-
-func sanitizeBackgroundCSSValue(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "", nil
-	}
-	if len(value) > 2000 || strings.ContainsAny(value, "\x00\r\n<>;{}") || strings.Contains(strings.ToLower(value), "url(") || strings.Contains(value, "@") {
-		return "", fmt.Errorf("鑳屾櫙 CSS 鍙厑璁稿畨鍏ㄦ笎鍙樿〃杈惧紡")
-	}
-	if !backgroundGradientPattern.MatchString(value) {
-		return "", fmt.Errorf("鑳屾櫙 CSS 鍙厑璁?linear/radial/conic gradient")
-	}
-	return value, nil
-}
-
-func sanitizeBackgroundImageValue(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" || strings.EqualFold(value, "none") {
-		return "", nil
-	}
-	if len(value) > 1000 || strings.ContainsAny(value, "\x00\r\n<>") {
-		return "", fmt.Errorf("背景图片地址无效")
-	}
-	if strings.HasPrefix(strings.ToLower(value), "url(") && strings.HasSuffix(value, ")") {
-		value = strings.TrimSpace(value[4 : len(value)-1])
-		value = strings.Trim(value, `"'`)
-	}
-	const prefix = "/api/v1/users/assets/background/"
-	if !strings.HasPrefix(value, prefix) {
-		return "", fmt.Errorf("背景图片只允许使用本系统上传的背景资源")
-	}
-	filename := strings.TrimPrefix(value, prefix)
-	if strings.ContainsAny(filename, `/\`) || !uploadFilenamePattern.MatchString(filename) {
-		return "", fmt.Errorf("背景图片文件名无效")
-	}
-	return `url("` + value + `")`, nil
-}
-
-func mustJSON(value any) string {
-	data, _ := json.Marshal(value)
-	return string(data)
-}
-
-func (a *App) handleDeleteBackground(w http.ResponseWriter, r *http.Request, _ Params) {
-	p := current(r)
-	_, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error { u.Background = ""; return nil })
-	if statusFromError(w, err) {
-		return
-	}
-	ok(w, "background deleted", nil)
-}
-
-func (a *App) handleGetAvatar(w http.ResponseWriter, r *http.Request, params Params) {
-	uid, _ := int64Param(params, "uid")
-	u, okUser := a.store.User(uid)
-	if !okUser {
-		fail(w, http.StatusNotFound, "user not found")
-		return
-	}
-	ok(w, "OK", map[string]any{"avatar": u.Avatar, "uid": u.UID, "username": u.Username})
-}
-
-func (a *App) handleUploadBackground(w http.ResponseWriter, r *http.Request, _ Params) {
-	a.handleUpload(w, r, "background")
-}
-
-func (a *App) handleUploadAvatar(w http.ResponseWriter, r *http.Request, _ Params) {
-	a.handleUpload(w, r, "avatar")
-}
-
-func (a *App) handleUpload(w http.ResponseWriter, r *http.Request, kind string) {
-	if !a.allowRate(r.Context(), rateKey("upload:", current(r).User.UID), a.cfg.RateLimitUploadPerMinute, time.Minute) {
-		fail(w, http.StatusTooManyRequests, "上传过于频繁")
-		return
-	}
-	if err := r.ParseMultipartForm(a.cfg.MaxUploadSize); err != nil {
-		fail(w, http.StatusBadRequest, "上传内容无效")
-		return
-	}
-	file, _, err := r.FormFile("file")
-	if err != nil {
-		fail(w, http.StatusBadRequest, "缺少文件")
-		return
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, a.cfg.MaxUploadSize+1))
-	if err != nil || int64(len(data)) > a.cfg.MaxUploadSize {
-		fail(w, http.StatusRequestEntityTooLarge, "文件过大")
-		return
-	}
-	contentType := strings.ToLower(strings.Split(http.DetectContentType(data), ";")[0])
-	ext, okImage := uploadImageExtension(contentType)
-	if !okImage {
-		fail(w, http.StatusBadRequest, "only image uploads are allowed")
-		return
-	}
-	filename := randomCode(16) + ext
-	dir := filepath.Join(a.cfg.UploadDir, kind)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		fail(w, http.StatusInternalServerError, "创建上传目录失败")
-		return
-	}
-	if err := os.WriteFile(filepath.Join(dir, filename), data, 0o600); err != nil {
-		fail(w, http.StatusInternalServerError, "保存文件失败")
-		return
-	}
-	url := "/api/v1/users/assets/" + kind + "/" + filename
-	p := current(r)
-	if _, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error {
-		if kind == "avatar" {
-			u.Avatar = url
-		} else {
-			u.Background = url
-		}
-		return nil
-	}); err != nil {
-		_ = os.Remove(filepath.Join(dir, filename))
-		if statusFromError(w, err) {
-			return
-		}
-		return
-	}
-	if kind == "avatar" {
-		ok(w, "上传成功", map[string]any{"avatar_url": url, "url": url, "filename": filename})
-		return
-	}
-	ok(w, "上传成功", map[string]any{"url": url, "type": kind, "filename": filename})
-}
-
-func uploadImageExtension(contentType string) (string, bool) {
-	switch contentType {
-	case "image/jpeg":
-		return ".jpg", true
-	case "image/png":
-		return ".png", true
-	case "image/gif":
-		return ".gif", true
-	case "image/webp":
-		return ".webp", true
-	case "image/bmp":
-		return ".bmp", true
-	default:
-		return "", false
-	}
-}
-
-func (a *App) handleUploadServerIcon(w http.ResponseWriter, r *http.Request, _ Params) {
-	p := current(r)
-	if !a.allowRate(r.Context(), rateKey("admin-server-icon:", p.User.UID), a.cfg.RateLimitAdminIconPerMinute, time.Minute) {
-		fail(w, http.StatusTooManyRequests, "上传过于频繁")
-		return
-	}
-	limit := int64(2 * 1024 * 1024)
-	if a.cfg.MaxUploadSize > 0 && a.cfg.MaxUploadSize < limit {
-		limit = a.cfg.MaxUploadSize
-	}
-	if err := r.ParseMultipartForm(limit); err != nil {
-		fail(w, http.StatusBadRequest, "上传内容无效")
-		return
-	}
-	file, _, err := r.FormFile("file")
-	if err != nil {
-		fail(w, http.StatusBadRequest, "缺少文件")
-		return
-	}
-	defer file.Close()
-	data, err := io.ReadAll(io.LimitReader(file, limit+1))
-	if err != nil || int64(len(data)) > limit {
-		fail(w, http.StatusRequestEntityTooLarge, "文件过大")
-		return
-	}
-	contentType := strings.ToLower(strings.Split(http.DetectContentType(data), ";")[0])
-	ext, okImage := uploadImageExtension(contentType)
-	if !okImage {
-		fail(w, http.StatusBadRequest, "only jpg, png, gif, webp and bmp uploads are allowed")
-		return
-	}
-	filename := randomCode(16) + ext
-	filePath, okPath := resolveUploadAssetPath(a.cfg.UploadDir, "server-icon", filename)
-	if !okPath {
-		fail(w, http.StatusInternalServerError, "上传目录无效")
-		return
-	}
-	if err := os.MkdirAll(filepath.Dir(filePath), 0o700); err != nil {
-		fail(w, http.StatusInternalServerError, "创建上传目录失败")
-		return
-	}
-	if err := os.WriteFile(filePath, data, 0o600); err != nil {
-		fail(w, http.StatusInternalServerError, "保存文件失败")
-		return
-	}
-	values := configValues(a.cfg)
-	if values["Global"] == nil {
-		values["Global"] = map[string]any{}
-	}
-	serverIcon := filepath.ToSlash(filepath.Join("server-icon", filename))
-	values["Global"]["server_icon"] = serverIcon
-	info, status, message := a.saveConfigContent(renderConfigTOML(values))
-	if status != http.StatusOK {
-		_ = os.Remove(filePath)
-		fail(w, status, message)
-		return
-	}
-	ok(w, "上传成功", map[string]any{
-		"server_icon": serverIcon,
-		"url":         "/api/v1/system/server-icon?ts=" + strconv.FormatInt(time.Now().Unix(), 10),
-		"filename":    filename,
-		"reload":      info["reload"],
-	})
-}
-
-func (a *App) handleAsset(w http.ResponseWriter, r *http.Request, params Params) {
-	kind := params["kind"]
-	filename := params["filename"]
-	if kind != "avatar" && kind != "background" {
-		fail(w, http.StatusNotFound, "resource not found")
-		return
-	}
-	if !uploadFilenamePattern.MatchString(filename) {
-		fail(w, http.StatusNotFound, "resource not found")
-		return
-	}
-	filePath, okPath := resolveUploadAssetPath(a.cfg.UploadDir, kind, filename)
-	if !okPath {
-		fail(w, http.StatusNotFound, "resource not found")
-		return
-	}
-	http.ServeFile(w, r, filePath)
-}
-
-func resolveUploadAssetPath(uploadDir, kind, filename string) (string, bool) {
-	target, err := ResolveWithinRoot(firstNonEmpty(uploadDir, "uploads"), filepath.Join(kind, filename))
-	if err != nil {
-		return "", false
-	}
-	return target, true
-}
-
-func (a *App) handleDeleteAvatar(w http.ResponseWriter, r *http.Request, _ Params) {
-	p := current(r)
-	_, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error { u.Avatar = ""; return nil })
-	if statusFromError(w, err) {
-		return
-	}
-	ok(w, "avatar deleted", nil)
-}
-
-func (a *App) handleLegacyAPIKeyStatus(w http.ResponseWriter, r *http.Request, _ Params) {
-	u := current(r).User
-	ok(w, "OK", map[string]any{"enabled": u.LegacyAPIKeyStatus, "has_key": u.LegacyAPIKeyHash != ""})
-}
-
-func (a *App) handleLegacyAPIKeyGenerate(w http.ResponseWriter, r *http.Request, _ Params) {
-	p := current(r)
-	key := "key-" + randomCode(40)
-	prefix, suffix, _ := maskAPIKey(key)
-	u, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error {
-		u.LegacyAPIKeyHash = hashAPIKey(key)
-		u.LegacyAPIKeyPrefix = prefix
-		u.LegacyAPIKeySuffix = suffix
-		u.LegacyAPIKeyStatus = true
-		if len(u.LegacyPermissions) == 0 {
-			u.LegacyPermissions = defaultPermissions()
-		}
-		return nil
-	})
-	if statusFromError(w, err) {
-		return
-	}
-	ok(w, "API key generated", map[string]any{"apikey": key, "enabled": true, "user": publicUser(u)})
-}
-
-func (a *App) handleLegacyAPIKeyDelete(w http.ResponseWriter, r *http.Request, _ Params) {
-	p := current(r)
-	_, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error { u.LegacyAPIKeyStatus = false; u.LegacyAPIKeyHash = ""; return nil })
-	if statusFromError(w, err) {
-		return
-	}
-	ok(w, "API key deleted", nil)
-}
-
-func (a *App) handleLegacyAPIKeyEnable(w http.ResponseWriter, r *http.Request, params Params) {
-	a.handleLegacyAPIKeyGenerate(w, r, params)
-}
-
-func (a *App) handleLegacyAPIKeyPermissions(w http.ResponseWriter, r *http.Request, _ Params) {
-	perms := current(r).User.LegacyPermissions
-	if len(perms) == 0 {
-		perms = defaultPermissions()
-	}
-	ok(w, "OK", map[string]any{"permissions": perms, "all_permissions": defaultPermissions()})
-}
-
-func (a *App) handleLegacyAPIKeyPermissionsUpdate(w http.ResponseWriter, r *http.Request, _ Params) {
-	payload := decodeMap(r)
-	permissions := stringSlice(payload["permissions"])
-	if len(permissions) == 0 {
-		permissions = defaultPermissions()
-	}
-	p := current(r)
-	_, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error { u.LegacyPermissions = permissions; return nil })
-	if statusFromError(w, err) {
-		return
-	}
-	ok(w, "permissions updated", map[string]any{"permissions": permissions})
-}
-
-func (a *App) handleListAPIKeys(w http.ResponseWriter, r *http.Request, _ Params) {
-	keys := a.store.ListAPIKeys(current(r).User.UID)
-	items := make([]map[string]any, 0, len(keys))
-	for _, key := range keys {
-		items = append(items, publicAPIKey(key, ""))
-	}
-	ok(w, "OK", map[string]any{"keys": items, "total": len(items)})
-}
-
-func (a *App) handleCreateAPIKey(w http.ResponseWriter, r *http.Request, _ Params) {
-	payload := decodeMap(r)
-	key := "key-" + randomCode(40)
-	prefix, suffix, _ := maskAPIKey(key)
-	name := stringValue(payload, "name")
-	if name == "" {
-		name = "Default"
-	}
-	k, err := a.store.CreateAPIKey(store.APIKey{UID: current(r).User.UID, Name: name, Hash: hashAPIKey(key), Prefix: prefix, Suffix: suffix, AllowQuery: boolValue(payload, "allow_query", false), RateLimit: intValue(payload, "rate_limit", a.cfg.RateLimitAPIKeyDefaultPerMinute), Permissions: defaultPermissions()})
-	if statusFromError(w, err) {
-		return
-	}
-	ok(w, "API key created", publicAPIKey(k, key))
-}
-
-func (a *App) handleUpdateAPIKey(w http.ResponseWriter, r *http.Request, params Params) {
-	id, _ := int64Param(params, "key_id")
-	payload := decodeMap(r)
-	k, err := a.store.UpdateAPIKey(current(r).User.UID, id, func(k *store.APIKey) error {
-		if name := stringValue(payload, "name"); name != "" {
-			k.Name = name
-		}
-		if _, ok := payload["enabled"]; ok {
-			k.Enabled = boolValue(payload, "enabled", k.Enabled)
-		}
-		if _, ok := payload["allow_query"]; ok {
-			k.AllowQuery = boolValue(payload, "allow_query", k.AllowQuery)
-		}
-		if _, ok := payload["rate_limit"]; ok {
-			k.RateLimit = intValue(payload, "rate_limit", k.RateLimit)
-		}
-		return nil
-	})
-	if statusFromError(w, err) {
-		return
-	}
-	ok(w, "API key updated", publicAPIKey(k, ""))
-}
-
-func (a *App) handleDeleteAPIKey(w http.ResponseWriter, r *http.Request, params Params) {
-	id, _ := int64Param(params, "key_id")
-	if statusFromError(w, a.store.DeleteAPIKey(current(r).User.UID, id)) {
-		return
-	}
-	ok(w, "API key deleted", nil)
-}
-
-func (a *App) handleAPIKeyEnableAccount(w http.ResponseWriter, r *http.Request, _ Params) {
-	p := current(r)
-	u, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error { u.Active = true; return nil })
-	if statusFromError(w, err) {
-		return
-	}
-	ok(w, "account enabled", publicUser(u))
-}
-
-func (a *App) handleAPIKeyDisableAccount(w http.ResponseWriter, r *http.Request, _ Params) {
-	p := current(r)
-	u, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error { u.Active = false; return nil })
-	if statusFromError(w, err) {
-		return
-	}
-	// 用户主动禁用账号后，所有现存会话必须立即失效；否则除了发起本次请求的
-	// session，其它设备 / cookie 仍能访问受保护接口直到 SessionTTL 到期
-	a.sessions.DeleteUser(r.Context(), u.UID)
-	ok(w, "account disabled", publicUser(u))
-}
-
-func (a *App) handleAPIKeyDisableKey(w http.ResponseWriter, r *http.Request, _ Params) {
-	p := current(r)
-	if p.APIKey.ID > 0 {
-		_, err := a.store.UpdateAPIKey(p.User.UID, p.APIKey.ID, func(k *store.APIKey) error { k.Enabled = false; return nil })
-		if statusFromError(w, err) {
-			return
-		}
-	} else {
-		_, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error { u.LegacyAPIKeyStatus = false; return nil })
-		if statusFromError(w, err) {
-			return
-		}
-	}
-	ok(w, "API key disabled", nil)
-}
-
-func (a *App) handleAPIKeyEnableKey(w http.ResponseWriter, r *http.Request, _ Params) {
-	p := current(r)
-	if p.APIKey.ID > 0 {
-		_, err := a.store.UpdateAPIKey(p.User.UID, p.APIKey.ID, func(k *store.APIKey) error { k.Enabled = true; return nil })
-		if statusFromError(w, err) {
-			return
-		}
-	}
-	ok(w, "API key enabled", nil)
-}
-
-func (a *App) handleAPIKeyEmbyKick(w http.ResponseWriter, r *http.Request, params Params) {
-	a.handleKickUser(w, r, Params{"uid": strconv.FormatInt(current(r).User.UID, 10)})
-}
-
-func publicAPIKey(k store.APIKey, plain string) map[string]any {
-	masked := k.Prefix + "..." + k.Suffix
-	data := map[string]any{"id": k.ID, "name": k.Name, "key": masked, "key_prefix": k.Prefix, "key_suffix": k.Suffix, "enabled": k.Enabled, "allow_query": k.AllowQuery, "permissions": k.Permissions, "rate_limit": k.RateLimit, "request_count": k.RequestCount, "last_used": zeroNil(k.LastUsed), "created_at": k.CreatedAt, "expired_at": zeroNil(k.ExpiredAt)}
-	if plain != "" {
-		data["key"] = plain
-	}
-	return data
-}
-
-func defaultPermissions() []string {
-	return []string{"account:read", "account:write", "emby:read", "emby:write"}
 }
 
 func (a *App) handleSystemInfo(w http.ResponseWriter, r *http.Request, _ Params) {
@@ -1715,6 +844,8 @@ func (a *App) configuredServerIconPath() (string, string, bool) {
 
 func (a *App) handleHealth(w http.ResponseWriter, r *http.Request, _ Params) {
 	emby := a.embyOverview(r.Context())
+	sessionFallback := a.sessions.FallbackCount()
+	rateFallback := a.limiter.FallbackCount()
 	data := map[string]any{
 		"status":           "healthy",
 		"time":             time.Now().Unix(),
@@ -1723,6 +854,7 @@ func (a *App) handleHealth(w http.ResponseWriter, r *http.Request, _ Params) {
 		"emby":             boolValue(emby, "online", false),
 		"emby_configured":  a.cfg.EmbyURL != "",
 		"redis":            a.redis != nil,
+		"redis_degraded":   a.redis != nil && (sessionFallback > 0 || rateFallback > 0),
 		"storage":          a.store.Backend(),
 		"active_database":  a.store.Backend(),
 		"config_database":  strings.ToLower(a.cfg.DatabaseDriver),
@@ -1755,8 +887,12 @@ func (a *App) handleSystemStats(w http.ResponseWriter, r *http.Request, _ Params
 		"total_users":   len(users),
 		"active_users":  activeUsers,
 		"redis_enabled": a.redis != nil,
-		"routes":        len(a.routes),
-		"uptime":        int64(time.Since(runtimeStartedAt).Seconds()),
+		"redis_fallback": map[string]any{
+			"session": a.sessions.FallbackCount(),
+			"rate":    a.limiter.FallbackCount(),
+		},
+		"routes": len(a.routes),
+		"uptime": int64(time.Since(runtimeStartedAt).Seconds()),
 	})
 }
 
@@ -1844,7 +980,7 @@ func (a *App) handleConfigTOMLGet(w http.ResponseWriter, r *http.Request, _ Para
 	path := a.configFilePath()
 	data, err := os.ReadFile(path)
 	if err != nil {
-		fail(w, http.StatusNotFound, "config file not found")
+		failWithCode(w, http.StatusNotFound, ErrConfigFileNotFound, "config file not found")
 		return
 	}
 	rawContent := stripProtectedAdminConfig(string(data))
@@ -1946,7 +1082,7 @@ func (a *App) handleEmbyStatus(w http.ResponseWriter, r *http.Request, _ Params)
 }
 
 func (a *App) handleDeprecatedEmbyURLs(w http.ResponseWriter, r *http.Request, _ Params) {
-	fail(w, http.StatusGone, "该接口已废弃，请使用 /api/v1/system/emby-urls")
+	failWithCode(w, http.StatusGone, ErrAPIDeprecated, "该接口已废弃，请使用 /api/v1/system/emby-urls")
 }
 
 func (a *App) handleEmbyLatest(w http.ResponseWriter, r *http.Request, _ Params) {
@@ -1966,7 +1102,7 @@ func (a *App) handleEmbyLatest(w http.ResponseWriter, r *http.Request, _ Params)
 	})
 	var payload map[string]any
 	if err := a.embyGet(r.Context(), "/Items"+query, &payload); err != nil {
-		fail(w, http.StatusBadGateway, "failed to read latest Emby media")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyLatestFailed, "failed to read latest Emby media")
 		return
 	}
 	items, _ := payload["Items"].([]any)
@@ -1980,7 +1116,7 @@ func (a *App) handleSessionCount(w http.ResponseWriter, r *http.Request, _ Param
 	}
 	var sessions []map[string]any
 	if err := a.embyGet(r.Context(), "/Sessions", &sessions); err != nil {
-		fail(w, http.StatusBadGateway, "failed to read Emby sessions")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyRemoteSessionsFail, "failed to read Emby sessions")
 		return
 	}
 	active := 0
@@ -2032,7 +1168,7 @@ func (a *App) handleAdminUser(w http.ResponseWriter, r *http.Request, params Par
 	uid, _ := int64Param(params, "uid")
 	u, okUser := a.store.User(uid)
 	if !okUser {
-		fail(w, http.StatusNotFound, "user not found")
+		failWithCode(w, http.StatusNotFound, ErrUserNotFound, "user not found")
 		return
 	}
 	ok(w, "OK", publicUser(u))
@@ -2065,7 +1201,7 @@ func (a *App) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request, para
 func (a *App) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request, params Params) {
 	uid, _ := int64Param(params, "uid")
 	if uid == current(r).User.UID {
-		fail(w, http.StatusForbidden, "cannot delete current admin")
+		failWithCode(w, http.StatusForbidden, ErrUserProtected, "cannot delete current admin")
 		return
 	}
 	payload := decodeMap(r)
@@ -2117,7 +1253,7 @@ func (a *App) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request, para
 func (a *App) handleAdminToggleUser(w http.ResponseWriter, r *http.Request, params Params) {
 	uid, _ := int64Param(params, "uid")
 	if target, okUser := a.store.User(uid); okUser && a.userIsProtected(target) && target.UID != current(r).User.UID {
-		fail(w, http.StatusForbidden, "cannot operate on protected user")
+		failWithCode(w, http.StatusForbidden, ErrUserProtected, "cannot operate on protected user")
 		return
 	}
 	enable := strings.HasSuffix(r.URL.Path, "/enable")
@@ -2207,7 +1343,7 @@ func (a *App) handleRegistrationQueueClear(w http.ResponseWriter, r *http.Reques
 		updated++
 	}
 	if len(failed) > 0 {
-		fail(w, http.StatusInternalServerError, "部分注册队列状态清理失败")
+		failWithCode(w, http.StatusInternalServerError, ErrAdminQueueClearPartial, "部分注册队列状态清理失败")
 		return
 	}
 	ok(w, "registration queue cleaned", map[string]any{"updated": updated, "uids": candidates})
@@ -2220,7 +1356,7 @@ func (a *App) handleRegistrationEntitlement(w http.ResponseWriter, r *http.Reque
 		days = -1
 	}
 	if days < -1 || days > 3650 {
-		fail(w, http.StatusBadRequest, "days 超出允许范围")
+		failWithCode(w, http.StatusBadRequest, ErrAdminDaysOutOfRange, "days 超出允许范围")
 		return
 	}
 	u, err := a.store.UpdateUser(uid, func(u *store.User) error {
@@ -2272,7 +1408,7 @@ func (a *App) handleRegistrationEntitlementBulk(w http.ResponseWriter, r *http.R
 		updated++
 	}
 	if len(failed) > 0 {
-		fail(w, http.StatusInternalServerError, "部分 Emby 注册资格发放失败")
+		failWithCode(w, http.StatusInternalServerError, ErrAdminEntitlementPartial, "部分 Emby 注册资格发放失败")
 		return
 	}
 	ok(w, "batch access granted", map[string]any{"updated": updated, "uids": candidates, "days": days})
@@ -2306,7 +1442,7 @@ func (a *App) handleKickUser(w http.ResponseWriter, r *http.Request, params Para
 	uid, _ := int64Param(params, "uid")
 	u, okUser := a.store.User(uid)
 	if !okUser {
-		fail(w, http.StatusNotFound, "user not found")
+		failWithCode(w, http.StatusNotFound, ErrUserNotFound, "user not found")
 		return
 	}
 	kicked := 0
@@ -2326,24 +1462,6 @@ func (a *App) handleKickUser(w http.ResponseWriter, r *http.Request, params Para
 		}
 	}
 	ok(w, "会话踢出完成", map[string]any{"kicked_count": kicked})
-}
-
-func (a *App) handleBulkEnableLibrarySelfService(w http.ResponseWriter, r *http.Request, _ Params) {
-	payload := decodeMap(r)
-	if stringValue(payload, "confirm") != "ENABLE_LIBRARY_SELF_SERVICE" {
-		fail(w, http.StatusBadRequest, "缺少确认标记")
-		return
-	}
-	updated := 0
-	for _, u := range a.store.ListUsers() {
-		if u.Role == store.RoleUnrecognized {
-			continue
-		}
-		if _, err := a.store.UpdateUser(u.UID, func(u *store.User) error { u.LibrarySelfService = true; return nil }); err == nil {
-			updated++
-		}
-	}
-	ok(w, "batch enabled", map[string]any{"updated": updated})
 }
 
 func (a *App) handleAdminRenewUser(w http.ResponseWriter, r *http.Request, params Params) {
@@ -2374,12 +1492,12 @@ func (a *App) handleAdminResetPassword(w http.ResponseWriter, r *http.Request, p
 	body := decodeMap(r)
 	scope := strings.ToLower(firstNonEmpty(stringValue(body, "scope"), "both"))
 	if scope != "system" && scope != "emby" && scope != "both" {
-		fail(w, http.StatusBadRequest, "invalid password reset scope")
+		failWithCode(w, http.StatusBadRequest, ErrAdminPasswordResetScope, "invalid password reset scope")
 		return
 	}
 	targetUser, okUser := a.store.User(uid)
 	if !okUser {
-		fail(w, http.StatusNotFound, "user not found")
+		failWithCode(w, http.StatusNotFound, ErrUserNotFound, "user not found")
 		return
 	}
 	newPassword := stringValue(body, "password")
@@ -2387,26 +1505,26 @@ func (a *App) handleAdminResetPassword(w http.ResponseWriter, r *http.Request, p
 	if autoGenerated {
 		newPassword = "Twilight-" + randomCode(12)
 	} else if okPass, msg := validateStrongPassword(newPassword, "password"); !okPass {
-		fail(w, http.StatusBadRequest, msg)
+		failWithCode(w, http.StatusBadRequest, ErrPasswordWeak, msg)
 		return
 	}
 	if (scope == "emby" || scope == "both") && targetUser.EmbyID == "" {
 		if scope == "emby" {
-			fail(w, http.StatusBadRequest, "user has no linked Emby account")
+			failWithCode(w, http.StatusBadRequest, ErrEmbyAccountUnlinked, "user has no linked Emby account")
 			return
 		}
 		scope = "system"
 	}
 	if scope == "emby" || scope == "both" {
 		if err := a.embySetPassword(r.Context(), targetUser.EmbyID, newPassword); err != nil {
-			fail(w, http.StatusBadGateway, "failed to reset Emby password")
+			failWithCode(w, http.StatusBadGateway, ErrAdminEmbyPasswordReset, "failed to reset Emby password")
 			return
 		}
 	}
 	if scope == "system" || scope == "both" {
 		hashValue, err := security.HashPassword(newPassword)
 		if err != nil {
-			fail(w, http.StatusInternalServerError, "password processing failed")
+			failWithCode(w, http.StatusInternalServerError, ErrPasswordHashFailed, "password processing failed")
 			return
 		}
 		if _, updateErr := a.store.UpdateUser(uid, func(u *store.User) error { u.PasswordHash = hashValue; return nil }); updateErr != nil {
@@ -2415,16 +1533,6 @@ func (a *App) handleAdminResetPassword(w http.ResponseWriter, r *http.Request, p
 		}
 	}
 	ok(w, "password reset", map[string]any{"scope": scope, "new_password": newPassword, "auto_generated": autoGenerated})
-}
-
-func (a *App) handleAdminLibrarySelfService(w http.ResponseWriter, r *http.Request, params Params) {
-	uid, _ := int64Param(params, "uid")
-	enabled := boolValue(decodeMap(r), "enabled", true)
-	u, err := a.store.UpdateUser(uid, func(u *store.User) error { u.LibrarySelfService = enabled; return nil })
-	if statusFromError(w, err) {
-		return
-	}
-	ok(w, "updated", map[string]any{"uid": uid, "library_self_service": u.LibrarySelfService})
 }
 
 func (a *App) handleAdminSetRole(w http.ResponseWriter, r *http.Request, params Params) {
@@ -2445,7 +1553,7 @@ func (a *App) handleAdminSetRole(w http.ResponseWriter, r *http.Request, params 
 				}
 			}
 			if adminCount <= 1 {
-				fail(w, http.StatusConflict, "无法移除最后一个管理员的权限，系统至少需要一个管理员")
+				failWithCode(w, http.StatusConflict, ErrAdminLastAdminProtected, "无法移除最后一个管理员的权限，系统至少需要一个管理员")
 				return
 			}
 		}
@@ -2480,11 +1588,11 @@ func (a *App) handleAdminBindTelegram(w http.ResponseWriter, r *http.Request, pa
 	payload := decodeMap(r)
 	tgid := int64(intValue(payload, "telegram_id", 0))
 	if tgid <= 0 {
-		fail(w, http.StatusBadRequest, "telegram_id 无效")
+		failWithCode(w, http.StatusBadRequest, ErrTGIDInvalid, "telegram_id 无效")
 		return
 	}
 	if existing, okUser := a.store.FindUserByTelegramID(tgid); okUser && existing.UID != uid {
-		fail(w, http.StatusConflict, "Telegram ID is already bound to another user")
+		failWithCode(w, http.StatusConflict, ErrTGIDTaken, "Telegram ID is already bound to another user")
 		return
 	}
 	old := int64(0)
@@ -2510,7 +1618,7 @@ func (a *App) handleUserByTelegram(w http.ResponseWriter, r *http.Request, param
 			return
 		}
 	}
-	fail(w, http.StatusNotFound, "user not found")
+	failWithCode(w, http.StatusNotFound, ErrUserNotFound, "user not found")
 }
 
 func (a *App) handleEmbySync(w http.ResponseWriter, r *http.Request, _ Params) {
@@ -2546,11 +1654,11 @@ func (a *App) handleAdminBindEmby(w http.ResponseWriter, r *http.Request, params
 		remoteUser, found, lookupErr = a.embyUserByName(r.Context(), embyNameInput)
 	}
 	if lookupErr != nil {
-		fail(w, http.StatusBadGateway, "failed to read Emby user")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyUserLookupFailed, "failed to read Emby user")
 		return
 	}
 	if !found {
-		fail(w, http.StatusNotFound, "Emby user not found")
+		failWithCode(w, http.StatusNotFound, ErrEmbyUserNotFound, "Emby user not found")
 		return
 	}
 	embyID := asString(remoteUser["Id"])
@@ -2623,101 +1731,6 @@ func (a *App) handleTelegramRosterStats(w http.ResponseWriter, r *http.Request, 
 	ok(w, "OK", stats)
 }
 
-func (a *App) handleAdminAnnouncements(w http.ResponseWriter, r *http.Request, _ Params) {
-	anns := a.store.ListAnnouncements(true)
-	ok(w, "OK", map[string]any{"announcements": anns, "total": len(anns)})
-}
-func (a *App) handleAnnouncements(w http.ResponseWriter, r *http.Request, _ Params) {
-	anns := a.store.ListAnnouncements(false)
-	ok(w, "OK", map[string]any{"announcements": anns, "total": len(anns)})
-}
-
-func (a *App) handleCreateAnnouncement(w http.ResponseWriter, r *http.Request, _ Params) {
-	payload := decodeMap(r)
-	ann, err := a.store.UpsertAnnouncement(store.Announcement{
-		Title:        firstNonEmpty(stringValue(payload, "title"), "鍏憡"),
-		Content:      stringValue(payload, "content"),
-		Visible:      boolValue(payload, "visible", true),
-		Level:        firstNonEmpty(stringValue(payload, "level"), "info"),
-		RenderMode:   safeAnnouncementRenderMode(stringValue(payload, "render_mode")),
-		Pinned:       boolValue(payload, "pinned", false),
-		CreatedByUID: current(r).User.UID,
-		ExpiredAt:    int64Value(payload, "expires_at", int64Value(payload, "expired_at", 0)),
-	})
-	if statusFromError(w, err) {
-		return
-	}
-	created(w, "announcement created", ann)
-}
-
-func (a *App) handleUpdateAnnouncement(w http.ResponseWriter, r *http.Request, params Params) {
-	id, _ := int64Param(params, "announcement_id")
-	payload := decodeMap(r)
-	existing := store.Announcement{ID: id, Title: "鍏憡", Level: "info", Visible: true, RenderMode: "plain"}
-	for _, ann := range a.store.ListAnnouncements(true) {
-		if ann.ID == id {
-			existing = ann
-			break
-		}
-	}
-	ann, err := a.store.UpsertAnnouncement(store.Announcement{
-		ID:           id,
-		Title:        firstNonEmpty(stringValue(payload, "title"), existing.Title, "鍏憡"),
-		Content:      firstNonEmpty(stringValue(payload, "content"), existing.Content),
-		Visible:      boolValue(payload, "visible", existing.Visible),
-		Level:        firstNonEmpty(stringValue(payload, "level"), existing.Level, "info"),
-		RenderMode:   safeAnnouncementRenderMode(firstNonEmpty(stringValue(payload, "render_mode"), existing.RenderMode)),
-		Pinned:       boolValue(payload, "pinned", existing.Pinned),
-		CreatedByUID: existing.CreatedByUID,
-		CreatedAt:    existing.CreatedAt,
-		ExpiredAt:    int64Value(payload, "expires_at", int64Value(payload, "expired_at", existing.ExpiredAt)),
-	})
-	if statusFromError(w, err) {
-		return
-	}
-	ok(w, "announcement updated", ann)
-}
-
-func safeAnnouncementRenderMode(mode string) string {
-	switch strings.ToLower(strings.TrimSpace(mode)) {
-	case "markdown", "bbcode":
-		return strings.ToLower(strings.TrimSpace(mode))
-	default:
-		return "plain"
-	}
-}
-
-func int64Value(payload map[string]any, key string, fallback int64) int64 {
-	if _, ok := payload[key]; !ok {
-		return fallback
-	}
-	return numeric(payload[key])
-}
-
-func (a *App) handleDeleteAnnouncement(w http.ResponseWriter, r *http.Request, params Params) {
-	id, _ := int64Param(params, "announcement_id")
-	if statusFromError(w, a.store.DeleteAnnouncement(id)) {
-		return
-	}
-	ok(w, "announcement deleted", nil)
-}
-
-func (a *App) handleAPIKeyInfo(w http.ResponseWriter, r *http.Request, _ Params) {
-	ok(w, "OK", map[string]any{"user": publicUser(current(r).User), "permissions": current(r).APIKey.Permissions})
-}
-func (a *App) handleAPIKeyStatus(w http.ResponseWriter, r *http.Request, _ Params) {
-	ok(w, "OK", map[string]any{"active": current(r).User.Active, "expired_at": current(r).User.ExpiredAt})
-}
-func (a *App) handleAPIKeyRenew(w http.ResponseWriter, r *http.Request, params Params) {
-	a.handleRenew(w, r, params)
-}
-func (a *App) handleAPIKeyPermissions(w http.ResponseWriter, r *http.Request, _ Params) {
-	ok(w, "OK", map[string]any{"permissions": current(r).APIKey.Permissions, "all_permissions": defaultPermissions()})
-}
-func (a *App) handleForbiddenSelfPermission(w http.ResponseWriter, r *http.Request, _ Params) {
-	fail(w, http.StatusForbidden, "不允许通过当前 API Key 修改自身权限")
-}
-
 func (a *App) handleExportUsers(w http.ResponseWriter, r *http.Request, _ Params) {
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=users.csv")
@@ -2773,7 +1786,7 @@ func (a *App) handleWatchStats(w http.ResponseWriter, r *http.Request, _ Params)
 		}
 	}
 	if strings.Contains(r.URL.Path, "/stats/user/") && current(r).User.Role != store.RoleAdmin && uid != current(r).User.UID {
-		fail(w, http.StatusForbidden, "cannot view another user's watch stats")
+		failWithCode(w, http.StatusForbidden, ErrWatchStatsForbidden, "cannot view another user's watch stats")
 		return
 	}
 	days := queryInt(r, "days", 0)

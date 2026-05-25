@@ -56,6 +56,12 @@ type Config struct {
 	CORSOrigins       []string
 	AllowCredential   bool
 	TrustProxyHeaders bool
+	// TrustedProxyCIDRs 是上游可信反代的 CIDR 列表。仅当 TrustProxyHeaders=true
+	// 且立即上游（r.RemoteAddr 取出的 host）落在这些 CIDR 内时，clientIP 才会
+	// 解析 CF-Connecting-IP / X-Real-IP / X-Forwarded-For；否则一律走 RemoteAddr，
+	// 防止任何人随手伪造 X-Forwarded-For 绕过 IP 黑名单 / 限流。
+	// 留空时为兼容旧部署：保留"信任所有上游"的旧行为，但启动期会打 WARN 提示。
+	TrustedProxyCIDRs []string
 
 	SessionCookie  string
 	SessionTTL     time.Duration
@@ -220,6 +226,7 @@ func Load(path string) (Config, error) {
 	cfg.MaxUploadSize = reader.int64Value(cfg.MaxUploadSize, "API.max_upload_size", "max_upload_size")
 	cfg.CORSOrigins = reader.stringListValue(cfg.CORSOrigins, "API.cors_origins", "cors_origins")
 	cfg.TrustProxyHeaders = reader.boolValue(cfg.TrustProxyHeaders, "API.trust_proxy_headers", "trust_proxy_headers")
+	cfg.TrustedProxyCIDRs = reader.stringListValue(cfg.TrustedProxyCIDRs, "API.trusted_proxy_cidrs", "trusted_proxy_cidrs")
 	cfg.SessionCookie = reader.stringValue(cfg.SessionCookie, "Security.session_cookie_name", "API.session_cookie_name", "session_cookie_name")
 	// CookieSecure 必须显式从 toml 读，否则 production.toml 里的
 	// `session_cookie_secure = true` 实际上从未生效。
@@ -354,27 +361,27 @@ func defaultConfigPath() string {
 
 func defaults() Config {
 	return Config{
-		AppName:                           "Twilight",
-		Version:                           "0.0.6",
-		Host:                              "0.0.0.0",
-		Port:                              5000,
-		DatabaseDir:                       "db",
-		DatabaseDriver:                    "postgres",
-		PostgresHost:                      "127.0.0.1",
-		PostgresPort:                      5432,
-		PostgresUser:                      "twilight",
-		PostgresDatabase:                  "twilight",
-		PostgresSSLMode:                   "disable",
-		PostgresMaxOpenConns:              8,
-		PostgresMaxIdleConns:              4,
-		UploadDir:                         "uploads",
-		MaxUploadSize:                     5 * 1024 * 1024,
-		LogLevel:                          "info",
-		RuntimeLogLimit:                   5000,
-		CORSOrigins:                       []string{"http://localhost:3000", "http://127.0.0.1:3000"},
-		AllowCredential:                   true,
-		TrustProxyHeaders:                 false,
-		SessionCookie:                     "twilight_session",
+		AppName:              "Twilight",
+		Version:              "0.0.6",
+		Host:                 "0.0.0.0",
+		Port:                 5000,
+		DatabaseDir:          "db",
+		DatabaseDriver:       "postgres",
+		PostgresHost:         "127.0.0.1",
+		PostgresPort:         5432,
+		PostgresUser:         "twilight",
+		PostgresDatabase:     "twilight",
+		PostgresSSLMode:      "disable",
+		PostgresMaxOpenConns: 8,
+		PostgresMaxIdleConns: 4,
+		UploadDir:            "uploads",
+		MaxUploadSize:        5 * 1024 * 1024,
+		LogLevel:             "info",
+		RuntimeLogLimit:      5000,
+		CORSOrigins:          []string{"http://localhost:3000", "http://127.0.0.1:3000"},
+		AllowCredential:      true,
+		TrustProxyHeaders:    false,
+		SessionCookie:        "twilight_session",
 		// CookieSecure 默认 true：HTTPS 是生产基线，HTTP 调试场景显式
 		// 改 toml 或 env 关掉。旧默认 false 在 HTTP 部署时也不告警，
 		// 一旦运维忘改 production toml 即等于 session 明文走线。
@@ -531,6 +538,9 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("TWILIGHT_TRUST_PROXY_HEADERS"); v != "" {
 		cfg.TrustProxyHeaders = boolValue(v, cfg.TrustProxyHeaders)
+	}
+	if v := os.Getenv("TWILIGHT_TRUSTED_PROXY_CIDRS"); v != "" {
+		cfg.TrustedProxyCIDRs = listValue(v)
 	}
 	if v := os.Getenv("TWILIGHT_SESSION_COOKIE_NAME"); v != "" {
 		cfg.SessionCookie = v

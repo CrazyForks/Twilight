@@ -16,6 +16,34 @@ import (
 
 const configRestoreConfirmPhrase = "RESTORE_CONFIG_BACKUP"
 
+// secretMaskValue 是 schema GET 接口对所有 type=secret 字段的占位文案。
+// 设计契约：
+//   - 后端永远不把真实密钥（BotInternalSecret / BangumiWebhookSecret /
+//     EmbyToken / TelegramBotToken 等）回传给管理端 UI；只要原始值非空，就回
+//     这个 sentinel。空值仍然回空串，便于前端区分"未配置"与"已配置但被遮蔽"。
+//   - schema POST 接到这个 sentinel 时，等价于"保持现状不动"，会从内存中的
+//     a.cfg 拉真实值再渲染回 TOML，避免遮蔽串落地。
+//   - 管理员要清空某个密钥，可以显式提交空串（"" → 写入空），或者走原始 TOML
+//     编辑接口；随便填一段非 sentinel 的字符串则视为新值覆盖。
+const secretMaskValue = "__TWILIGHT_SECRET_UNCHANGED__"
+
+// isSecretField 集中判定某个 section.field 是否应在响应里被遮蔽 / 在写入时被
+// preserve。configSectionDefs 已经声明了 Type=="secret"，这里直接复用，避免在
+// 多处重复维护"哪些字段是密钥"的清单。
+func isSecretField(sectionKey, fieldKey string) bool {
+	for _, section := range configSectionDefs() {
+		if section.Key != sectionKey {
+			continue
+		}
+		for _, field := range section.Fields {
+			if field.Key == fieldKey {
+				return field.Type == "secret"
+			}
+		}
+	}
+	return false
+}
+
 func (a *App) handleConfigTOMLPutSafe(w http.ResponseWriter, r *http.Request, _ Params) {
 	payload := decodeMap(r)
 	info, status, message := a.saveConfigContent(stringValue(payload, "content"))
@@ -125,12 +153,23 @@ func (a *App) handleConfigSchemaFull(w http.ResponseWriter, r *http.Request, _ P
 	for _, def := range configSectionDefs() {
 		fields := make([]map[string]any, 0, len(def.Fields))
 		for _, field := range def.Fields {
+			rawValue := values[def.Key][field.Key]
+			// 密钥字段不回传明文：非空 → sentinel；空 → 空串。前端 SecretField
+			// 在用户没有改动时会原样回传 sentinel，handleConfigSchemaUpdateSafe
+			// 会识别并回填真实值。
+			if field.Type == "secret" {
+				if text, ok := rawValue.(string); ok && text != "" {
+					rawValue = secretMaskValue
+				} else {
+					rawValue = ""
+				}
+			}
 			item := map[string]any{
 				"key":         field.Key,
 				"label":       field.Label,
 				"type":        field.Type,
 				"description": field.Description,
-				"value":       values[def.Key][field.Key],
+				"value":       rawValue,
 			}
 			if len(field.Options) > 0 {
 				item["options"] = field.Options
@@ -180,6 +219,14 @@ func (a *App) handleConfigSchemaUpdateSafe(w http.ResponseWriter, r *http.Reques
 			}
 			if values[sectionKey] == nil {
 				values[sectionKey] = map[string]any{}
+			}
+			// secret 字段：管理端没改 → 收到 sentinel → 用现存内存值回填，避免
+			// 写入 sentinel 串污染 TOML。其它写法（空串 / 新值）一律当作显式
+			// 覆盖处理，前端必须主动清空才会写入空。
+			if field.Type == "secret" {
+				if text, ok := value.(string); ok && text == secretMaskValue {
+					value = values[sectionKey][fieldKey]
+				}
 			}
 			values[sectionKey][fieldKey] = normalizeConfigField(field, value)
 		}
@@ -630,6 +677,7 @@ func configSectionDefs() []configSectionDef {
 			{Key: "session_cookie_secure", Label: "Secure Cookie", Type: "bool", Description: "HTTPS 部署应开启"},
 			{Key: "session_cookie_samesite", Label: "SameSite", Type: "string", Description: "lax/strict/none"},
 			{Key: "trust_proxy_headers", Label: "信任代理 IP", Type: "bool", Description: "仅在可信反代后开启"},
+			{Key: "trusted_proxy_cidrs", Label: "可信反代 CIDR", Type: "list", Description: "上游反代的 IP / CIDR；启用 trust_proxy_headers 时必须配置，否则任何客户端都可伪造 X-Forwarded-For"},
 		}},
 		{Key: "Security", Title: "安全", Description: "内部密钥和安全开关", Category: "ops", Fields: []configFieldDef{
 			{Key: "bot_internal_secret", Label: "Bot 内部密钥", Type: "secret", Description: "外部更新回调共享密钥"},
@@ -712,7 +760,7 @@ func configValues(cfg config.Config) map[string]map[string]any {
 		},
 		"API": {
 			"host": cfg.Host, "port": cfg.Port, "cors_origins": cfg.CORSOrigins, "upload_folder": cfg.UploadDir, "max_upload_size": cfg.MaxUploadSize,
-			"session_cookie_name": cfg.SessionCookie, "session_cookie_secure": cfg.CookieSecure, "session_cookie_samesite": cfg.CookieSameSite, "trust_proxy_headers": cfg.TrustProxyHeaders,
+			"session_cookie_name": cfg.SessionCookie, "session_cookie_secure": cfg.CookieSecure, "session_cookie_samesite": cfg.CookieSameSite, "trust_proxy_headers": cfg.TrustProxyHeaders, "trusted_proxy_cidrs": cfg.TrustedProxyCIDRs,
 		},
 		"Security":     {"bot_internal_secret": cfg.BotInternalSecret},
 		"Scheduler":    {"enabled": cfg.SchedulerEnabled, "expired_check_time": cfg.SchedulerExpiredCheckTime, "expiring_check_time": cfg.SchedulerExpiringCheckTime, "daily_stats_time": cfg.SchedulerDailyStatsTime, "session_cleanup_interval": cfg.SchedulerSessionCleanupInterval},

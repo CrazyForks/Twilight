@@ -19,7 +19,7 @@ func (a *App) handleEmbySyncV2(w http.ResponseWriter, r *http.Request, _ Params)
 	}
 	var remote []map[string]any
 	if err := a.embyGet(r.Context(), "/Users", &remote); err != nil {
-		fail(w, http.StatusBadGateway, "failed to read Emby users")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyRemoteUsersFailed, "读取 Emby 用户列表失败，请稍后重试或检查上游 Emby 状态")
 		return
 	}
 	remoteByID := map[string]map[string]any{}
@@ -55,7 +55,7 @@ func (a *App) handleEmbyActivity(w http.ResponseWriter, r *http.Request, _ Param
 	}
 	var payload map[string]any
 	if err := a.embyGet(r.Context(), "/System/ActivityLog/Entries?StartIndex=0&Limit="+strconv.Itoa(limit), &payload); err != nil {
-		fail(w, http.StatusBadGateway, "failed to read Emby activity")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyRemoteActivityFail, "读取 Emby 活动日志失败，请稍后重试或检查上游 Emby 状态")
 		return
 	}
 	if items, okItems := payload["Items"]; okItems {
@@ -72,7 +72,7 @@ func (a *App) handleAdminEmbyUsersV2(w http.ResponseWriter, r *http.Request, _ P
 	}
 	var remote []map[string]any
 	if err := a.embyGet(r.Context(), "/Users", &remote); err != nil {
-		fail(w, http.StatusBadGateway, "failed to read Emby users")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyRemoteUsersFailed, "读取 Emby 用户列表失败，请稍后重试或检查上游 Emby 状态")
 		return
 	}
 	localByEmbyID := map[string]store.User{}
@@ -117,7 +117,7 @@ func (a *App) handleEmbyBroadcast(w http.ResponseWriter, r *http.Request, _ Para
 	payload := decodeMap(r)
 	text := stringValue(payload, "text")
 	if text == "" {
-		fail(w, http.StatusBadRequest, "missing message text")
+		failWithCode(w, http.StatusBadRequest, ErrEmbyBroadcastTextEmpty, "请填写广播消息内容")
 		return
 	}
 	header := firstNonEmpty(stringValue(payload, "header"), "通知")
@@ -127,7 +127,7 @@ func (a *App) handleEmbyBroadcast(w http.ResponseWriter, r *http.Request, _ Para
 	}
 	var sessions []map[string]any
 	if err := a.embyGet(r.Context(), "/Sessions", &sessions); err != nil {
-		fail(w, http.StatusBadGateway, "failed to read Emby sessions")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyRemoteSessionsFail, "读取 Emby 会话失败，请稍后重试或检查上游 Emby 状态")
 		return
 	}
 	sent := 0
@@ -176,12 +176,12 @@ func (a *App) handleEmbyTestV2(w http.ResponseWriter, r *http.Request, _ Params)
 
 func (a *App) handleEmbyCleanupOrphans(w http.ResponseWriter, r *http.Request, _ Params) {
 	if a.cfg.EmbyURL == "" {
-		fail(w, http.StatusBadRequest, "Emby not configured")
+		failWithCode(w, http.StatusBadRequest, ErrEmbyNotConfigured, "Emby 未配置，请先在系统配置中填写 Emby 服务地址")
 		return
 	}
 	var remote []map[string]any
 	if err := a.embyGet(r.Context(), "/Users", &remote); err != nil {
-		fail(w, http.StatusBadGateway, "failed to read Emby users")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyRemoteUsersFailed, "读取 Emby 用户列表失败，请稍后重试或检查上游 Emby 状态")
 		return
 	}
 	remoteIDs := map[string]bool{}
@@ -204,7 +204,7 @@ func (a *App) handleEmbyCleanupOrphans(w http.ResponseWriter, r *http.Request, _
 
 func (a *App) handleEmbyImportUsers(w http.ResponseWriter, r *http.Request, _ Params) {
 	if a.cfg.EmbyURL == "" {
-		fail(w, http.StatusBadRequest, "Emby not configured")
+		failWithCode(w, http.StatusBadRequest, ErrEmbyNotConfigured, "Emby 未配置，请先在系统配置中填写 Emby 服务地址")
 		return
 	}
 	payload := decodeMap(r)
@@ -214,7 +214,7 @@ func (a *App) handleEmbyImportUsers(w http.ResponseWriter, r *http.Request, _ Pa
 	}
 	var remote []map[string]any
 	if err := a.embyGet(r.Context(), "/Users", &remote); err != nil {
-		fail(w, http.StatusBadGateway, "failed to read Emby users")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyRemoteUsersFailed, "读取 Emby 用户列表失败，请稍后重试或检查上游 Emby 状态")
 		return
 	}
 	linked := map[string]bool{}
@@ -248,7 +248,7 @@ func (a *App) handleEmbyImportUsers(w http.ResponseWriter, r *http.Request, _ Pa
 
 func (a *App) handleEmbyResetBindings(w http.ResponseWriter, r *http.Request, _ Params) {
 	if stringValue(decodeMap(r), "confirm") != "RESET_ALL_EMBY" {
-		fail(w, http.StatusBadRequest, "missing confirm RESET_ALL_EMBY")
+		failWithCode(w, http.StatusBadRequest, ErrAdminEmbyResetConfirm, "请输入确认短语 RESET_ALL_EMBY 后再执行")
 		return
 	}
 	count := 0
@@ -271,13 +271,13 @@ func (a *App) handleEmbyResetBindings(w http.ResponseWriter, r *http.Request, _ 
 
 func (a *App) handleEmbyDeleteUnlinked(w http.ResponseWriter, r *http.Request, _ Params) {
 	if a.cfg.EmbyURL == "" {
-		fail(w, http.StatusBadRequest, "Emby not configured")
+		failWithCode(w, http.StatusBadRequest, ErrEmbyNotConfigured, "Emby 未配置，请先在系统配置中填写 Emby 服务地址")
 		return
 	}
 	dryRun := boolValue(decodeMap(r), "dry_run", false)
 	var remote []map[string]any
 	if err := a.embyGet(r.Context(), "/Users", &remote); err != nil {
-		fail(w, http.StatusBadGateway, "failed to read Emby users")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyRemoteUsersFailed, "读取 Emby 用户列表失败，请稍后重试或检查上游 Emby 状态")
 		return
 	}
 	linked := map[string]bool{}
@@ -315,32 +315,32 @@ func (a *App) handleCreateStandaloneEmbyV2(w http.ResponseWriter, r *http.Reques
 	username := stringValue(payload, "username")
 	password := stringValue(payload, "password")
 	if username == "" || len(username) > 64 {
-		fail(w, http.StatusBadRequest, "invalid Emby username")
+		failWithCode(w, http.StatusBadRequest, ErrEmbyUsernameInvalid, "Emby 用户名不合法，长度需在 1-64 之间")
 		return
 	}
 	if len(password) < 8 {
-		fail(w, http.StatusBadRequest, "password must be at least 8 characters")
+		failWithCode(w, http.StatusBadRequest, ErrEmbyPasswordTooShort, "密码长度需至少 8 位")
 		return
 	}
 	if a.cfg.EmbyURL == "" {
-		fail(w, http.StatusBadRequest, "Emby not configured")
+		failWithCode(w, http.StatusBadRequest, ErrEmbyNotConfigured, "Emby 未配置，请先在系统配置中填写 Emby 服务地址")
 		return
 	}
 	var createdUser map[string]any
 	if err := a.embyPost(r.Context(), "/Users/New", map[string]any{"Name": username}, &createdUser); err != nil {
-		fail(w, http.StatusBadGateway, "failed to create Emby user")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyCreateFailed, "创建 Emby 用户失败，请稍后重试或检查上游 Emby 状态")
 		return
 	}
 	embyID := asString(createdUser["Id"])
 	if embyID == "" {
-		fail(w, http.StatusBadGateway, "Emby did not return a user id")
+		failWithCode(w, http.StatusBadGateway, ErrEmbyCreateNoID, "Emby 未返回用户 ID，请检查上游 Emby 状态")
 		return
 	}
 	var ignored map[string]any
 	_ = a.embyPost(r.Context(), "/Users/"+urlPathEscape(embyID)+"/Policy", map[string]any{"EnableContentDownloading": false}, &ignored)
 	if err := a.embyPost(r.Context(), "/Users/"+urlPathEscape(embyID)+"/Password", map[string]any{"CurrentPw": "", "NewPw": password}, &ignored); err != nil {
 		_ = a.embyDelete(r.Context(), "/Users/"+urlPathEscape(embyID))
-		fail(w, http.StatusBadGateway, "failed to set Emby password")
+		failWithCode(w, http.StatusBadGateway, ErrEmbySetPasswordFailed, "设置 Emby 用户密码失败，请稍后重试或检查上游 Emby 状态")
 		return
 	}
 	ok(w, "Emby user created", map[string]any{"emby_id": embyID, "emby_username": firstNonEmpty(asString(createdUser["Name"]), username)})
@@ -350,13 +350,13 @@ func (a *App) handleWhitelist(w http.ResponseWriter, r *http.Request, _ Params) 
 	payload := decodeMap(r)
 	username := stringValue(payload, "username")
 	if username == "" {
-		fail(w, http.StatusBadRequest, "missing username")
+		failWithCode(w, http.StatusBadRequest, ErrAdminWhitelistUsernameEmpty, "请填写用户名")
 		return
 	}
 	password := "Twilight-" + randomCode(14)
 	hash, err := security.HashPassword(password)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "password processing failed")
+		failWithCode(w, http.StatusInternalServerError, ErrPasswordHashFailed, "密码哈希失败，请稍后重试")
 		return
 	}
 	u, err := a.store.CreateUser(store.User{
@@ -372,7 +372,7 @@ func (a *App) handleWhitelist(w http.ResponseWriter, r *http.Request, _ Params) 
 func (a *App) handleAdminBulkExpire(w http.ResponseWriter, r *http.Request, _ Params) {
 	payload := decodeMap(r)
 	if stringValue(payload, "confirm") != "BULK_EXPIRE_OK" {
-		fail(w, http.StatusBadRequest, "missing confirm BULK_EXPIRE_OK")
+		failWithCode(w, http.StatusBadRequest, ErrAdminBulkExpireConfirm, "请输入确认短语 BULK_EXPIRE_OK 后再执行")
 		return
 	}
 	expiredAt := int64(intValue(payload, "expired_at", 0))
@@ -382,14 +382,14 @@ func (a *App) handleAdminBulkExpire(w http.ResponseWriter, r *http.Request, _ Pa
 			expiredAt = -1
 		} else {
 			if days > 36500 {
-				fail(w, http.StatusBadRequest, "days too large")
+				failWithCode(w, http.StatusBadRequest, ErrAdminBulkExpireDaysTooLarge, "过期天数超出允许范围")
 				return
 			}
 			expiredAt = time.Now().AddDate(0, 0, days).Unix()
 		}
 	}
 	if expiredAt == 0 || (expiredAt < -1) || expiredAt > 253402214400 {
-		fail(w, http.StatusBadRequest, "invalid expired_at")
+		failWithCode(w, http.StatusBadRequest, ErrAdminBulkExpireInvalid, "过期时间不合法")
 		return
 	}
 	includeAdmin := boolValue(payload, "include_admin", false)
@@ -430,7 +430,7 @@ func (a *App) handleAdminBulkExpire(w http.ResponseWriter, r *http.Request, _ Pa
 func (a *App) handleAdminBulkEnableDisabled(w http.ResponseWriter, r *http.Request, _ Params) {
 	payload := decodeMap(r)
 	if stringValue(payload, "confirm") != "BULK_ENABLE_DISABLED_OK" {
-		fail(w, http.StatusBadRequest, "missing confirm BULK_ENABLE_DISABLED_OK")
+		failWithCode(w, http.StatusBadRequest, ErrAdminBulkEnableConfirm, "请输入确认短语 BULK_ENABLE_DISABLED_OK 后再执行")
 		return
 	}
 	includeAdmin := boolValue(payload, "include_admin", false)
@@ -529,7 +529,7 @@ func (a *App) handleAdminClearStalePendingEmby(w http.ResponseWriter, r *http.Re
 	payload := decodeMap(r)
 	dryRun := boolValue(payload, "dry_run", true)
 	if !dryRun && stringValue(payload, "confirm") != "CLEAR_PENDING_EMBY_OK" {
-		fail(w, http.StatusBadRequest, "missing confirm CLEAR_PENDING_EMBY_OK")
+		failWithCode(w, http.StatusBadRequest, ErrAdminClearPendingEmbyConfirm, "请输入确认短语 CLEAR_PENDING_EMBY_OK 后再执行")
 		return
 	}
 	targets := []store.User{}
@@ -556,7 +556,7 @@ func (a *App) handleAdminKickNoEmby(w http.ResponseWriter, r *http.Request, _ Pa
 	payload := decodeMap(r)
 	dryRun := boolValue(payload, "dry_run", false)
 	if !dryRun && stringValue(payload, "confirm") != "KICK_NO_EMBY_OK" {
-		fail(w, http.StatusBadRequest, "missing confirm KICK_NO_EMBY_OK")
+		failWithCode(w, http.StatusBadRequest, ErrAdminKickNoEmbyConfirm, "请输入确认短语 KICK_NO_EMBY_OK 后再执行")
 		return
 	}
 	minDays := clamp(intValue(payload, "min_days", 0), 0, 3650)
@@ -613,12 +613,12 @@ func (a *App) handleAdminKickNoEmby(w http.ResponseWriter, r *http.Request, _ Pa
 
 func (a *App) handleInviteDetach(w http.ResponseWriter, r *http.Request, params Params) {
 	if !a.cfg.InviteEnabled {
-		fail(w, http.StatusForbidden, "邀请功能未开启")
+		failWithCode(w, http.StatusForbidden, ErrInviteDisabled, "邀请功能未开启")
 		return
 	}
 	uid, _ := int64Param(params, "uid")
 	if _, okUser := a.store.User(uid); !okUser {
-		fail(w, http.StatusNotFound, "user not found")
+		failWithCode(w, http.StatusNotFound, ErrUserNotFound, "用户不存在")
 		return
 	}
 	_, hadParent := a.store.ParentOf(uid)
@@ -631,7 +631,7 @@ func (a *App) handleInviteDetach(w http.ResponseWriter, r *http.Request, params 
 func (a *App) handleListRebindRequests(w http.ResponseWriter, r *http.Request, _ Params) {
 	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
 	if status != "" && status != "all" && status != "pending" && status != "approved" && status != "rejected" {
-		fail(w, http.StatusBadRequest, "invalid status")
+		failWithCode(w, http.StatusBadRequest, ErrRebindStatusInvalid, "无效的状态过滤值")
 		return
 	}
 	page := max(1, queryInt(r, "page", 1))
@@ -667,13 +667,13 @@ func (a *App) handleBatchReviewRebindRequests(w http.ResponseWriter, r *http.Req
 	payload := decodeMap(r)
 	action := strings.ToLower(stringValue(payload, "action"))
 	if action != "approve" && action != "reject" {
-		fail(w, http.StatusBadRequest, "action must be approve or reject")
+		failWithCode(w, http.StatusBadRequest, ErrRebindActionInvalid, "操作必须是 approve 或 reject")
 		return
 	}
 	status := map[string]string{"approve": "approved", "reject": "rejected"}[action]
 	ids := int64Slice(payload["ids"])
 	if len(ids) == 0 || len(ids) > 100 {
-		fail(w, http.StatusBadRequest, "ids must contain 1-100 request ids")
+		failWithCode(w, http.StatusBadRequest, ErrRebindBatchSizeInvalid, "ids 数量需在 1-100 之间")
 		return
 	}
 	result := map[string]any{"success": 0, "failed": 0, "errors": []map[string]any{}}
@@ -692,7 +692,7 @@ func (a *App) handleBatchReviewRebindRequests(w http.ResponseWriter, r *http.Req
 
 func (a *App) handleTelegramRejoinedEnable(w http.ResponseWriter, r *http.Request, _ Params) {
 	if stringValue(decodeMap(r), "confirm") != "ENABLE_REJOINED_OK" {
-		fail(w, http.StatusBadRequest, "missing confirm ENABLE_REJOINED_OK")
+		failWithCode(w, http.StatusBadRequest, ErrAdminEnableRejoinedConfirm, "请输入确认短语 ENABLE_REJOINED_OK 后再执行")
 		return
 	}
 	enabled := []map[string]any{}
@@ -732,7 +732,7 @@ func (a *App) handleTelegramKickUnbound(w http.ResponseWriter, r *http.Request, 
 	payload := decodeMap(r)
 	dryRun := boolValue(payload, "dry_run", false)
 	if !dryRun && stringValue(payload, "confirm") != "KICK_UNBOUND_OK" {
-		fail(w, http.StatusBadRequest, "missing confirm KICK_UNBOUND_OK")
+		failWithCode(w, http.StatusBadRequest, ErrAdminKickUnboundConfirm, "请输入确认短语 KICK_UNBOUND_OK 后再执行")
 		return
 	}
 	maxPerRun := clamp(intValue(payload, "max_per_run", 200), 1, 500)
@@ -796,7 +796,7 @@ func (a *App) handleTelegramKickUnbound(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	if !a.telegramAvailable() {
-		fail(w, http.StatusBadRequest, "Telegram not configured")
+		failWithCode(w, http.StatusBadRequest, ErrTGNotConfigured, "Telegram 未配置，请先在系统配置中填写 Telegram Bot Token")
 		return
 	}
 	adminSet := a.telegramAdminSet(r.Context(), chatID)

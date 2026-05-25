@@ -56,7 +56,7 @@ func databaseDriverLabel(driver string) string {
 func (a *App) handleDatabaseBackups(w http.ResponseWriter, r *http.Request, _ Params) {
 	backups, err := store.ListBackups(a.cfg.DatabaseBackupDir)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "读取数据库备份列表失败")
+		failWithCode(w, http.StatusInternalServerError, ErrDBBackupListFailed, "读取数据库备份列表失败")
 		return
 	}
 	ok(w, "OK", map[string]any{"backups": backups})
@@ -66,23 +66,23 @@ func (a *App) handleDatabaseBackupInspect(w http.ResponseWriter, r *http.Request
 	name := strings.TrimSpace(params["name"])
 	target, err := store.ResolveBackupPath(a.cfg.DatabaseBackupDir, name)
 	if err != nil {
-		fail(w, http.StatusBadRequest, "备份文件无效")
+		failWithCode(w, http.StatusBadRequest, ErrDBBackupInvalid, "备份文件无效")
 		return
 	}
 	data, err := os.ReadFile(target)
 	if err != nil {
-		fail(w, http.StatusBadRequest, "读取备份失败")
+		failWithCode(w, http.StatusBadRequest, ErrDBBackupReadFailed, "读取备份失败")
 		return
 	}
 	var state store.State
 	if err := json.Unmarshal(data, &state); err != nil {
-		fail(w, http.StatusBadRequest, "备份内容不是有效的 Twilight 状态快照")
+		failWithCode(w, http.StatusBadRequest, ErrDBBackupSnapshotBad, "备份内容不是有效的 Twilight 状态快照")
 		return
 	}
 	state.EnsureForMigration()
 	info, err := databaseBackupInfo(target)
 	if err != nil {
-		fail(w, http.StatusBadRequest, "备份文件无效")
+		failWithCode(w, http.StatusBadRequest, ErrDBBackupInvalid, "备份文件无效")
 		return
 	}
 	counts := databaseStateCounts(state)
@@ -103,16 +103,16 @@ func (a *App) handleDatabaseBackupDelete(w http.ResponseWriter, r *http.Request,
 	name := strings.TrimSpace(params["name"])
 	target, err := store.ResolveBackupPath(a.cfg.DatabaseBackupDir, name)
 	if err != nil {
-		fail(w, http.StatusBadRequest, "备份文件无效")
+		failWithCode(w, http.StatusBadRequest, ErrDBBackupInvalid, "备份文件无效")
 		return
 	}
 	info, err := databaseBackupInfo(target)
 	if err != nil {
-		fail(w, http.StatusBadRequest, "备份文件无效")
+		failWithCode(w, http.StatusBadRequest, ErrDBBackupInvalid, "备份文件无效")
 		return
 	}
 	if err := os.Remove(target); err != nil {
-		fail(w, http.StatusInternalServerError, "删除数据库备份失败")
+		failWithCode(w, http.StatusInternalServerError, ErrDBBackupDeleteFailed, "删除数据库备份失败")
 		return
 	}
 	_ = os.Remove(store.BackupMetaPath(target))
@@ -124,7 +124,7 @@ func (a *App) handleDatabaseBackup(w http.ResponseWriter, r *http.Request, _ Par
 	note := firstNonEmpty(stringValue(payload, "note"), stringValue(payload, "remark"))
 	info, err := a.store.BackupWithNote(a.cfg.DatabaseBackupDir, note)
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "数据库备份失败")
+		failWithCode(w, http.StatusInternalServerError, ErrDBBackupCreateFailed, "数据库备份失败")
 		return
 	}
 	ok(w, "数据库备份已创建", map[string]any{"backup": info})
@@ -135,34 +135,34 @@ func (a *App) handleDatabaseRestore(w http.ResponseWriter, r *http.Request, _ Pa
 	name := firstNonEmpty(stringValue(payload, "name"), stringValue(payload, "backup"))
 	target, err := store.ResolveBackupPath(a.cfg.DatabaseBackupDir, name)
 	if err != nil {
-		fail(w, http.StatusBadRequest, "备份文件无效")
+		failWithCode(w, http.StatusBadRequest, ErrDBBackupInvalid, "备份文件无效")
 		return
 	}
 	targetData, err := os.ReadFile(target)
 	if err != nil {
-		fail(w, http.StatusBadRequest, "读取备份失败")
+		failWithCode(w, http.StatusBadRequest, ErrDBBackupReadFailed, "读取备份失败")
 		return
 	}
 	var targetState store.State
 	if err := json.Unmarshal(targetData, &targetState); err != nil {
-		fail(w, http.StatusBadRequest, "备份内容不是有效的 Twilight 状态快照")
+		failWithCode(w, http.StatusBadRequest, ErrDBBackupSnapshotBad, "备份内容不是有效的 Twilight 状态快照")
 		return
 	}
 	targetState.EnsureForMigration()
 	currentSnapshot, err := a.store.Snapshot()
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "生成当前数据库快照失败")
+		failWithCode(w, http.StatusInternalServerError, ErrDBSnapshotFailed, "生成当前数据库快照失败")
 		return
 	}
 	var currentState store.State
 	if err := json.Unmarshal(currentSnapshot, &currentState); err != nil {
-		fail(w, http.StatusInternalServerError, "当前数据库快照校验失败")
+		failWithCode(w, http.StatusInternalServerError, ErrDBSnapshotVerifyBad, "当前数据库快照校验失败")
 		return
 	}
 	currentState.EnsureForMigration()
 	backupInfo, err := databaseBackupInfo(target)
 	if err != nil {
-		fail(w, http.StatusBadRequest, "备份文件无效")
+		failWithCode(w, http.StatusBadRequest, ErrDBBackupInvalid, "备份文件无效")
 		return
 	}
 	result := map[string]any{
@@ -193,11 +193,11 @@ func (a *App) handleDatabaseRestore(w http.ResponseWriter, r *http.Request, _ Pa
 	}
 	preRestore, backupErr := a.store.BackupWithNote(a.cfg.DatabaseBackupDir, "数据库恢复前保护性备份")
 	if backupErr != nil {
-		fail(w, http.StatusInternalServerError, "恢复前备份失败")
+		failWithCode(w, http.StatusInternalServerError, ErrDBRestoreBackupFail, "恢复前备份失败")
 		return
 	}
 	if err := a.store.LoadSnapshot(targetData); err != nil {
-		fail(w, http.StatusBadRequest, "备份恢复失败")
+		failWithCode(w, http.StatusBadRequest, ErrDBRestoreFailed, "备份恢复失败")
 		return
 	}
 	result["dry_run"] = false
@@ -209,13 +209,13 @@ func (a *App) handleDatabaseRestore(w http.ResponseWriter, r *http.Request, _ Pa
 
 func (a *App) handleDatabaseMigrate(w http.ResponseWriter, r *http.Request, _ Params) {
 	if !a.cfg.DatabaseMigrationPanelEnabled {
-		fail(w, http.StatusForbidden, "数据库迁移功能未开启，请先在配置文件中启用 Database.migration_panel_enabled")
+		failWithCode(w, http.StatusForbidden, ErrDBMigrationDisabled, "数据库迁移功能未开启，请先在配置文件中启用 Database.migration_panel_enabled")
 		return
 	}
 	payload := decodeMap(r)
 	sourceDriver := strings.ToLower(firstNonEmpty(stringValue(payload, "source_driver"), stringValue(payload, "source"), a.store.Backend()))
 	if sourceDriver == "sqlite" || sourceDriver == "legacy_sqlite" || sourceDriver == "legacy-sqlite" {
-		fail(w, http.StatusForbidden, "SQLite 数据源已禁用；请使用当前运行状态或 PostgreSQL")
+		failWithCode(w, http.StatusForbidden, ErrDBSQLiteDisabled, "SQLite 数据源已禁用；请使用当前运行状态或 PostgreSQL")
 		return
 	}
 	defer runtime.GC()
@@ -227,13 +227,13 @@ func (a *App) handleDatabaseMigrate(w http.ResponseWriter, r *http.Request, _ Pa
 	dryRun := boolValue(payload, "dry_run", false) || boolValue(payload, "preview", false) || !confirmed
 	snapshot, err := a.store.Snapshot()
 	if err != nil {
-		fail(w, http.StatusInternalServerError, "生成迁移快照失败")
+		failWithCode(w, http.StatusInternalServerError, ErrDBSnapshotFailed, "生成迁移快照失败")
 		return
 	}
 	snapshotBytes := len(snapshot)
 	var state store.State
 	if err := json.Unmarshal(snapshot, &state); err != nil {
-		fail(w, http.StatusInternalServerError, "迁移快照校验失败")
+		failWithCode(w, http.StatusInternalServerError, ErrDBSnapshotVerifyBad, "迁移快照校验失败")
 		return
 	}
 	state.EnsureForMigration()
@@ -243,7 +243,7 @@ func (a *App) handleDatabaseMigrate(w http.ResponseWriter, r *http.Request, _ Pa
 		targetDriver = store.BackendPostgres
 		dsn := firstNonEmpty(stringValue(payload, "database_url"), stringValue(payload, "postgres_dsn"), a.cfg.PostgresDSN())
 		if dsn == "" {
-			fail(w, http.StatusBadRequest, "未配置 PostgreSQL 连接信息")
+			failWithCode(w, http.StatusBadRequest, ErrDBPostgresMissing, "未配置 PostgreSQL 连接信息")
 			return
 		}
 		targetReady := map[string]any{"driver": targetDriver, "configured": true, "connected": false, "schema_ready": false}
@@ -252,7 +252,7 @@ func (a *App) handleDatabaseMigrate(w http.ResponseWriter, r *http.Request, _ Pa
 		if dryRun {
 			status, err := store.CheckPostgresTarget(ctx, dsn)
 			if err != nil {
-				fail(w, http.StatusBadRequest, databasePostgresErrorMessage("连接 PostgreSQL 失败", err))
+				failWithCode(w, http.StatusBadRequest, ErrDBPostgresConnect, databasePostgresErrorMessage("连接 PostgreSQL 失败", err))
 				return
 			}
 			targetReady = postgresTargetReadyMap(targetDriver, status)
@@ -261,12 +261,12 @@ func (a *App) handleDatabaseMigrate(w http.ResponseWriter, r *http.Request, _ Pa
 		}
 		preMigration, backupErr := a.store.BackupWithNote(a.cfg.DatabaseBackupDir, "数据库迁移前保护性备份")
 		if backupErr != nil {
-			fail(w, http.StatusInternalServerError, "迁移前备份失败")
+			failWithCode(w, http.StatusInternalServerError, ErrDBRestoreBackupFail, "迁移前备份失败")
 			return
 		}
 		targetStore, err := store.OpenPostgres(ctx, dsn)
 		if err != nil {
-			fail(w, http.StatusBadRequest, databasePostgresErrorMessage("连接 PostgreSQL 失败", err))
+			failWithCode(w, http.StatusBadRequest, ErrDBPostgresConnect, databasePostgresErrorMessage("连接 PostgreSQL 失败", err))
 			return
 		}
 		defer targetStore.Close()
@@ -274,7 +274,7 @@ func (a *App) handleDatabaseMigrate(w http.ResponseWriter, r *http.Request, _ Pa
 		targetReady["connected"] = true
 		targetReady["schema_ready"] = true
 		if err := targetStore.LoadSnapshot(snapshot); err != nil {
-			fail(w, http.StatusInternalServerError, "写入 PostgreSQL 失败")
+			failWithCode(w, http.StatusInternalServerError, ErrDBPostgresWriteFail, "写入 PostgreSQL 失败")
 			return
 		}
 		summary := a.databaseMigrationSummary(targetDriver, state, dryRun, snapshotBytes, targetReady)
@@ -289,7 +289,7 @@ func (a *App) handleDatabaseMigrate(w http.ResponseWriter, r *http.Request, _ Pa
 		} else {
 			targetPath, err = resolveStateFileTarget(a.cfg.DatabaseDir, targetPath)
 			if err != nil {
-				fail(w, http.StatusBadRequest, "目标状态文件路径无效")
+				failWithCode(w, http.StatusBadRequest, ErrDBStateFileBadPath, "目标状态文件路径无效")
 				return
 			}
 		}
@@ -302,20 +302,20 @@ func (a *App) handleDatabaseMigrate(w http.ResponseWriter, r *http.Request, _ Pa
 		}
 		preMigration, backupErr := a.store.BackupWithNote(a.cfg.DatabaseBackupDir, "数据库迁移前保护性备份")
 		if backupErr != nil {
-			fail(w, http.StatusInternalServerError, "迁移前备份失败")
+			failWithCode(w, http.StatusInternalServerError, ErrDBRestoreBackupFail, "迁移前备份失败")
 			return
 		}
 		if err := os.MkdirAll(filepath.Dir(targetPath), 0o700); err != nil {
-			fail(w, http.StatusInternalServerError, "创建数据库目录失败")
+			failWithCode(w, http.StatusInternalServerError, ErrDBStateFileMkdirBad, "创建数据库目录失败")
 			return
 		}
 		tmp := targetPath + ".tmp"
 		if err := os.WriteFile(tmp, snapshot, 0o600); err != nil {
-			fail(w, http.StatusInternalServerError, "写入状态文件失败")
+			failWithCode(w, http.StatusInternalServerError, ErrDBStateFileWriteBad, "写入状态文件失败")
 			return
 		}
 		if err := os.Rename(tmp, targetPath); err != nil {
-			fail(w, http.StatusInternalServerError, "替换状态文件失败")
+			failWithCode(w, http.StatusInternalServerError, ErrDBStateFileWriteBad, "替换状态文件失败")
 			return
 		}
 		summary := a.databaseMigrationSummary(store.BackendJSON, state, dryRun, snapshotBytes, targetReady)
@@ -324,7 +324,7 @@ func (a *App) handleDatabaseMigrate(w http.ResponseWriter, r *http.Request, _ Pa
 		summary["pre_operation_backup"] = preMigration
 		ok(w, "数据库已迁移到 JSON 状态文件", summary)
 	default:
-		fail(w, http.StatusBadRequest, "不支持的数据库目标")
+		failWithCode(w, http.StatusBadRequest, ErrInvalidPayload, "不支持的数据库目标")
 	}
 }
 

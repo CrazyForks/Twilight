@@ -538,7 +538,7 @@ func TestRegcodeInviteMediaAndSecurityFlows(t *testing.T) {
 	}
 	rawBatchCodes := batchEnv.Data.(map[string]any)["codes"].([]any)
 	missingConfirmDelete := doJSONWithHeaders(app, http.MethodPost, "/api/v1/admin/regcodes/batch-delete", `{"codes":["`+rawBatchCodes[0].(string)+`"]}`, []*http.Cookie{adminCookie, adminCSRF}, map[string]string{"X-Twilight-Client": "webui"})
-	if missingConfirmDelete.Code != http.StatusBadRequest || !strings.Contains(missingConfirmDelete.Body.String(), confirmBatchDeleteRegcodes) || !strings.Contains(missingConfirmDelete.Body.String(), `"error_code":"BAD_REQUEST"`) {
+	if missingConfirmDelete.Code != http.StatusBadRequest || !strings.Contains(missingConfirmDelete.Body.String(), confirmBatchDeleteRegcodes) || !strings.Contains(missingConfirmDelete.Body.String(), `"error_code":"REGCODE_BATCH_CONFIRM_REQUIRED"`) {
 		t.Fatalf("batch delete regcodes missing confirm status=%d body=%s", missingConfirmDelete.Code, missingConfirmDelete.Body.String())
 	}
 	deletePayload := `{"codes":["` + rawBatchCodes[0].(string) + `","` + rawBatchCodes[1].(string) + `","missing-code"],"confirm":"` + confirmBatchDeleteRegcodes + `"}`
@@ -2525,7 +2525,7 @@ func TestUserStatsEndpointRejectsOtherUser(t *testing.T) {
 	}
 
 	resp := doJSON(app, http.MethodGet, "/api/v1/stats/user/"+strconv.FormatInt(beta.UID, 10), ``, []*http.Cookie{cookie, csrfCookie})
-	if resp.Code != http.StatusForbidden || !strings.Contains(resp.Body.String(), `"error_code":"FORBIDDEN"`) {
+	if resp.Code != http.StatusForbidden || !strings.Contains(resp.Body.String(), `"error_code":"WATCH_STATS_FORBIDDEN"`) {
 		t.Fatalf("expected forbidden stats response, status=%d body=%s", resp.Code, resp.Body.String())
 	}
 }

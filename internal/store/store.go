@@ -1268,6 +1268,7 @@ func (s *Store) UpdateUser(uid int64, fn func(*User) error) (User, error) {
 
 // DeleteUser 删除用户并级联清理所有 UID-键控的衍生数据。
 // 级联策略：
+//
 //	删除（GDPR right-to-erasure，含个人指纹/设备/行为）：
 //	  Users / APIKeys / InviteCodes / InviteRelations / MediaRequests
 //	  Signin / Devices / LoginLogs / PlaybackRecords / BindCodes
@@ -1279,6 +1280,7 @@ func (s *Store) UpdateUser(uid int64, fn func(*User) error) (User, error) {
 //	  ViolationLogs（违规记录是安全审计 artefact，不随用户删除）
 //	  RebindRequests.ReviewerUID（保留审核者 UID，便于回溯审核轨迹；
 //	    用户作为 reviewer 被删时同样不抹除——只删 UID 字段对应的请求体）
+//
 // 漏一处会留下"幽灵关联"：例如设备指纹被旧 UID 占住，新建同名用户登录
 // 时会被错误识别为"老设备已信任"。这条函数是用户生命周期的最终清算点。
 func (s *Store) DeleteUser(uid int64) error {

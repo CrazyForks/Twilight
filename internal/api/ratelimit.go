@@ -3,9 +3,11 @@ package api
 import (
 	"context"
 	"fmt"
-	"go.uber.org/zap"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"go.uber.org/zap"
 
 	"github.com/prejudice-studio/twilight/internal/redis"
 )
@@ -16,6 +18,11 @@ type rateLimiter struct {
 	redis       *redis.Client
 	prefix      string
 	lastCleanup time.Time
+
+	// redis 失败回退到内存桶时累加，运维通过 /system/stats 观察是否进入降级。
+	// 任何非 nil err（连接断开、超时、命令拒绝）都计入；命中后 fallbackCount
+	// 持续递增意味着 redis 已不可用，登录限流退化为单进程内存桶。
+	fallbackCount atomic.Int64
 }
 
 type rateBucket struct {
@@ -41,6 +48,7 @@ func (r *rateLimiter) Allow(ctx context.Context, key string, limit int, window t
 		if err == nil {
 			return count <= int64(limit)
 		}
+		r.fallbackCount.Add(1)
 		zap.L().Warn("redis rate limit failed; falling back to memory", zap.Error(err))
 	}
 	now := time.Now()
@@ -68,4 +76,14 @@ func (r *rateLimiter) Allow(ctx context.Context, key string, limit int, window t
 
 func rateKey(parts ...any) string {
 	return fmt.Sprint(parts...)
+}
+
+// FallbackCount 报告自启动以来 redis 限流失败回退到内存桶的累计次数。
+// 仅观察用：值持续增长说明 redis 实例失联或被熔断，多副本部署会出现"每副本
+// 各自一份内存桶"的降级，限流上限实际被放大 N 倍。
+func (r *rateLimiter) FallbackCount() int64 {
+	if r == nil {
+		return 0
+	}
+	return r.fallbackCount.Load()
 }
