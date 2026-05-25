@@ -117,10 +117,10 @@ func sanitizeBackgroundCSSValue(value string) (string, error) {
 		return "", nil
 	}
 	if len(value) > 2000 || strings.ContainsAny(value, "\x00\r\n<>;{}") || strings.Contains(strings.ToLower(value), "url(") || strings.Contains(value, "@") {
-		return "", fmt.Errorf("鑳屾櫙 CSS 鍙厑璁稿畨鍏ㄦ笎鍙樿〃杈惧紡")
+		return "", fmt.Errorf("背景 CSS 只允许安全的渐变表达式")
 	}
 	if !backgroundGradientPattern.MatchString(value) {
-		return "", fmt.Errorf("鑳屾櫙 CSS 鍙厑璁?linear/radial/conic gradient")
+		return "", fmt.Errorf("背景 CSS 只允许 linear/radial/conic gradient")
 	}
 	return value, nil
 }

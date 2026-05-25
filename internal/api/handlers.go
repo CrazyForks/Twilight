@@ -1211,6 +1211,30 @@ func (a *App) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request, para
 			}
 		}
 	}
+	// active 字段必须走 SetUserActiveAtomic：直接在 UpdateUser 闭包里
+	// 写 u.Active = false 会绕过 last-admin 守卫，最后一名 active admin 会被
+	// 任何带 active=false 的 PATCH 静默禁用，等价于 self-disable 自残。
+	currentUID := current(r).User.UID
+	hasActive := false
+	desiredActive := true
+	if raw, ok := payload["active"]; ok {
+		hasActive = true
+		switch v := raw.(type) {
+		case bool:
+			desiredActive = v
+		case string:
+			desiredActive = strings.EqualFold(strings.TrimSpace(v), "true")
+		case float64:
+			desiredActive = v != 0
+		default:
+			failWithCode(w, http.StatusBadRequest, ErrBadRequest, "active 取值非法")
+			return
+		}
+		if !desiredActive && uid == currentUID {
+			failWithCode(w, http.StatusForbidden, ErrUserProtected, "无法禁用自己的账号")
+			return
+		}
+	}
 	// role 写入走 store.SetUserRoleAtomic：在同一把锁里做"读取目标当前 role +
 	// 计数 active admin + 写入"，避免两个 admin 并发降级两个不同 admin 时
 	// 同时通过 last-admin 校验导致 0 admin。其它字段再走 UpdateUser 闭包。
@@ -1225,15 +1249,23 @@ func (a *App) handleAdminUpdateUser(w http.ResponseWriter, r *http.Request, para
 			}
 		}
 	}
+	if hasActive {
+		if _, err := a.store.SetUserActiveAtomic(uid, desiredActive); err != nil {
+			if errors.Is(err, store.ErrLastAdmin) {
+				failWithCode(w, http.StatusConflict, ErrAdminLastAdminProtected, "无法禁用最后一个管理员，系统至少需要一个管理员")
+				return
+			}
+			if statusFromError(w, err) {
+				return
+			}
+		}
+	}
 	u, err := a.store.UpdateUser(uid, func(u *store.User) error {
 		if username := stringValue(payload, "username"); username != "" {
 			u.Username = username
 		}
 		if email := stringValue(payload, "email"); email != "" {
 			u.Email = email
-		}
-		if _, ok := payload["active"]; ok {
-			u.Active = boolValue(payload, "active", u.Active)
 		}
 		return nil
 	})
