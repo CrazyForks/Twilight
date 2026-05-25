@@ -410,7 +410,12 @@ func (a *App) reloadConfigIfChanged() {
 		return
 	}
 	a.runtimeMu.Unlock()
-	zap.L().Info("config file change applied", zap.Any("reload", info))
+	// 与 scheduler_daemon.go / telegram_bot.go 对齐：日志值统一走
+	// redactSensitiveText 而非 zap.Any 反射 dump。当前 info 仅包含元数据
+	// （reloaded / reinitialized 等），但任何未来加进来的字段（如 emby_url
+	// / database_url 摘要）一旦上线就会沿用同一条日志路径，提前把敏感
+	// 字段拦在 redact 这一步比逐 PR 审查每个新字段稳妥。
+	zap.L().Info("config file change applied", zap.String("reload", redactSensitiveText(fmt.Sprintf("%+v", info))))
 }
 
 func configFileSignature(path string) string {
