@@ -1316,9 +1316,18 @@ func WriteFileAtomicSync(path string, data []byte, perm os.FileMode) error {
 // 关闭后 rename，再 fsync 父目录。任一步失败清理 tmp 后返回 error。
 // saveLocked / BackupWithNote / writeBackupNote / 数据库迁移文件状态写盘
 // 共用此 helper，避免每个调用点单独维护一份持久化语义。
+//
+// tmp 用 unix.O_NOFOLLOW + O_EXCL 打开，杜绝 TOCTOU symlink 攻击：攻击者
+// 若把 path.tmp 提前换成指向其它文件的 symlink，O_NOFOLLOW 会让 OpenFile
+// 返回 ELOOP 而不是顺着链写穿；O_EXCL 阻止覆写已经存在的 .tmp 残留。
+// 父目录 dir.Sync 错误同样需要回报：之前 dir.Sync 错误被静默吞掉，rename
+// 已经走完但元数据未落盘，断电后 path 又指回 tmp 残留。
 func writeFileAtomicSync(path string, data []byte, perm os.FileMode) error {
 	tmp := path + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	// 先把可能残留的 tmp 干掉。OpenFile 带 O_EXCL 时若 tmp 已存在会直接失败；
+	// 旧调用未走 fsync 也可能留下半字节 tmp，这里清掉再开。
+	_ = os.Remove(tmp)
+	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL|fsNoFollow, perm)
 	if err != nil {
 		return err
 	}
@@ -1342,7 +1351,12 @@ func writeFileAtomicSync(path string, data []byte, perm os.FileMode) error {
 	}
 	_ = os.Chmod(path, perm)
 	if dir, dirErr := os.Open(filepath.Dir(path)); dirErr == nil {
-		_ = dir.Sync()
+		// dir.Sync 失败仅 zap.Warn 一下：rename 已经成功，重启后能从 path
+		// 找到新内容；只是父目录元数据未必持久化，断电恢复时 path 可能短
+		// 暂"消失"。多数 fs 上不会真的发生，但记录下便于 ops 排障。
+		if syncErr := dir.Sync(); syncErr != nil {
+			zap.L().Warn("atomic write parent dir sync failed", zap.String("path", path), zap.Error(syncErr))
+		}
 		_ = dir.Close()
 	}
 	return nil

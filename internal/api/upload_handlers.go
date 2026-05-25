@@ -264,7 +264,11 @@ func (a *App) handleUpload(w http.ResponseWriter, r *http.Request, kind string) 
 		failWithCode(w, http.StatusInternalServerError, ErrUploadDirInvalid, "上传目录无效")
 		return
 	}
-	if err := os.WriteFile(target, data, 0o600); err != nil {
+	// 走 store.WriteFileAtomicSync：tmp 写盘 + fsync + rename + dir.Sync，
+	// 避免上传途中崩溃在 target 留下 0 字节或半字节文件；同时 tmp 用
+	// O_NOFOLLOW|O_EXCL 打开，挡住"攻击者把 target.tmp 提前换成 symlink"
+	// 的 TOCTOU 路径。
+	if err := store.WriteFileAtomicSync(target, data, 0o600); err != nil {
 		failWithCode(w, http.StatusInternalServerError, ErrUploadSaveFailed, "保存文件失败")
 		return
 	}
@@ -379,7 +383,9 @@ func (a *App) handleUploadServerIcon(w http.ResponseWriter, r *http.Request, _ P
 		failWithCode(w, http.StatusInternalServerError, ErrUploadDirCreateFailed, "创建上传目录失败")
 		return
 	}
-	if err := os.WriteFile(filePath, data, 0o600); err != nil {
+	// 同 handleUploadAvatarOrBackground：用 store.WriteFileAtomicSync 而不是
+	// 裸 os.WriteFile，避免崩溃留半字节 server-icon 文件 + 关掉 symlink TOCTOU。
+	if err := store.WriteFileAtomicSync(filePath, data, 0o600); err != nil {
 		failWithCode(w, http.StatusInternalServerError, ErrUploadSaveFailed, "保存文件失败")
 		return
 	}
