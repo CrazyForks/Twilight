@@ -4,7 +4,22 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"sync/atomic"
 	"time"
+)
+
+// pgRuntimeLogPruneEvery 控制 PG 后端 runtime log 的 prune 节奏：
+// 旧实现是每条 INSERT 后立即跑一次 `DELETE … WHERE id NOT IN (SELECT … LIMIT N)`
+// 全表反向扫描，busy 期间会反向卡住所有 zap 调用方。改成每 N 条触发一次
+// 后台 prune（异步、带自身 ctx），写入路径只做 INSERT。
+const pgRuntimeLogPruneEvery = 256
+
+// pgRuntimeLogPruneCounter 用 atomic 共享自增计数；触发阈值时跳一次
+// goroutine 异步 prune。pruneInFlight 互斥锁防止多 goroutine 同时跑同一个
+// DELETE，避免在 burst 时叠加成 N 个并发全表扫描。
+var (
+	pgRuntimeLogPruneCounter atomic.Uint64
+	pgRuntimeLogPruneGate    atomic.Bool
 )
 
 func (s *Store) AddRuntimeLog(entry RuntimeLogEntry, limit int) (RuntimeLogEntry, error) {
@@ -33,7 +48,7 @@ func (s *Store) AddRuntimeLog(entry RuntimeLogEntry, limit int) (RuntimeLogEntry
 			return entry, err
 		}
 		entry.ID = id
-		_ = s.PruneRuntimeLogs(limit)
+		s.maybeAsyncPrunePGRuntimeLogs(limit)
 		return entry, nil
 	}
 	s.mu.Lock()
@@ -54,6 +69,35 @@ func (s *Store) AddRuntimeLog(entry RuntimeLogEntry, limit int) (RuntimeLogEntry
 		s.state.RuntimeLogs = s.state.RuntimeLogs[:limit]
 	}
 	return entry, s.saveLocked()
+}
+
+// maybeAsyncPrunePGRuntimeLogs 每 pgRuntimeLogPruneEvery 条 INSERT 触发一次
+// 后台 prune；写入路径不再阻塞在 DELETE 上。pgRuntimeLogPruneGate 保证同一
+// 时刻只有一个 prune goroutine 在跑，避免 burst 时叠加并发全表 DELETE。
+func (s *Store) maybeAsyncPrunePGRuntimeLogs(limit int) {
+	if s == nil || s.db == nil {
+		return
+	}
+	if pgRuntimeLogPruneCounter.Add(1)%pgRuntimeLogPruneEvery != 0 {
+		return
+	}
+	if !pgRuntimeLogPruneGate.CompareAndSwap(false, true) {
+		return
+	}
+	go func() {
+		defer pgRuntimeLogPruneGate.Store(false)
+		defer func() {
+			// 异步 goroutine 入口加 recover：prune SQL 异常不能反向拖垮调用 zap.Info 的协程。
+			_ = recover()
+		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_, _ = s.db.ExecContext(ctx, `
+DELETE FROM twilight_runtime_logs
+WHERE id NOT IN (
+	SELECT id FROM twilight_runtime_logs ORDER BY id DESC LIMIT $1
+)`, clampRuntimeLogLimit(limit))
+	}()
 }
 
 func (s *Store) RuntimeLogs(limit int, after int64) ([]RuntimeLogEntry, int64) {
