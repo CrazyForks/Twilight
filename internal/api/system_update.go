@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 var gitBranchPattern = regexp.MustCompile(`^[A-Za-z0-9._/-]{1,128}$`)
@@ -313,13 +315,36 @@ func scheduleSystemdRestart(services []string) (bool, string) {
 	if commandExists("systemd-run") {
 		unit := "twilight-delayed-restart-" + strconv.FormatInt(time.Now().Unix(), 10)
 		runArgs := append([]string{"--unit", unit, "--on-active=2", "--collect", "systemctl"}, args...)
-		if err := exec.Command("systemd-run", runArgs...).Start(); err == nil {
+		// systemd-run 失败时之前直接 fall through 到 background goroutine 路径，
+		// 但 Start() 错误不被记录——admin 看到 "restart_method=background-systemctl"
+		// 但永远不知道 systemd-run 其实失败了。出错时 zap.Warn 一次方便排障。
+		cmd := exec.Command("systemd-run", runArgs...)
+		if err := cmd.Start(); err == nil {
+			// 释放子进程资源；不 Wait 是因为 systemd-run 自身就立刻 fork 出
+			// transient unit 然后退出，但 Go runtime 仍需要 Wait 才能清理 PID。
+			// 走 detached goroutine 拿到 exit code，失败时记日志。
+			go func() {
+				if err := cmd.Wait(); err != nil {
+					zap.L().Warn("systemd-run exited with error", zap.Error(err), zap.Strings("services", services))
+				}
+			}()
 			return true, "systemd-run"
+		} else {
+			zap.L().Warn("systemd-run start failed; falling back to background systemctl", zap.Error(err))
 		}
 	}
+	// fallback：起一个 detached goroutine 等 1.5s 后调 systemctl，让 HTTP 响应
+	// 先 flush 出去再触发服务重启；用 CombinedOutput 替换原来的 .Start() 以便
+	// 把 systemctl 失败原因落到日志（systemctl 退出非零 = unit 名错误 / unit
+	// 启动失败 / 权限问题），之前 .Start() 只关心 fork/exec，运行时错误全部
+	// 静默吞掉，admin 只看到"restart_scheduled=true"但服务没真起来。
 	go func() {
 		time.Sleep(1500 * time.Millisecond)
-		_ = exec.Command("systemctl", args...).Start()
+		cmd := exec.Command("systemctl", args...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			zap.L().Warn("background systemctl restart failed", zap.Error(err), zap.String("output", redactSensitiveText(string(out))), zap.Strings("services", services))
+		}
 	}()
 	return true, "background-systemctl"
 }
