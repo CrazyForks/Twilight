@@ -206,13 +206,49 @@ func (a *App) handleUpload(w http.ResponseWriter, r *http.Request, kind string) 
 		failWithCode(w, http.StatusBadRequest, ErrUploadTypeNotAllowed, "only image uploads are allowed")
 		return
 	}
+	// 背景上传额外解析 type=light|dark 区分浅深色：前端 multipart 一直在传，
+	// 但旧 handler 只把 url 写到 user.Background 单字段，深色立刻覆盖浅色。
+	bgVariant := ""
+	if kind == "background" {
+		switch strings.ToLower(strings.TrimSpace(r.FormValue("type"))) {
+		case "light":
+			bgVariant = "light"
+		case "dark":
+			bgVariant = "dark"
+		}
+	}
 	filename := randomCode(16) + ext
-	dir := filepath.Join(a.cfg.UploadDir, kind)
+	// 写盘必须强制走 ResolveWithinRoot：UploadDir 来自管理员可改的配置项，
+	// 配置成 "../etc"、相对路径、或父目录是符号链接时，原先的 filepath.Join
+	// 会让写入落到根目录之外。这里用 ResolveLeafFile 覆盖不到（kind 子目录），
+	// 所以拆成两段：先 ResolveWithinRoot 出 kind 目录，再校验文件名只允许
+	// uploadFilenamePattern。
+	uploadRoot := firstNonEmpty(a.cfg.UploadDir, "uploads")
+	dir, err := ResolveWithinRoot(uploadRoot, kind)
+	if err != nil {
+		failWithCode(w, http.StatusInternalServerError, ErrUploadDirInvalid, "上传目录无效")
+		return
+	}
+	if !uploadFilenamePattern.MatchString(filename) {
+		failWithCode(w, http.StatusInternalServerError, ErrUploadSaveFailed, "保存文件失败")
+		return
+	}
+	target, err := ResolveWithinRoot(dir, filename)
+	if err != nil {
+		failWithCode(w, http.StatusInternalServerError, ErrUploadDirInvalid, "上传目录无效")
+		return
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		failWithCode(w, http.StatusInternalServerError, ErrUploadDirCreateFailed, "创建上传目录失败")
 		return
 	}
-	if err := os.WriteFile(filepath.Join(dir, filename), data, 0o600); err != nil {
+	// 起始期再 lstat 一次：MkdirAll 后如果有人 race 把目录换成 symlink，
+	// 我们仍然要拒掉。Lstat 不跟随 symlink，方便检测。
+	if info, lerr := os.Lstat(dir); lerr != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		failWithCode(w, http.StatusInternalServerError, ErrUploadDirInvalid, "上传目录无效")
+		return
+	}
+	if err := os.WriteFile(target, data, 0o600); err != nil {
 		failWithCode(w, http.StatusInternalServerError, ErrUploadSaveFailed, "保存文件失败")
 		return
 	}
@@ -221,12 +257,14 @@ func (a *App) handleUpload(w http.ResponseWriter, r *http.Request, kind string) 
 	if _, err := a.store.UpdateUser(p.User.UID, func(u *store.User) error {
 		if kind == "avatar" {
 			u.Avatar = url
-		} else {
-			u.Background = url
+			return nil
 		}
+		// 背景：把现有 JSON 配置 patch 一下；type=light/dark 时只更新对应字段，
+		// 其它情况按旧行为兜底（双端写同一张图）。
+		u.Background = mergeBackgroundImage(u.Background, url, bgVariant)
 		return nil
 	}); err != nil {
-		_ = os.Remove(filepath.Join(dir, filename))
+		_ = os.Remove(target)
 		if statusFromError(w, err) {
 			return
 		}
@@ -236,7 +274,35 @@ func (a *App) handleUpload(w http.ResponseWriter, r *http.Request, kind string) 
 		ok(w, "上传成功", map[string]any{"avatar_url": url, "url": url, "filename": filename})
 		return
 	}
-	ok(w, "上传成功", map[string]any{"url": url, "type": kind, "filename": filename})
+	ok(w, "上传成功", map[string]any{"url": url, "type": firstNonEmpty(bgVariant, kind), "filename": filename})
+}
+
+// mergeBackgroundImage 把新上传的背景 url 合并到现有 user.Background JSON 配置。
+// variant=light/dark 时只覆盖对应字段，保留另一面以及渐变 / 透明度等设置；其它
+// 情况下回退为同时覆盖 light/dark，兼容旧客户端不带 type 的请求。
+func mergeBackgroundImage(existing, url, variant string) string {
+	cfg := map[string]any{}
+	if existing != "" {
+		_ = json.Unmarshal([]byte(existing), &cfg)
+	}
+	wrapped := `url("` + url + `")`
+	switch variant {
+	case "light":
+		cfg["lightBgImage"] = wrapped
+	case "dark":
+		cfg["darkBgImage"] = wrapped
+	default:
+		cfg["lightBgImage"] = wrapped
+		cfg["darkBgImage"] = wrapped
+	}
+	// 默认值兜底，避免新建 cfg 时缺字段把前端解析挂掉。
+	if _, ok := cfg["lightBg"]; !ok {
+		cfg["lightBg"] = ""
+	}
+	if _, ok := cfg["darkBg"]; !ok {
+		cfg["darkBg"] = ""
+	}
+	return mustJSON(cfg)
 }
 
 func uploadImageExtension(contentType string) (string, bool) {
