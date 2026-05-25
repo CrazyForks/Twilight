@@ -27,15 +27,55 @@ const nextConfig = {
     ];
   },
   async headers() {
+    // 开发模式下 Next.js 需要 eval（HMR / React refresh）；
+    // 生产构建禁掉 unsafe-eval，让脚本只信任 self + 内联占位（Next 静态注入）。
+    const isDev = process.env.NODE_ENV !== 'production';
+    const scriptSrc = isDev
+      ? "'self' 'unsafe-inline' 'unsafe-eval'"
+      : "'self' 'unsafe-inline'";
+
+    // CSP：默认拒绝外发，按需放行：
+    //   - img/font 允许 data:/blob:，背景图允许 https: 外链；
+    //   - connect-src 'self' 仅信任同源 API；如要把 API 部到独立域，
+    //     在部署时通过 NEXT_PUBLIC_CSP_CONNECT 追加。
+    //   - frame-ancestors 'none' 与 X-Frame-Options DENY 双重防点击劫持。
+    //   - upgrade-insecure-requests 让混入的 http://… 自动升 https。
+    const extraConnect = process.env.NEXT_PUBLIC_CSP_CONNECT?.trim();
+    const connectSrc = extraConnect ? `'self' ${extraConnect}` : "'self'";
+    const csp = [
+      "default-src 'self'",
+      `script-src ${scriptSrc}`,
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https:",
+      "font-src 'self' data:",
+      `connect-src ${connectSrc}`,
+      "media-src 'self' https:",
+      "frame-ancestors 'none'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "worker-src 'self' blob:",
+      "manifest-src 'self'",
+      'upgrade-insecure-requests',
+    ].join('; ');
+
+    const securityHeaders = [
+      { key: 'X-Content-Type-Options', value: 'nosniff' },
+      { key: 'X-Frame-Options', value: 'DENY' },
+      { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+      { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+      { key: 'Content-Security-Policy', value: csp },
+      // HSTS: 一年；浏览器仅在 HTTPS 响应里读取该头，HTTP 下静默忽略，
+      // 故对本地 dev 也安全发出；preload 暂不启用，避免提交错误后难以撤回。
+      { key: 'Strict-Transport-Security', value: 'max-age=31536000; includeSubDomains' },
+      { key: 'Cross-Origin-Opener-Policy', value: 'same-origin' },
+      { key: 'Cross-Origin-Resource-Policy', value: 'same-origin' },
+    ];
+
     return [
       {
         source: '/:path*',
-        headers: [
-          { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'X-Frame-Options', value: 'DENY' },
-          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
-        ],
+        headers: securityHeaders,
       },
     ];
   },
