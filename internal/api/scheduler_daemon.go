@@ -372,5 +372,14 @@ func (a *App) terminateSchedulerJob(jobID string) bool {
 		return false
 	}
 	run.cancel()
+	// 立即把 jobID 从注册表里摘掉。原实现只 cancel，依赖 runSchedulerJob 自己
+	// 的 finish() 闭包在 deferred 里 Delete；但被取消的任务若卡在不响应 ctx
+	// 的远端调用（emby 慢响应、git pull 远端无应答、Bangumi 5xx 无超时），
+	// finish() 永不执行，下一次 admin 点"重跑"被 LoadOrStore 短路成 not started。
+	// finish() 的 `current == run` 守卫保证：旧 goroutine 若日后真的醒来，
+	// 不会误删新一轮起的同名任务。
+	if current, ok := schedulerProcessLocks.Load(jobID); ok && current == run {
+		schedulerProcessLocks.Delete(jobID)
+	}
 	return true
 }
