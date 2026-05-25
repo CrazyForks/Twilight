@@ -91,6 +91,11 @@ export const useSystemStore = create<SystemStore>((set, get) => ({
           });
           return { success: true };
         }
+        // 后端 200 但 envelope.success=false 的极少数路径：把缓存清空。
+        // 此前若 admin 已改 csrf_cookie_name 但第二次 fetchInfo 失败，
+        // 缓存仍指向旧名，所有 mutating 请求会因 X-CSRF-Token 缺失被 403。
+        // 让 readCSRFCookie() 退回 "*_csrf 后缀启发式"，至少能跑过去。
+        setCsrfCookieName(null);
         const failure: SystemFetchResult = {
           success: false,
           errorCode: res.error_code,
@@ -101,6 +106,9 @@ export const useSystemStore = create<SystemStore>((set, get) => ({
         // ApiError 由 lib/api-request.ts 抛出，携带 errorCode/backendMessage；
         // 网络错误（fetch 抛 TypeError）则没有 errorCode。
         const apiErr = err as { errorCode?: string } | null;
+        // 同上：异常路径也要让 csrf cookie 名缓存失效，避免 admin 改名后
+        // 因为新一次 fetchInfo 网络失败导致前端永远用旧名匹配 cookie。
+        setCsrfCookieName(null);
         const failure: SystemFetchResult = {
           success: false,
           errorCode: apiErr?.errorCode,
