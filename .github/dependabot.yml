@@ -64,6 +64,15 @@ updates:
       - dependency-name: "react-dom"
         update-types:
           - "version-update:semver-major"
+      # eslint v9 起强制 flat config（eslint.config.js），并且 eslint-config-next
+      # 跟着 Next 主线大版本同步跳号。这两个 major 升级需要重写 lint 配置 +
+      # 验证 next 自带规则集，不适合走自动合，先 ignore，需要时单独 PR。
+      - dependency-name: "eslint"
+        update-types:
+          - "version-update:semver-major"
+      - dependency-name: "eslint-config-next"
+        update-types:
+          - "version-update:semver-major"
 
   # GitHub Actions
   - package-ecosystem: github-actions
