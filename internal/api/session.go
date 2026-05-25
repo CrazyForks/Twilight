@@ -49,12 +49,18 @@ func newSessionStoreWithDB(ttl time.Duration, redisClient *redis.Client, st *sto
 // restoreFromPostgres loads valid sessions from PostgreSQL.
 // When Redis is available, it re-populates Redis with any sessions that survived
 // a Redis restart. When Redis is unavailable, sessions are loaded into memory.
+//
+// 启动期没有 caller ctx，这里用显式 30s WithTimeout 兜底，避免 PG 慢响应让
+// newSessionStoreWithDB 阻塞整个启动流程；之前裸 context.Background() 一旦
+// PG 卡住会让 App.New 卡死。
 func (s *sessionStore) restoreFromPostgres(db *sql.DB) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	now := time.Now().Unix()
 	// Purge expired sessions
-	_, _ = db.ExecContext(context.Background(), `DELETE FROM twilight_sessions WHERE expires_at <= $1`, now)
+	_, _ = db.ExecContext(ctx, `DELETE FROM twilight_sessions WHERE expires_at <= $1`, now)
 
-	rows, err := db.QueryContext(context.Background(), `SELECT token, uid, expires_at FROM twilight_sessions WHERE expires_at > $1`, now)
+	rows, err := db.QueryContext(ctx, `SELECT token, uid, expires_at FROM twilight_sessions WHERE expires_at > $1`, now)
 	if err != nil {
 		zap.L().Warn("failed to load sessions from PostgreSQL", zap.Error(err))
 		return
@@ -76,7 +82,7 @@ func (s *sessionStore) restoreFromPostgres(db *sql.DB) {
 			remainTTL := record.ExpiresAt - now
 			if remainTTL > 0 {
 				payload, _ := json.Marshal(record)
-				if err := s.redis.SetEX(context.Background(), s.prefix+token, int(remainTTL), string(payload)); err == nil {
+				if err := s.redis.SetEX(ctx, s.prefix+token, int(remainTTL), string(payload)); err == nil {
 					restoredToRedis++
 					continue
 				}
@@ -129,16 +135,16 @@ func (s *sessionStore) Create(ctx context.Context, uid int64) (string, time.Time
 	}
 
 	// Always persist to PostgreSQL for durability (survives both Redis and process restart)
-	s.persistToPostgres(token, record)
+	s.persistToPostgres(ctx, token, record)
 	return token, expires, nil
 }
 
-func (s *sessionStore) persistToPostgres(token string, record sessionRecord) {
+func (s *sessionStore) persistToPostgres(ctx context.Context, token string, record sessionRecord) {
 	db := s.pgDB()
 	if db == nil {
 		return
 	}
-	_, err := db.ExecContext(context.Background(),
+	_, err := db.ExecContext(ctx,
 		`INSERT INTO twilight_sessions (token, uid, expires_at) VALUES ($1, $2, $3)
 		 ON CONFLICT (token) DO UPDATE SET uid = EXCLUDED.uid, expires_at = EXCLUDED.expires_at`,
 		token, record.UID, record.ExpiresAt)
@@ -219,7 +225,7 @@ func (s *sessionStore) Delete(ctx context.Context, token string) {
 	delete(s.items, token)
 	s.mu.Unlock()
 	if db := s.pgDB(); db != nil {
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM twilight_sessions WHERE token = $1`, token)
+		_, _ = db.ExecContext(ctx, `DELETE FROM twilight_sessions WHERE token = $1`, token)
 	}
 }
 
@@ -240,7 +246,7 @@ func (s *sessionStore) DeleteUser(ctx context.Context, uid int64) {
 	if db := s.pgDB(); db != nil {
 		if s.redis != nil {
 			// Fetch tokens before deleting so we can remove from Redis
-			rows, err := db.QueryContext(context.Background(),
+			rows, err := db.QueryContext(ctx,
 				`SELECT token FROM twilight_sessions WHERE uid = $1`, uid)
 			if err == nil {
 				for rows.Next() {
@@ -252,12 +258,15 @@ func (s *sessionStore) DeleteUser(ctx context.Context, uid int64) {
 				rows.Close()
 			}
 		}
-		_, _ = db.ExecContext(context.Background(), `DELETE FROM twilight_sessions WHERE uid = $1`, uid)
+		_, _ = db.ExecContext(ctx, `DELETE FROM twilight_sessions WHERE uid = $1`, uid)
 	}
 }
 
 // CleanupExpired removes expired sessions from all layers.
-func (s *sessionStore) CleanupExpired() int {
+//
+// 接受 caller ctx：scheduler 已提供 runCtx，被 admin 终止时能立刻取消。
+// 不接 ctx 的旧版本若 PG DELETE 卡住，scheduler 永远等不到 finish()。
+func (s *sessionStore) CleanupExpired(ctx context.Context) int {
 	now := time.Now().Unix()
 	removed := 0
 
@@ -273,7 +282,7 @@ func (s *sessionStore) CleanupExpired() int {
 
 	// Clean PostgreSQL (Redis handles TTL expiry automatically)
 	if db := s.pgDB(); db != nil {
-		result, _ := db.ExecContext(context.Background(), `DELETE FROM twilight_sessions WHERE expires_at <= $1`, now)
+		result, _ := db.ExecContext(ctx, `DELETE FROM twilight_sessions WHERE expires_at <= $1`, now)
 		if result != nil {
 			if n, err := result.RowsAffected(); err == nil && n > 0 {
 				removed = int(n) // PG count is more accurate
@@ -284,10 +293,13 @@ func (s *sessionStore) CleanupExpired() int {
 }
 
 // ActiveCount returns the number of active sessions across all layers.
-func (s *sessionStore) ActiveCount() int {
+//
+// 接受 caller ctx，避免在 system_stats 等监控请求里被卡死的 PG count(*) 拖
+// 累整个 handler 超时。调用方可用 r.Context() 或 WithTimeout 兜底。
+func (s *sessionStore) ActiveCount(ctx context.Context) int {
 	if db := s.pgDB(); db != nil {
 		var count int
-		if err := db.QueryRowContext(context.Background(),
+		if err := db.QueryRowContext(ctx,
 			`SELECT count(*) FROM twilight_sessions WHERE expires_at > $1`,
 			time.Now().Unix()).Scan(&count); err == nil {
 			return count

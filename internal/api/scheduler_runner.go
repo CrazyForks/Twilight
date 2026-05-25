@@ -134,7 +134,7 @@ func (a *App) runSchedulerJob(r *http.Request, jobID string) (map[string]any, []
 			return map[string]any{"success": false, "deleted": deleted}, []string{fmt.Sprintf("failed to delete expired bind codes: %v", err)}, err
 		}
 		// Also clean up expired app sessions from memory and PostgreSQL
-		expiredSessions := a.sessions().CleanupExpired()
+		expiredSessions := a.sessions().CleanupExpired(r.Context())
 		logs := []string{fmt.Sprintf("deleted %d expired bind codes", deleted)}
 		if expiredSessions > 0 {
 			logs = append(logs, fmt.Sprintf("cleaned up %d expired sessions", expiredSessions))
