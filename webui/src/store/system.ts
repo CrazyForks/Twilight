@@ -16,6 +16,19 @@ export interface SystemFetchResult {
   networkError?: boolean;
 }
 
+/**
+ * SystemInfo TTL（毫秒）。loaded=true 之后默认 5 分钟内复用缓存；
+ * 超过 TTL 的下一次 fetchInfo() 会自动重新拉取。
+ *
+ * 背景：admin 在 /admin/config 修改 csrf_cookie_name 后，其他已打开的标签页
+ * 还在用旧 cookie 名读 token，POST 请求会被后端 CSRF 校验拒掉。原本 loaded
+ * 一旦 true 就再也不会重拉，这些标签会一直坏到手动刷新。这里给一个上限。
+ *
+ * 主动失效路径走 invalidate()（admin 保存配置 / 上传 server-icon 后调用），
+ * TTL 仅作为兜底，避免 admin 忘了调 invalidate 的场景。
+ */
+const SYSTEM_INFO_TTL_MS = 5 * 60 * 1000;
+
 interface SystemStore {
   info: SystemInfo | null;
   loaded: boolean;
@@ -24,15 +37,29 @@ interface SystemStore {
    * 区分 loaded（成功拉过一次）vs lastError（拉取过但失败），见 41.10 / batch 09。
    */
   lastError: SystemFetchResult | null;
+  /** 上次成功 fetch 的时间戳；TTL 过期后强制重拉 */
+  fetchedAt: number;
   fetchInfo: (force?: boolean) => Promise<SystemFetchResult>;
+  /**
+   * 主动失效：admin 修改可能影响 systemInfo（特别是 csrf_cookie_name、
+   * server_icon、registration_enabled 等公开字段）的设置后调用。
+   * 不直接 fetch，下一次 fetchInfo() 会重新走网络。
+   */
+  invalidate: () => void;
 }
 
 export const useSystemStore = create<SystemStore>((set, get) => ({
   info: null,
   loaded: false,
   lastError: null,
+  fetchedAt: 0,
+  invalidate: () => {
+    set({ loaded: false, fetchedAt: 0 });
+  },
   fetchInfo: async (force = false) => {
-    if (get().loaded && !force) {
+    const { loaded, fetchedAt } = get();
+    const fresh = loaded && Date.now() - fetchedAt < SYSTEM_INFO_TTL_MS;
+    if (fresh && !force) {
       return { success: true };
     }
     try {
@@ -42,7 +69,12 @@ export const useSystemStore = create<SystemStore>((set, get) => ({
         // 之后 readCSRFCookie() 会按精确名匹配，避免同域 / 父域第三方
         // 应用下发的其它 *_csrf cookie 把 token 取错。
         setCsrfCookieName(res.data.csrf_cookie_name ?? null);
-        set({ info: res.data, loaded: true, lastError: null });
+        set({
+          info: res.data,
+          loaded: true,
+          lastError: null,
+          fetchedAt: Date.now(),
+        });
         return { success: true };
       }
       const failure: SystemFetchResult = {

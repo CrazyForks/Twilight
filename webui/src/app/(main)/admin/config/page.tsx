@@ -1036,6 +1036,9 @@ export default function AdminConfigPage() {
         if (configContent) {
           await loadConfig();
         }
+        // 配置保存后强制刷新 systemInfo：本次修改可能轮换了 csrf_cookie_name
+        // 等公开字段，旧值缓存在 api-request 模块里会让后续 POST 取错 token。
+        await fetchSystemInfo(true);
         toast({
           title: "保存成功",
           description: "配置已热重载，调度器会自动刷新任务",
@@ -1073,6 +1076,9 @@ export default function AdminConfigPage() {
         setOriginalContent(configContent);
         setHasChanges(false);
         await loadSchema();
+        // 同 schema 路径：源文件保存可能改了 csrf_cookie_name / server_icon
+        // 等公开字段，systemInfo 缓存必须刷新一次。
+        await fetchSystemInfo(true);
         toast({
           title: "保存成功",
           description: "配置已热重载，调度器会自动刷新任务",
