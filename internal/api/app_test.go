@@ -2555,14 +2555,14 @@ func TestBatchUserDangerousActionsRequireConfirm(t *testing.T) {
 				t.Fatalf("status = %d body=%s", resp.Code, resp.Body.String())
 			}
 			body := resp.Body.String()
-			if !strings.Contains(body, tt.want) || !strings.Contains(body, `"error_code":"BAD_REQUEST"`) {
+			if !strings.Contains(body, tt.want) || !strings.Contains(body, `"error_code":"BATCH_CONFIRM_REQUIRED"`) {
 				t.Fatalf("missing confirm/error contract in body=%s", body)
 			}
 		})
 	}
 
 	resp := doJSONWithHeaders(app, http.MethodPost, "/api/v1/batch/users/enable", fmt.Sprintf(`{"confirm":%q}`, confirmBatchEnableUsers), cookies, headers)
-	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "uids required") || !strings.Contains(resp.Body.String(), `"error_code":"BAD_REQUEST"`) {
+	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), "uids required") || !strings.Contains(resp.Body.String(), `"error_code":"BATCH_UIDS_REQUIRED"`) {
 		t.Fatalf("missing uids contract, status=%d body=%s", resp.Code, resp.Body.String())
 	}
 }
@@ -2573,7 +2573,7 @@ func TestOtherDangerousActionsRequireConfirm(t *testing.T) {
 	headers := map[string]string{"X-Twilight-Client": "webui"}
 
 	resp := doJSONWithHeaders(app, http.MethodPost, "/api/v1/admin/violations/clear", `{}`, cookies, headers)
-	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), confirmClearViolations) || !strings.Contains(resp.Body.String(), `"error_code":"BAD_REQUEST"`) {
+	if resp.Code != http.StatusBadRequest || !strings.Contains(resp.Body.String(), confirmClearViolations) || !strings.Contains(resp.Body.String(), `"error_code":"VIOLATION_CONFIRM_REQUIRED"`) {
 		t.Fatalf("clear violations missing confirm status=%d body=%s", resp.Code, resp.Body.String())
 	}
 }

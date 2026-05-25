@@ -67,7 +67,7 @@ func (a *App) handleDemoMediaSearch(w http.ResponseWriter, r *http.Request, _ Pa
 func (a *App) handleDemoAction(w http.ResponseWriter, r *http.Request, params Params) {
 	setDemoHeaders(w)
 	if !a.limiter.Allow(r.Context(), rateKey("demo-action:", a.clientIP(r)), 60, time.Minute) {
-		fail(w, http.StatusTooManyRequests, "演示操作过于频繁")
+		failWithCode(w, http.StatusTooManyRequests, ErrDemoActionRateLimited, "演示操作过于频繁")
 		return
 	}
 	action := strings.TrimSpace(params["action_name"])
@@ -75,7 +75,7 @@ func (a *App) handleDemoAction(w http.ResponseWriter, r *http.Request, params Pa
 		action = "noop"
 	}
 	if !demoActionPattern.MatchString(action) || strings.ContainsAny(action, "/\\\x00\r\n\t") {
-		fail(w, http.StatusBadRequest, "演示操作名称无效")
+		failWithCode(w, http.StatusBadRequest, ErrDemoActionInvalid, "演示操作名称无效")
 		return
 	}
 	ok(w, "OK", map[string]any{"demo": true, "action": action, "mutated": false, "readonly": true, "simulated": true})

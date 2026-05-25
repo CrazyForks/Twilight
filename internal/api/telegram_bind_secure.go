@@ -42,7 +42,7 @@ func (a *App) handleBindConfirmSecure(w http.ResponseWriter, r *http.Request, _ 
 		failWithCode(w, http.StatusBadGateway, ErrTGBindGroupCheckFailed, "Telegram 加群/频道校验失败，请稍后重试")
 		return
 	} else if len(missing) > 0 {
-		failWithCode(w, http.StatusForbidden, ErrTGBindGroupMembershipMiss, "绑定前需要先加入指定 Telegram 群组/频道: "+strings.Join(missing, ", "))
+		failWithCode(w, http.StatusForbidden, ErrTGBindGroupMembershipRequired, "绑定前需要先加入指定 Telegram 群组/频道: "+strings.Join(missing, ", "))
 		return
 	}
 	bind.Confirmed = true

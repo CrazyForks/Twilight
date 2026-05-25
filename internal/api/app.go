@@ -495,22 +495,22 @@ func (a *App) authenticate(w http.ResponseWriter, r *http.Request, auth AuthLeve
 	if auth == AuthAPIKey {
 		p, ok := a.authenticateAPIKey(r)
 		if !ok {
-			fail(w, http.StatusUnauthorized, "API Key 无效")
+			failWithCode(w, http.StatusUnauthorized, ErrAPIKeyInvalid, "API Key 无效")
 			return nil, false
 		}
 		return p, true
 	}
 	p, ok := a.authenticateUser(r)
 	if !ok {
-		fail(w, http.StatusUnauthorized, "登录状态已失效，请重新登录")
+		failWithCode(w, http.StatusUnauthorized, ErrUnauthorized, "登录状态已失效，请重新登录")
 		return nil, false
 	}
 	if !p.User.Active {
-		fail(w, http.StatusForbidden, "账号已被禁用")
+		failWithCode(w, http.StatusForbidden, ErrAccountDisabled, "账号已被禁用")
 		return nil, false
 	}
 	if auth == AuthAdmin && p.User.Role != store.RoleAdmin {
-		fail(w, http.StatusForbidden, "需要管理员权限")
+		failWithCode(w, http.StatusForbidden, ErrForbidden, "需要管理员权限")
 		return nil, false
 	}
 	return p, true
@@ -1134,17 +1134,17 @@ func statusFromError(w http.ResponseWriter, err error) bool {
 		return false
 	}
 	if errors.Is(err, store.ErrNotFound) {
-		fail(w, http.StatusNotFound, "资源不存在")
+		failWithCode(w, http.StatusNotFound, ErrNotFound, "资源不存在")
 		return true
 	}
 	if errors.Is(err, store.ErrConflict) {
-		fail(w, http.StatusConflict, "资源已存在")
+		failWithCode(w, http.StatusConflict, ErrConflict, "资源已存在")
 		return true
 	}
 	if errors.Is(err, store.ErrExpired) {
-		fail(w, http.StatusBadRequest, "资源已过期")
+		failWithCode(w, http.StatusBadRequest, ErrBadRequest, "资源已过期")
 		return true
 	}
-	fail(w, http.StatusInternalServerError, "操作失败")
+	failWithCode(w, http.StatusInternalServerError, ErrInternal, "操作失败")
 	return true
 }

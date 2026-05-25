@@ -52,7 +52,7 @@ func (a *App) handleBatchRenewUsers(w http.ResponseWriter, r *http.Request, _ Pa
 	uids := int64Slice(payload["uids"])
 	days := intValue(payload, "days", 30)
 	if days <= 0 {
-		fail(w, http.StatusBadRequest, "days 必须大于 0")
+		failWithCode(w, http.StatusBadRequest, ErrBatchDaysInvalid, "days 必须大于 0")
 		return
 	}
 	result := batchResult(len(uids))
@@ -128,7 +128,7 @@ func (a *App) handleBatchUserLibraries(w http.ResponseWriter, r *http.Request, _
 	switch action {
 	case "set", "show", "hide", "enable_all", "disable_all":
 	default:
-		fail(w, http.StatusBadRequest, "unsupported library action")
+		failWithCode(w, http.StatusBadRequest, ErrBatchLibraryActionInvalid, "unsupported library action")
 		return
 	}
 	ids := stringSlice(payload["library_ids"])

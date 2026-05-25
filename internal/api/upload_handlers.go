@@ -310,7 +310,7 @@ func (a *App) handleUploadServerIcon(w http.ResponseWriter, r *http.Request, _ P
 	info, status, message := a.saveConfigContent(renderConfigTOML(values))
 	if status != http.StatusOK {
 		_ = os.Remove(filePath)
-		fail(w, status, message)
+		failWithCode(w, status, ErrConfigSaveFailed, message)
 		return
 	}
 	ok(w, "上传成功", map[string]any{

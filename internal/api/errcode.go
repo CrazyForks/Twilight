@@ -296,9 +296,31 @@ const (
 	ErrBatchTooManyTargets    ErrCode = "BATCH_TOO_MANY_TARGETS"
 
 	// === Telegram 内部绑定（telegram_bind_secure.go） ===
-	ErrTGBindCodeNotFound        ErrCode = "TG_BIND_CODE_NOT_FOUND"
-	ErrTGBindTGIDInvalid         ErrCode = "TG_BIND_TGID_INVALID"
-	ErrTGBindTargetTaken         ErrCode = "TG_BIND_TARGET_TAKEN"
-	ErrTGBindGroupCheckFailed    ErrCode = "TG_BIND_GROUP_CHECK_FAILED"
-	ErrTGBindGroupMembershipMiss ErrCode = "TG_BIND_GROUP_MEMBERSHIP_REQUIRED"
+	ErrTGBindCodeNotFound            ErrCode = "TG_BIND_CODE_NOT_FOUND"
+	ErrTGBindTGIDInvalid             ErrCode = "TG_BIND_TGID_INVALID"
+	ErrTGBindTargetTaken             ErrCode = "TG_BIND_TARGET_TAKEN"
+	ErrTGBindGroupCheckFailed        ErrCode = "TG_BIND_GROUP_CHECK_FAILED"
+	ErrTGBindGroupMembershipRequired ErrCode = "TG_BIND_GROUP_MEMBERSHIP_REQUIRED"
+
+	// === 鉴权中间件 / Emby 越权拦截（app.go authenticate / emby.go） ===
+	// 这一组覆盖原本散落在中间件里的几条裸 fail() 路径。前端拿到这些码即可
+	// 给出更精准引导：API Key 失效 → 重新生成；账号禁用 → 提示申诉；Emby
+	// admin 越权 → 提示联系系统管理员。
+	ErrEmbyAdminBlocked    ErrCode = "EMBY_ADMIN_BLOCKED"
+	ErrEmbyAdminRestricted ErrCode = "EMBY_ADMIN_RESTRICTED"
+
+	// === 批量 / 求片 / 演示 / 上传 / 运行时日志补码 ===
+	// 替换若干"裸 fail() + 中文 message"调用点，统一前端文案契约。
+	ErrBatchDaysInvalid              ErrCode = "BATCH_DAYS_INVALID"
+	ErrBatchLibraryActionInvalid     ErrCode = "BATCH_LIBRARY_ACTION_INVALID"
+	ErrRegcodeStorageMismatch        ErrCode = "REGCODE_STORAGE_MISMATCH"
+	ErrRuntimeLogStreamUnsupported   ErrCode = "RUNTIME_LOG_STREAM_UNSUPPORTED"
+	ErrDemoActionRateLimited         ErrCode = "DEMO_ACTION_RATE_LIMITED"
+	ErrDemoActionInvalid             ErrCode = "DEMO_ACTION_INVALID"
+	ErrConfigSaveFailed              ErrCode = "CONFIG_SAVE_FAILED"
+	ErrAPIKeyLoginRateLimited        ErrCode = "AUTH_APIKEY_LOGIN_RATE_LIMITED"
 )
+
+// ErrTGBindGroupMembershipMiss 是 ErrTGBindGroupMembershipRequired 的旧名。
+// 保留别名以维持下游 import 兼容；新代码请直接使用语义更清晰的命名。
+const ErrTGBindGroupMembershipMiss = ErrTGBindGroupMembershipRequired

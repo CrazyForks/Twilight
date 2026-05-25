@@ -108,7 +108,7 @@ func (a *App) requireNonEmbyAdmin(w http.ResponseWriter, r *http.Request, user s
 	if a.embyIsAdmin(r.Context(), user.EmbyID) {
 		zap.L().Warn("blocked sensitive operation for non-admin user with Emby admin account",
 			zap.Int64("uid", user.UID), zap.String("username", user.Username), zap.String("emby_id", user.EmbyID))
-		fail(w, http.StatusForbidden, "安全限制：您绑定的 Emby 账号具有管理员权限，但您不是系统管理员。为防止越权操作，已禁止此请求。请联系系统管理员。")
+		failWithCode(w, http.StatusForbidden, ErrEmbyAdminBlocked, "安全限制：您绑定的 Emby 账号具有管理员权限，但您不是系统管理员。为防止越权操作，已禁止此请求。请联系系统管理员。")
 		return true
 	}
 	return false
@@ -126,7 +126,7 @@ func (a *App) blockRestrictedEmbyAdmin(w http.ResponseWriter, r *http.Request, r
 	}
 	zap.L().Warn("blocked request for non-admin user bound to Emby administrator",
 		zap.Int64("uid", user.UID), zap.String("username", user.Username), zap.String("method", r.Method), zap.String("path", r.URL.Path))
-	fail(w, http.StatusForbidden, "安全限制：当前系统账号不是管理员，但绑定的 Emby 账号具有管理员权限。除查看账号状态和退出登录外，所有操作已被禁止，请联系系统管理员处理。")
+	failWithCode(w, http.StatusForbidden, ErrEmbyAdminRestricted, "安全限制：当前系统账号不是管理员，但绑定的 Emby 账号具有管理员权限。除查看账号状态和退出登录外，所有操作已被禁止，请联系系统管理员处理。")
 	return true
 }
 

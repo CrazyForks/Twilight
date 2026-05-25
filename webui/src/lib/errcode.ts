@@ -247,6 +247,18 @@ export type ErrCode =
   | "TG_BIND_TARGET_TAKEN"
   | "TG_BIND_GROUP_CHECK_FAILED"
   | "TG_BIND_GROUP_MEMBERSHIP_REQUIRED"
+  // === 鉴权中间件 / Emby 越权拦截 ===
+  | "EMBY_ADMIN_BLOCKED"
+  | "EMBY_ADMIN_RESTRICTED"
+  // === 批量 / 求片 / 演示 / 上传 / 运行时日志补码 ===
+  | "BATCH_DAYS_INVALID"
+  | "BATCH_LIBRARY_ACTION_INVALID"
+  | "REGCODE_STORAGE_MISMATCH"
+  | "RUNTIME_LOG_STREAM_UNSUPPORTED"
+  | "DEMO_ACTION_RATE_LIMITED"
+  | "DEMO_ACTION_INVALID"
+  | "CONFIG_SAVE_FAILED"
+  | "AUTH_APIKEY_LOGIN_RATE_LIMITED"
   // === defaultErrorCode 兜底（response.go HTTP status → 通用码） ===
   // 完整覆盖 response.go 全部 13 个 fallback 字面量，任何 isKnownErrCode
   // 命中失败都意味着 errcode.go 又增了新协议码。
@@ -496,6 +508,18 @@ export const ErrCodes = {
   TGBindTargetTaken: "TG_BIND_TARGET_TAKEN",
   TGBindGroupCheckFailed: "TG_BIND_GROUP_CHECK_FAILED",
   TGBindGroupMembershipRequired: "TG_BIND_GROUP_MEMBERSHIP_REQUIRED",
+  // 鉴权中间件 / Emby 越权拦截
+  EmbyAdminBlocked: "EMBY_ADMIN_BLOCKED",
+  EmbyAdminRestricted: "EMBY_ADMIN_RESTRICTED",
+  // 批量 / 求片 / 演示 / 上传 / 运行时日志补码
+  BatchDaysInvalid: "BATCH_DAYS_INVALID",
+  BatchLibraryActionInvalid: "BATCH_LIBRARY_ACTION_INVALID",
+  RegcodeStorageMismatch: "REGCODE_STORAGE_MISMATCH",
+  RuntimeLogStreamUnsupported: "RUNTIME_LOG_STREAM_UNSUPPORTED",
+  DemoActionRateLimited: "DEMO_ACTION_RATE_LIMITED",
+  DemoActionInvalid: "DEMO_ACTION_INVALID",
+  ConfigSaveFailed: "CONFIG_SAVE_FAILED",
+  APIKeyLoginRateLimited: "AUTH_APIKEY_LOGIN_RATE_LIMITED",
   BadRequest: "BAD_REQUEST",
   Unauthorized: "UNAUTHORIZED",
   Forbidden: "FORBIDDEN",

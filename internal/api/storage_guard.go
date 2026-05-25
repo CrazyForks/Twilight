@@ -31,7 +31,7 @@ func (a *App) rejectRegcodeWriteIfStorageMismatch(w http.ResponseWriter) bool {
 	if !a.runtimeDatabaseMismatch() {
 		return false
 	}
-	fail(w, http.StatusConflict, regcodeStorageMismatchMessage)
+	failWithCode(w, http.StatusConflict, ErrRegcodeStorageMismatch, regcodeStorageMismatchMessage)
 	return true
 }
 

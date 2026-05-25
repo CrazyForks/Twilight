@@ -524,7 +524,7 @@ func (a *App) handleRuntimeLogs(w http.ResponseWriter, r *http.Request, _ Params
 func (a *App) handleRuntimeLogStream(w http.ResponseWriter, r *http.Request, _ Params) {
 	flusher, okFlush := w.(http.Flusher)
 	if !okFlush {
-		fail(w, http.StatusInternalServerError, "当前响应不支持实时日志")
+		failWithCode(w, http.StatusInternalServerError, ErrRuntimeLogStreamUnsupported, "当前响应不支持实时日志")
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
