@@ -202,10 +202,18 @@ function readCSRFCookie(): string {
     return "";
   }
 
-  // 路径 2：缓存还没就绪（典型场景：systemInfo 还没拉回来就触发了 mutating
-  // 请求，比如登录前的 telegram-link 探针）。退回旧的 *_csrf 后缀启发式，
-  // 同时仅一次开发态告警，不污染生产控制台。
-  if (process.env.NODE_ENV !== "production" && !csrfFallbackWarned) {
+  // 路径 2：仅 dev 环境保留 "*_csrf 后缀启发式"。
+  // 在生产构建里走启发式存在两个具体风险：
+  //   1) 同域 / 父域第三方应用下发的其它 *_csrf cookie 会被错认成 token，
+  //      造成 mutating 请求带错 X-CSRF-Token 通过校验或 403；
+  //   2) admin 改了 csrf_cookie_name 后若 fetchInfo 偶发失败，启发式会
+  //      在新旧两个 cookie 之间不可控地命中。
+  // 生产里直接返回空串，让后端按预期 403，前端的失败上报路径会捕获到，
+  // 而不是默默靠启发式继续。dev 仍然保留启发式以减少初次开发链路上的摩擦。
+  if (process.env.NODE_ENV === "production") {
+    return "";
+  }
+  if (!csrfFallbackWarned) {
     csrfFallbackWarned = true;
     // eslint-disable-next-line no-console
     console.warn(
