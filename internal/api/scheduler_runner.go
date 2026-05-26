@@ -73,9 +73,23 @@ func (a *App) runSchedulerJob(r *http.Request, jobID string) (map[string]any, []
 	case "check_expired":
 		disabled := 0
 		embyDisabled := 0
+		skippedProtected := 0
 		for _, u := range a.store().ListUsers() {
 			if err := r.Context().Err(); err != nil {
-				return map[string]any{"success": false, "terminated": true, "disabled": disabled, "emby_disabled": embyDisabled}, []string{"job terminated"}, err
+				return map[string]any{"success": false, "terminated": true, "disabled": disabled, "emby_disabled": embyDisabled, "skipped_protected": skippedProtected}, []string{"job terminated"}, err
+			}
+			// 守护管理员 / 白名单不被自动禁用：运维约定"绝不会给 admin 设
+			// finite ExpiredAt"，但 demote-then-repromote 路径 / 手动 SQL /
+			// 旧迁移可能在 admin 上留下 ExpiredAt > 0；一旦 check_expired 命中
+			// 就会把 admin Active=false 并 DeleteUser session——管理员从此登
+			// 不上自己的 panel，且只有数据库直改才能解锁。这里强制角色白名
+			// 单跳过，并 emit `skipped_protected` 计数让 admin 在调度报告里
+			// 看到守护命中（区别于"无人需要禁用"的 0 值）。
+			if u.Role == store.RoleAdmin || u.Role == store.RoleWhitelist {
+				if u.Active && u.ExpiredAt > 0 && u.ExpiredAt < now {
+					skippedProtected++
+				}
+				continue
 			}
 			if u.Active && u.ExpiredAt > 0 && u.ExpiredAt < now {
 				// For invited users (have invite relation), only disable Emby access
@@ -109,7 +123,7 @@ func (a *App) runSchedulerJob(r *http.Request, jobID string) (map[string]any, []
 				}
 			}
 		}
-		return map[string]any{"success": true, "disabled": disabled, "emby_disabled": embyDisabled}, []string{fmt.Sprintf("disabled %d expired users", disabled)}, nil
+		return map[string]any{"success": true, "disabled": disabled, "emby_disabled": embyDisabled, "skipped_protected": skippedProtected}, []string{fmt.Sprintf("disabled %d expired users", disabled)}, nil
 	case "check_expiring", "expiry_reminders":
 		defaultDays := a.cfg().NotificationExpiryRemindDays
 		if defaultDays <= 0 {

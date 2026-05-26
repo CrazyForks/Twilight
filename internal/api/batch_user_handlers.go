@@ -58,7 +58,10 @@ func (a *App) handleBatchRenewUsers(w http.ResponseWriter, r *http.Request, _ Pa
 	result := batchResult(len(uids))
 	for _, uid := range uids {
 		_, err := a.store().UpdateUser(uid, func(u *store.User) error {
-			u.ExpiredAt = addDaysToExpiry(u.ExpiredAt, days, time.Now())
+			// 与 self / admin renew 对齐：批量续期同样把被 check_expired 自禁
+			// 的账号一并解禁，避免 admin 在批量页看到"成功 200"但用户登录依旧
+			// 失败的灰色状态。
+			renewExpiryAndReactivate(u, addDaysToExpiry(u.ExpiredAt, days, time.Now()))
 			return nil
 		})
 		addBatchOutcome(result, uid, err)

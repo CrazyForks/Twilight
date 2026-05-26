@@ -363,7 +363,10 @@ func (a *App) handleRenew(w http.ResponseWriter, r *http.Request, _ Params) {
 		days = 30
 	}
 	u, err := a.store().UpdateUser(p.User.UID, func(u *store.User) error {
-		u.ExpiredAt = addDaysToExpiry(u.ExpiredAt, int(days), time.Now())
+		// 用 renewExpiryAndReactivate 而不是裸 ExpiredAt = ...：自助续费会
+		// 把曾被 check_expired 设成 Active=false 的非邀请账号同步解禁，避免
+		// "续完仍登不上"的死循环。
+		renewExpiryAndReactivate(u, addDaysToExpiry(u.ExpiredAt, int(days), time.Now()))
 		return nil
 	})
 	if statusFromError(w, err) {
@@ -1607,7 +1610,10 @@ func (a *App) handleAdminRenewUser(w http.ResponseWriter, r *http.Request, param
 		if u.ExpiredAt > base {
 			base = u.ExpiredAt
 		}
-		u.ExpiredAt = base + days*86400
+		// admin renew 走统一助手：被 check_expired 自动禁用的账号在续费成功
+		// 后必须自动恢复登录，否则 admin 续完看到用户报"账号被禁"再来一次
+		// 手动 enable，这一步漏掉就违反 R62 不变量。
+		renewExpiryAndReactivate(u, base+days*86400)
 		return nil
 	})
 	if statusFromError(w, err) {

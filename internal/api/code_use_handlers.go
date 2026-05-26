@@ -142,9 +142,11 @@ func (a *App) handleUseCode(w http.ResponseWriter, r *http.Request, _ Params) {
 			}
 		}
 		if source == "invite" {
-			u.ExpiredAt = boundedInviteExpiry(addDaysToExpiry(u.ExpiredAt, days, time.Now()), inviterForUse.ExpiredAt)
+			// invite 续期：上限 = 邀请人剩余天数。统一走 renewExpiryAndReactivate
+			// 让"过期 invitee 重新使用 invite 码"路径自动重新激活账号。
+			renewExpiryAndReactivate(u, boundedInviteExpiry(addDaysToExpiry(u.ExpiredAt, days, time.Now()), inviterForUse.ExpiredAt))
 		} else if u.Role != store.RoleWhitelist {
-			u.ExpiredAt = addDaysToExpiry(u.ExpiredAt, days, time.Now())
+			renewExpiryAndReactivate(u, addDaysToExpiry(u.ExpiredAt, days, time.Now()))
 		}
 		return nil
 	})

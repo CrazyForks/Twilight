@@ -3302,6 +3302,103 @@ func TestValidateOutboundBaseURLForAllServices(t *testing.T) {
 	}
 }
 
+// TestRenewReactivatesDisabledNonInvitedUser 锁定 R62-2 不变量：
+// check_expired 把"非邀请"过期账号设成 Active=false 后，任何续费路径都
+// 必须把 Active 同步复位到 true，否则用户续完照样登不上，admin 续完看到
+// "成功 200"实际上还得手动 enable 一遍——这是新人最容易踩的坑。
+//
+// 用 admin renew 路径覆盖这一点（self renew 需要消耗注册码、设置成本高，
+// admin renew 路径与 self/batch/regcode 共用同一个 renewExpiryAndReactivate
+// 助手，覆盖一条等价于覆盖四条）。
+func TestRenewReactivatesDisabledNonInvitedUser(t *testing.T) {
+	app := newTestApp(t)
+
+	// 第一个注册的用户自动晋升 admin（newTestApp 行为）。
+	_ = doJSON(app, http.MethodPost, "/api/v1/users/register", `{"username":"admin","password":"Admin123456"}`, nil)
+	adminLogin := doJSON(app, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"Admin123456"}`, nil)
+	if adminLogin.Code != http.StatusOK {
+		t.Fatalf("admin login: %d %s", adminLogin.Code, adminLogin.Body.String())
+	}
+	adminCookies := adminLogin.Result().Cookies()
+
+	// 构造一个已过期非邀请普通用户，模拟 check_expired 走完后的终态。
+	target, err := app.store().CreateUser(store.User{
+		Username:  "expired-normal",
+		Role:      store.RoleNormal,
+		Active:    false,
+		ExpiredAt: time.Now().Add(-24 * time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 触发 admin renew，days=30。修复前只 bump ExpiredAt，Active 仍是 false。
+	url := fmt.Sprintf("/api/v1/admin/users/%d/renew", target.UID)
+	resp := doJSONWithHeaders(app, http.MethodPost, url, `{"days":30}`, adminCookies, map[string]string{"X-Twilight-Client": "webui"})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("admin renew: %d %s", resp.Code, resp.Body.String())
+	}
+
+	updated, ok := app.store().User(target.UID)
+	if !ok {
+		t.Fatalf("user disappeared after renew")
+	}
+	if !updated.Active {
+		t.Fatalf("R62-2 regression: renew did not reactivate disabled user (Active=%v)", updated.Active)
+	}
+	if updated.ExpiredAt <= time.Now().Unix() {
+		t.Fatalf("renew should advance ExpiredAt past now, got %d", updated.ExpiredAt)
+	}
+}
+
+// TestCheckExpiredSkipsAdminAndWhitelist 锁定 R62-3 不变量：
+// check_expired 调度看到 RoleAdmin / RoleWhitelist 用户即便 ExpiredAt 撞过
+// 期限也必须跳过——demote-then-repromote / 手动 SQL / 旧迁移都可能让 admin
+// 留下 finite ExpiredAt，一旦命中 check_expired 把 admin 自禁后 panel 就再
+// 也登不上。同时锁定 schedulerSummary 中暴露 skipped_protected 计数。
+func TestCheckExpiredSkipsAdminAndWhitelist(t *testing.T) {
+	app := newTestApp(t)
+
+	expiredUnix := time.Now().Add(-2 * time.Hour).Unix()
+	admin, err := app.store().CreateUser(store.User{Username: "exp-admin", Role: store.RoleAdmin, Active: true, ExpiredAt: expiredUnix})
+	if err != nil {
+		t.Fatal(err)
+	}
+	whitelist, err := app.store().CreateUser(store.User{Username: "exp-wl", Role: store.RoleWhitelist, Active: true, ExpiredAt: expiredUnix})
+	if err != nil {
+		t.Fatal(err)
+	}
+	normal, err := app.store().CreateUser(store.User{Username: "exp-normal", Role: store.RoleNormal, Active: true, ExpiredAt: expiredUnix})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/scheduler/internal", nil)
+	summary, _, err := app.runSchedulerJob(req, "check_expired")
+	if err != nil {
+		t.Fatalf("runSchedulerJob check_expired: %v", err)
+	}
+
+	// 普通用户：仍走原路径被禁。
+	if u, _ := app.store().User(normal.UID); u.Active {
+		t.Fatalf("non-admin expired user should be disabled, got Active=true")
+	}
+
+	// admin / whitelist：必须保留 Active=true。
+	if u, _ := app.store().User(admin.UID); !u.Active {
+		t.Fatalf("R62-3 regression: admin auto-disabled by check_expired")
+	}
+	if u, _ := app.store().User(whitelist.UID); !u.Active {
+		t.Fatalf("R62-3 regression: whitelist user auto-disabled by check_expired")
+	}
+
+	// summary 必须暴露 skipped_protected 计数（admin + whitelist = 2）。
+	got := int(numeric(summary["skipped_protected"]))
+	if got != 2 {
+		t.Fatalf("skipped_protected=%d in summary, want 2 (admin+whitelist); summary=%v", got, summary)
+	}
+}
+
 // TestLoginByAPIKeyRejectsDisabledAccount 锁定与 handleLogin 同一不变量：
 // 禁用账号无法用 API Key 重新拿到 session。修复前 /auth/login/apikey 只查
 // API Key 命中即建会话，admin 把 Active=false 后这条路径仍可继续访问。

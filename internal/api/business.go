@@ -157,6 +157,32 @@ func addDaysToExpiry(current int64, days int, now time.Time) int64 {
 	return base.AddDate(0, 0, days).Unix()
 }
 
+// renewExpiryAndReactivate 把"续期"语义统一成一个动作：bump ExpiredAt 同时
+// 在新到期时刻仍然有效（> now）的前提下复位 Active=true。
+//
+// 历史背景：check_expired 调度对**非邀请**用户会直接 `Active=false`（参见
+// scheduler_runner.go 的 standalone 分支），原意是"让该账号别再消耗资源"。
+// 但接下来如果 admin 或用户自己续费，老代码只 bump ExpiredAt，Active 仍是
+// false——下一次 handleLogin 走到 `!u.Active` 分支照样把人挡在外面，要 admin
+// 手动 enable 一次才能解锁。规则混乱，且在 batch_renew 路径下没有任何 UI
+// 提示 admin "你以为续完了，其实人还登不上"。
+//
+// 因此把"续期"语义收敛到这里：所有四个 renew 入口（self / admin / batch /
+// 邀请使用 / 注册码使用）都调用本助手，确保"续费 ⇒ 账号自动恢复"作为不变量。
+//
+// 何时应该复位 Active：
+//   - newExpiredAt 在未来（> now.Unix()）：续期使账号回到"在期"状态，应当解禁；
+//   - newExpiredAt == permanentExpiryUnix（白名单 / -1 永久）：远超 now，自然解禁；
+//   - newExpiredAt <= now：没续上，不动 Active（管理员"冻结"路径靠这个语义保留禁用态）。
+//
+// 调用约定：必须在 store().UpdateUser 的 mutator 闭包内传入指针，以保证锁内原子性。
+func renewExpiryAndReactivate(u *store.User, newExpiredAt int64) {
+	u.ExpiredAt = newExpiredAt
+	if newExpiredAt > time.Now().Unix() {
+		u.Active = true
+	}
+}
+
 func paginate[T any](items []T, page, perPage int) []T {
 	if perPage <= 0 {
 		return items
