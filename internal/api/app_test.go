@@ -405,6 +405,81 @@ func TestAPIKeyDisableAccountKillsSessions(t *testing.T) {
 	}
 }
 
+// TestCheckExpiredKillsInvitedUserSessions 锁定 R60-1 整改后的不变量：
+// check_expired job 处理 invited 用户时，即便保留 Active=true 让用户能重
+// 新登录续期，已经过期的时刻必须立刻让现有 cookie session 失效。否则
+// stale token 在 SessionTTL 内仍能访问受保护接口，与 R51-2 锁定的
+// "disable-account 必须立即踢 session" 语义不一致。non-invited 分支沿用
+// 原本就有的 sessions().DeleteUser，保留断言以防误把整段都拆掉。
+func TestCheckExpiredKillsInvitedUserSessions(t *testing.T) {
+	app := newTestApp(t)
+	ctx := context.Background()
+
+	// invited user (有 InviteRelation)
+	invited, err := app.store().CreateUser(store.User{Username: "invitee", Role: store.RoleNormal, Active: true, ExpiredAt: time.Now().Add(-time.Hour).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 直接构造 invite code 并 ConsumeInviteCode 走真实路径，让 ParentOf 命中
+	if err := app.store().UpsertInviteCode(store.InviteCode{Code: "INVR60", InviterUID: 999, UseCountLimit: 1, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.store().ConsumeInviteCode("INVR60", invited.UID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := app.store().ParentOf(invited.UID); !ok {
+		t.Fatalf("ParentOf %d should hit invite relation after ConsumeInviteCode", invited.UID)
+	}
+
+	// non-invited user
+	standalone, err := app.store().CreateUser(store.User{Username: "standalone", Role: store.RoleNormal, Active: true, ExpiredAt: time.Now().Add(-time.Hour).Unix()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	invitedToken, _, err := app.sessions().Create(ctx, invited.UID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	standaloneToken, _, err := app.sessions().Create(ctx, standalone.UID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// pre-condition: 两个 session 都活
+	if _, ok := app.sessions().Get(ctx, invitedToken); !ok {
+		t.Fatalf("invited session must exist before check_expired")
+	}
+	if _, ok := app.sessions().Get(ctx, standaloneToken); !ok {
+		t.Fatalf("standalone session must exist before check_expired")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/scheduler/internal", nil)
+	if _, _, err := app.runSchedulerJob(req, "check_expired"); err != nil {
+		t.Fatalf("runSchedulerJob check_expired returned err: %v", err)
+	}
+
+	// invited: Active 保留为 true（走续期路径），但 session 必须已被踢
+	if u, ok := app.store().User(invited.UID); !ok {
+		t.Fatalf("invited user disappeared")
+	} else if !u.Active {
+		t.Fatalf("invited user Active should remain true (renewal path), got false")
+	}
+	if _, ok := app.sessions().Get(ctx, invitedToken); ok {
+		t.Fatalf("invited user session should be killed after expiry, but still alive")
+	}
+
+	// standalone: Active=false 且 session 也被踢（兜底确保原来逻辑没回退）
+	if u, ok := app.store().User(standalone.UID); !ok {
+		t.Fatalf("standalone user disappeared")
+	} else if u.Active {
+		t.Fatalf("standalone user Active should be false after check_expired")
+	}
+	if _, ok := app.sessions().Get(ctx, standaloneToken); ok {
+		t.Fatalf("standalone user session should be killed after expiry, but still alive")
+	}
+}
+
 func TestFrontendRouteCompatibilityDoesNot404(t *testing.T) {
 	app := newTestApp(t)
 	routes := []struct{ method, path string }{

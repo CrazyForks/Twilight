@@ -82,10 +82,17 @@ func (a *App) runSchedulerJob(r *http.Request, jobID string) (map[string]any, []
 				// but keep the account active so they can still log in and renew
 				_, isInvited := a.store().ParentOf(u.UID)
 				if isInvited {
-					// Only disable Emby, keep account active
+					// Only disable Emby, keep account active so the user
+					// can re-login (or the inviter can renew on their behalf)
 					if u.EmbyID != "" && a.embySetUserEnabled(r.Context(), u.EmbyID, false) == nil {
 						embyDisabled++
 					}
+					// 即便保留 Active=true 让用户能重新登录续期，已经过期的
+					// 时刻必须立刻让现有会话失效——否则 stale cookie 在
+					// SessionTTL 内仍能访问受保护接口（包括非续期接口），
+					// 与 authenticateAPIKey 的 `!u.Active` / 过期兜底语义
+					// 不一致。续期成功后用户重新登录即可拿新 session。
+					a.sessions().DeleteUser(r.Context(), u.UID)
 					disabled++
 				} else {
 					// Non-invited users: disable the whole account
