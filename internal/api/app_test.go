@@ -1998,6 +1998,107 @@ func TestBangumiWebhookRequiresSecretWhenEnabled(t *testing.T) {
 	}
 }
 
+// TestBangumiWebhookRejectsStaleTimestamp 锁定 R58-1 replay window:带
+// X-Twilight-Bangumi-Timestamp 但落在 ±300s 之外的请求必须 410 拒绝,即使
+// secret 正确。窗口内 / 不带 header 仍应放行(向后兼容路径)。
+func TestBangumiWebhookRejectsStaleTimestamp(t *testing.T) {
+	app := newTestApp(t)
+	app.cfg().BangumiEnabled = true
+	app.cfg().BangumiWebhookSecret = "webhook-secret"
+
+	// 落在 1 小时之前——窗口 5 分钟,必拒。
+	stale := strconv.FormatInt(time.Now().Unix()-3600, 10)
+	rec := doJSONWithHeaders(app, http.MethodPost, "/api/v1/emby/bangumi/webhook", `{"Event":"PlaybackStopped"}`, nil, map[string]string{
+		"X-Twilight-Bangumi-Token":     "webhook-secret",
+		"X-Twilight-Bangumi-Timestamp": stale,
+	})
+	if rec.Code != http.StatusGone {
+		t.Fatalf("stale timestamp should be rejected with 410, got %d body=%s", rec.Code, rec.Body.String())
+	}
+
+	// 当下时间戳——必放行。
+	fresh := strconv.FormatInt(time.Now().Unix(), 10)
+	freshRec := doJSONWithHeaders(app, http.MethodPost, "/api/v1/emby/bangumi/webhook", `{"Event":"PlaybackStopped"}`, nil, map[string]string{
+		"X-Twilight-Bangumi-Token":     "webhook-secret",
+		"X-Twilight-Bangumi-Timestamp": fresh,
+	})
+	if freshRec.Code != http.StatusOK {
+		t.Fatalf("fresh timestamp should be accepted, got %d body=%s", freshRec.Code, freshRec.Body.String())
+	}
+
+	// 非数字时间戳——必拒。
+	badRec := doJSONWithHeaders(app, http.MethodPost, "/api/v1/emby/bangumi/webhook", `{"Event":"PlaybackStopped"}`, nil, map[string]string{
+		"X-Twilight-Bangumi-Token":     "webhook-secret",
+		"X-Twilight-Bangumi-Timestamp": "not-a-number",
+	})
+	if badRec.Code != http.StatusBadRequest {
+		t.Fatalf("non-numeric timestamp should be 400, got %d body=%s", badRec.Code, badRec.Body.String())
+	}
+}
+
+// TestBangumiWebhookIdempotentReplay 锁定 R58-1 idempotency:同一份合法
+// 请求被重放也只产生一条 PlaybackRecord,而不是无限堆积。即使时间戳
+// header 通过校验,store 层的 (uid, item_id, played_at) 三元组兜底。
+func TestBangumiWebhookIdempotentReplay(t *testing.T) {
+	app := newTestApp(t)
+	app.cfg().BangumiEnabled = true
+	app.cfg().BangumiWebhookSecret = "webhook-secret"
+	created, err := app.store().CreateUser(store.User{Username: "viewer", PasswordHash: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.store().UpdateUser(created.UID, func(u *store.User) error {
+		u.EmbyID = "emby-replay"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"Event":"PlaybackStopped","UserId":"emby-replay","Item":{"Id":"item-replay","Name":"Replay Title","Type":"Episode","RunTimeTicks":600000000}}`
+	for i := 0; i < 5; i++ {
+		rec := doJSONWithHeaders(app, http.MethodPost, "/api/v1/emby/bangumi/webhook", body, nil, map[string]string{
+			"X-Twilight-Bangumi-Token": "webhook-secret",
+		})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("replay #%d webhook = %d body=%s", i, rec.Code, rec.Body.String())
+		}
+	}
+
+	records := app.store().PlaybackRecords(created.UID, 0, 100)
+	itemMatches := 0
+	for _, rec := range records {
+		if rec.ItemID == "item-replay" {
+			itemMatches++
+		}
+	}
+	if itemMatches != 1 {
+		t.Fatalf("expected exactly 1 PlaybackRecord for replayed webhook, got %d (records=%#v)", itemMatches, records)
+	}
+}
+
+// TestBangumiWebhookConstantTimeStringEqual 锁定 R58-1 timing oracle 收紧:
+// length-mismatch 不能再通过 ConstantTimeCompare 提前 return 触发。直接调
+// 用 helper 验证逻辑等价性(timing 行为靠 zero-pad 实现,Go 测试框架不便
+// 直接测,这里至少锁住语义)。
+func TestBangumiWebhookConstantTimeStringEqual(t *testing.T) {
+	cases := []struct {
+		got, want string
+		expect    bool
+	}{
+		{"abc", "abc", true},
+		{"abc", "xyz", false},
+		{"abc", "abcd", false}, // 长度不同
+		{"", "", true},
+		{"", "abc", false},
+		{strings.Repeat("a", 1025), strings.Repeat("a", 1025), false}, // 超过 1024 直接 false
+	}
+	for _, c := range cases {
+		if got := constantTimeStringEqual(c.got, c.want); got != c.expect {
+			t.Errorf("constantTimeStringEqual(%q,%q) = %v, want %v", c.got, c.want, got, c.expect)
+		}
+	}
+}
+
 func TestDatabaseAdminBackupRestoreAndAuth(t *testing.T) {
 	app := newTestApp(t)
 	_ = doJSON(app, http.MethodPost, "/api/v1/users/register", `{"username":"admin","password":"Admin123456"}`, nil)
