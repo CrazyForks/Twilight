@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { motion } from "framer-motion";
 import { Eye, EyeOff, ArrowRight, Loader2, ShieldCheck, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,8 +15,36 @@ import { SITE_NAME } from "@/lib/site-config";
 import { sanitizeExternalUrl } from "@/lib/safe-url";
 import { friendlyError } from "@/lib/validators";
 
+const protectedRedirectPrefixes = [
+  "/dashboard",
+  "/admin",
+  "/announcements",
+  "/invite",
+  "/media",
+  "/score",
+  "/settings",
+];
+
+function pathMatches(pathname: string, prefixes: string[]): boolean {
+  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
+}
+
+function loginRedirectTarget(): string {
+  if (typeof window === "undefined") return "/dashboard";
+  const next = new URLSearchParams(window.location.search).get("next");
+  if (!next || !next.startsWith("/") || next.startsWith("//")) return "/dashboard";
+
+  try {
+    const url = new URL(next, "https://twilight.local");
+    if (url.origin !== "https://twilight.local") return "/dashboard";
+    if (!pathMatches(url.pathname, protectedRedirectPrefixes)) return "/dashboard";
+    return `${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return "/dashboard";
+  }
+}
+
 export default function LoginPage() {
-  const router = useRouter();
   const { toast } = useToast();
   const { login } = useAuthStore();
   const { info: systemInfo, fetchInfo: fetchSystemInfo } = useSystemStore();
@@ -38,9 +65,10 @@ export default function LoginPage() {
   ].map((item) => ({ ...item, url: sanitizeExternalUrl(item.url) })).filter((item): item is { label: string; url: string } => Boolean(item.url));
 
   useEffect(() => {
-    router.prefetch("/dashboard");
+    // 不在未登录状态预取受保护路由：middleware 会把预取重定向到 /login，
+    // App Router 之后可能复用这份旧结果，让登录成功后的跳转看起来失效。
     void fetchSystemInfo();
-  }, [router, fetchSystemInfo]);
+  }, [fetchSystemInfo]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,7 +90,9 @@ export default function LoginPage() {
           description: "欢迎回来！",
           variant: "success",
         });
-        router.replace("/dashboard");
+        // 登录会写 HttpOnly session cookie，受保护页面又由 middleware 读 cookie。
+        // 用完整导航避开登录前的 RSC/prefetch 缓存，确保下一次请求携带最新 cookie。
+        window.location.replace(loginRedirectTarget());
       } else {
         // 用稳定的 error_code 决定 UI 分支，避免 /禁用/.test(message) 这种
         // 文案级匹配在后端切英文 / 改文案时炸掉。
