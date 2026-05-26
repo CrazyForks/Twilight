@@ -23,6 +23,7 @@ export type ErrCode =
   | "AUTH_LOGIN_RATE_LIMITED"
   | "AUTH_LOGIN_INVALID"
   | "AUTH_ACCOUNT_DISABLED"
+  | "AUTH_ACCOUNT_EXPIRED"
   | "AUTH_SESSION_CREATE_FAILED"
   | "AUTH_APIKEY_EMPTY"
   | "AUTH_APIKEY_INVALID"
@@ -293,6 +294,7 @@ export const ErrCodes = {
   LoginRateLimited: "AUTH_LOGIN_RATE_LIMITED",
   LoginInvalid: "AUTH_LOGIN_INVALID",
   AccountDisabled: "AUTH_ACCOUNT_DISABLED",
+  AccountExpired: "AUTH_ACCOUNT_EXPIRED",
   SessionCreateFailed: "AUTH_SESSION_CREATE_FAILED",
   APIKeyEmpty: "AUTH_APIKEY_EMPTY",
   APIKeyInvalid: "AUTH_APIKEY_INVALID",

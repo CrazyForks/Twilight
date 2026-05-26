@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/prejudice-studio/twilight/internal/config"
+	"github.com/prejudice-studio/twilight/internal/security"
 	"github.com/prejudice-studio/twilight/internal/store"
 )
 
@@ -3609,6 +3610,65 @@ func TestLoginByAPIKeyRejectsDisabledAccount(t *testing.T) {
 	}
 }
 
+// TestLoginDistinguishesExpiredFromDisabled 锁定 R62-6 不变量：
+// "管理员手动禁用"和"check_expired 触发的到期"两种 Active=false 状态在
+// /api/v1/auth/login 必须返回不同的 error_code，让 webui 的 CTA 分别走
+// /support 和 /renew。这条测试比单纯 helper 单测更接近 user-visible 契约：
+// 任何把 ErrAccountExpired 又静默融回 ErrAccountDisabled 的回归都会被它打断。
+func TestLoginDistinguishesExpiredFromDisabled(t *testing.T) {
+	app := newTestApp(t)
+	hash, err := security.HashPassword("Password123456")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 创建一个占位 admin，让后续两个测试用户不会被 bootstrap 路径强行
+	// 提升为 admin + Active=true（CreateUser 在 UserCount==0 时会无视
+	// 入参 Active 把首注册用户兜成 admin 启用态，绕开本测试要验证的禁用
+	// /到期分支）。
+	if _, err := app.store().CreateUser(store.User{Username: "boot-admin", Role: store.RoleAdmin, PasswordHash: hash, Active: true}); err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := app.store().CreateUser(store.User{
+		Username:     "manually-disabled",
+		Role:         store.RoleNormal,
+		PasswordHash: hash,
+		Active:       true,
+		ExpiredAt:    time.Now().Add(24 * time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.store().UpdateUser(disabled.UID, func(u *store.User) error { u.Active = false; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	expired, err := app.store().CreateUser(store.User{
+		Username:     "auto-expired",
+		Role:         store.RoleNormal,
+		PasswordHash: hash,
+		Active:       true,
+		ExpiredAt:    time.Now().Add(-1 * time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.store().UpdateUser(expired.UID, func(u *store.User) error { u.Active = false; return nil }); err != nil {
+		t.Fatal(err)
+	}
+
+	check := func(username, want string) {
+		body := fmt.Sprintf(`{"username":%q,"password":"Password123456"}`, username)
+		resp := doJSON(app, http.MethodPost, "/api/v1/auth/login", body, nil)
+		if resp.Code != http.StatusForbidden {
+			t.Fatalf("login %s: status=%d body=%s, want 403", username, resp.Code, resp.Body.String())
+		}
+		if !strings.Contains(resp.Body.String(), want) {
+			t.Fatalf("login %s: expected %s in body, got %s", username, want, resp.Body.String())
+		}
+	}
+	check("manually-disabled", string(ErrAccountDisabled))
+	check("auto-expired", string(ErrAccountExpired))
+}
+
 // TestUserEntitlementOKExpiredBlocksInviteMint 锁定 R62-4 不变量：
 // 一个 Active=true 但 ExpiredAt < now 的用户不允许通过 invite_create / renew
 // code 路径继续 mint entitlement。这是新人最容易踩的一类逻辑：
@@ -3703,8 +3763,11 @@ func TestForgotPasswordRejectsExpiredAccount(t *testing.T) {
 	if resp.Code != http.StatusForbidden {
 		t.Fatalf("forgot-password on expired account: status=%d body=%s, want 403", resp.Code, resp.Body.String())
 	}
-	if !strings.Contains(resp.Body.String(), string(ErrAccountDisabled)) {
-		t.Fatalf("expected ErrAccountDisabled in body, got %s", resp.Body.String())
+	// R62-6：到期路径必须返回 ErrAccountExpired，让 webui 把"续费"和
+	// "申诉"两条 CTA 区分开。如果未来又把它静默换回 ErrAccountDisabled，
+	// 用户会被错误引导到联系管理员而不是续费页。
+	if !strings.Contains(resp.Body.String(), string(ErrAccountExpired)) {
+		t.Fatalf("expected ErrAccountExpired in body, got %s", resp.Body.String())
 	}
 	// 确认密码哈希没有被改写：若旧实现漏掉 expired guard，UpdateUser 写哈希后
 	// PasswordHash 会变成非空。

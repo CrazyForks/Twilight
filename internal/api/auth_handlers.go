@@ -67,6 +67,14 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request, _ Params) {
 		return
 	}
 	if !u.Active {
+		// 优先走 ErrAccountExpired，让 webui 把"账号到期需续费"和"管理员
+		// 主动禁用"两条 CTA 分开。check_expired 调度对非邀请用户会同时
+		// Active=false + ExpiredAt<now，单看 Active 分不出原因；这里以
+		// "ExpiredAt 落在过去"为信号区分。
+		if userExpiredOnly(u) {
+			failWithCode(w, http.StatusForbidden, ErrAccountExpired, "账号有效期已到期，请续费后再登录")
+			return
+		}
 		failWithCode(w, http.StatusForbidden, ErrAccountDisabled, "账号已被禁用")
 		return
 	}
@@ -102,7 +110,13 @@ func (a *App) handleLoginByAPIKey(w http.ResponseWriter, r *http.Request, _ Para
 	// 旧路径只查 API Key 命中即建会话，导致管理员把账号 Active=false 后
 	// 该用户仍可继续访问；handleLogin 走的是 password 路径有 u.Active 守卫，
 	// 这里属于同一身份链路必须共享同一不变量。
+	// 同样区分 ExpiredAt-触发 vs admin 禁用，让前端按 ErrAccountExpired
+	// 把 API key login 失败也引导到续费流。
 	if !u.Active {
+		if userExpiredOnly(u) {
+			failWithCode(w, http.StatusForbidden, ErrAccountExpired, "账号有效期已到期，请续费后再登录")
+			return
+		}
 		failWithCode(w, http.StatusForbidden, ErrAccountDisabled, "账号已被禁用")
 		return
 	}
@@ -160,6 +174,10 @@ func (a *App) handleForgotPassword(w http.ResponseWriter, r *http.Request, _ Par
 		return
 	}
 	if !u.Active {
+		if userExpiredOnly(u) {
+			failWithCode(w, http.StatusForbidden, ErrAccountExpired, "账号有效期已到期，请续费后再重置密码")
+			return
+		}
 		failWithCode(w, http.StatusForbidden, ErrAccountDisabled, "账号已被禁用")
 		return
 	}
@@ -170,11 +188,10 @@ func (a *App) handleForgotPassword(w http.ResponseWriter, r *http.Request, _ Par
 	//      用户拿去登录会立刻被 emby 拒，UX 是"我刚改了密码就登不上"；
 	//   2. 攻击者只要凭 emby 密码就能换出一份"理论可用"的面板凭据，把已经
 	//      软冻结的账号当成绕开续费的入口。
-	// 这里返回 ErrAccountDisabled 与 !u.Active 分支同口径——前端已经按这条
-	// 错误码引导到"账号已被禁用 / 联系管理员"，对用户最不困惑。文案换成
-	// "已到期"让真实原因暴露给运维 grep 日志时能区分。
+	// 这里返回 ErrAccountExpired 与 !u.Active && expired 分支同口径——前端
+	// 已经按这条错误码引导到"账号到期，请续费"，对用户最不困惑。
 	if !userEntitlementOK(u) {
-		failWithCode(w, http.StatusForbidden, ErrAccountDisabled, "账号有效期已到期，请先续期再重置密码")
+		failWithCode(w, http.StatusForbidden, ErrAccountExpired, "账号有效期已到期，请先续期再重置密码")
 		return
 	}
 	newPassword := "Twilight-" + randomCode(18)

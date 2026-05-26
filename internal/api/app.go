@@ -685,6 +685,13 @@ func (a *App) authenticate(w http.ResponseWriter, r *http.Request, auth AuthLeve
 		return nil, false
 	}
 	if !p.User.Active {
+		// 与 handleLogin / handleLoginByAPIKey 同口径：session 仍然挂在 user 上，
+		// 但 admin 把账号 Active=false（手动禁用 vs check_expired 触发的到期），
+		// 路径上拿到不同 ErrCode 才能让 webui 把"续费"和"申诉"两条 CTA 分开。
+		if userExpiredOnly(p.User) {
+			failWithCode(w, http.StatusForbidden, ErrAccountExpired, "账号有效期已到期，请续费后再继续操作")
+			return nil, false
+		}
 		failWithCode(w, http.StatusForbidden, ErrAccountDisabled, "账号已被禁用")
 		return nil, false
 	}

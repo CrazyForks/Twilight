@@ -66,14 +66,29 @@ export default function LoginPage() {
       } else {
         // 用稳定的 error_code 决定 UI 分支，避免 /禁用/.test(message) 这种
         // 文案级匹配在后端切英文 / 改文案时炸掉。
+        // 区分两类失败：
+        //   - AUTH_ACCOUNT_DISABLED：管理员主动禁用，引导联系管理员；
+        //   - AUTH_ACCOUNT_EXPIRED：entitlement 到期，引导续费而非申诉。
+        // 后端在 R62-6 起把这两种 Active=false 状态拆开返回，前端原本只会
+        // 提示"账户被禁用"让到期用户也跑去找管理员，UX 错位。
         const code = result.errorCode;
         const disabled = code === "AUTH_ACCOUNT_DISABLED";
+        const expired = code === "AUTH_ACCOUNT_EXPIRED";
         const description = code
           ? friendlyError(code, result.message)
           : result.message || "用户名或密码错误";
+        let title = "登录失败";
+        let body = description;
+        if (disabled) {
+          title = "账户已被禁用";
+          body = "请联系管理员处理";
+        } else if (expired) {
+          title = "账号有效期已到期";
+          body = "请使用续期码续费后再登录";
+        }
         toast({
-          title: disabled ? "账户已被禁用" : "登录失败",
-          description: disabled ? "请联系管理员处理" : description,
+          title,
+          description: body,
           variant: "destructive",
         });
       }

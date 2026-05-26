@@ -140,6 +140,7 @@ export const ERROR_CODE_FRIENDLY: Partial<Record<ErrCode, string>> = {
   AUTH_LOGIN_RATE_LIMITED: "登录过于频繁，请稍后再试",
   AUTH_LOGIN_INVALID: "用户名或密码错误",
   AUTH_ACCOUNT_DISABLED: "账号已被停用，请联系管理员",
+  AUTH_ACCOUNT_EXPIRED: "账号有效期已到期，请续费后再继续",
   AUTH_DIRECT_LOGIN_DISABLED: "已禁用密码登录，请使用 API Key 或 Telegram",
   AUTH_PASSWORD_RESET_TOO_MANY: "密码重置过于频繁，请稍后再试",
   AUTH_PASSWORD_OLD_MISMATCH: "原密码不正确",

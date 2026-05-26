@@ -18,6 +18,13 @@ const (
 	ErrLoginRateLimited     ErrCode = "AUTH_LOGIN_RATE_LIMITED"
 	ErrLoginInvalid         ErrCode = "AUTH_LOGIN_INVALID"
 	ErrAccountDisabled      ErrCode = "AUTH_ACCOUNT_DISABLED"
+	// ErrAccountExpired 与 ErrAccountDisabled 并列：前者是"entitlement 到期，
+	// 续费后即可恢复"，后者是"管理员手动禁用，需要联系管理员"。webui 拿到
+	// 不同 code 直接做不同 CTA：到期 → /renew；禁用 → /support。
+	// 不要把这条码用于"密码错误 / 限速 / 鉴权流"等非 ExpiredAt 触发的失败，
+	// 那些走各自专用码（ErrLoginInvalid / ErrLoginRateLimited 等），保持语
+	// 义集中。
+	ErrAccountExpired       ErrCode = "AUTH_ACCOUNT_EXPIRED"
 	ErrSessionCreateFailed  ErrCode = "AUTH_SESSION_CREATE_FAILED"
 	ErrAPIKeyEmpty          ErrCode = "AUTH_APIKEY_EMPTY"
 	ErrAPIKeyInvalid        ErrCode = "AUTH_APIKEY_INVALID"

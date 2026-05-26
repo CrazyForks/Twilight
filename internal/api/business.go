@@ -157,6 +157,27 @@ func addDaysToExpiry(current int64, days int, now time.Time) int64 {
 	return base.AddDate(0, 0, days).Unix()
 }
 
+// userExpiredOnly 判定"Active=false 是否纯由 ExpiredAt 触发"。check_expired
+// 调度对非邀请用户的处理是"同时 Active=false + 落 ExpiredAt 在过去"，与
+// admin 手动禁用（Active=false 但 ExpiredAt 仍在未来 / 永久）形成两类截然
+// 不同的用户故事——一个走"续费"流程，一个走"申诉"流程。webui 拿到不同的
+// ErrCode 才能精准引导，所以 handler 在 `!u.Active` 分支需要二次细分。
+//
+// 边界：
+//   - ExpiredAt<=0 或 >=permanentExpiryUnix：永久号 / 未设过期，绝不算"到期"，
+//     哪怕 Active=false 也只能是 admin 主动禁用，回 false；
+//   - ExpiredAt 在过去：到期，回 true（不再多看 Active，调用方已经在 !Active
+//     分支里）。
+//
+// 注意与 userEntitlementOK 的差异：那条同时收 Active 与 ExpiredAt，用于
+// "有 entitlement 才能消费"判定；本 helper 只负责在 !Active 路径下区分原因。
+func userExpiredOnly(user store.User) bool {
+	if user.ExpiredAt <= 0 || user.ExpiredAt >= permanentExpiryUnix {
+		return false
+	}
+	return user.ExpiredAt <= time.Now().Unix()
+}
+
 // renewExpiryAndReactivate 把"续期"语义统一成一个动作：bump ExpiredAt 同时
 // 在新到期时刻仍然有效（> now）的前提下复位 Active=true。
 //
