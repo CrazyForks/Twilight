@@ -51,6 +51,10 @@ func (a *App) handleBangumiWebhook(w http.ResponseWriter, r *http.Request, _ Par
 	}
 	// 时间戳 replay window：header 缺失时仅打 Warn（兼容旧回调），存在则严格
 	// 校验。窗口外的请求直接 410 拒绝，告诉客户端"这次请求已经过期不必重发"。
+	// 同一份 header 时间戳还会被透传给 store 作为 PlayedAt 幂等键的一部分，
+	// 让"同字节重放"在 store 层落到同一行而被静默丢弃——time.Now() 在跨秒
+	// 边界会让相隔 1s 的两次重放绕过 (uid,item_id,played_at) 唯一性。
+	var headerPlayedAt int64
 	if tsHeader := strings.TrimSpace(r.Header.Get("X-Twilight-Bangumi-Timestamp")); tsHeader != "" {
 		ts, parseErr := strconv.ParseInt(tsHeader, 10, 64)
 		if parseErr != nil {
@@ -72,6 +76,7 @@ func (a *App) handleBangumiWebhook(w http.ResponseWriter, r *http.Request, _ Par
 			failWithCode(w, http.StatusGone, ErrUnauthorized, "Webhook 请求已过期")
 			return
 		}
+		headerPlayedAt = ts
 	} else {
 		zap.L().Warn(
 			"bangumi webhook 未携带 X-Twilight-Bangumi-Timestamp header，无法做 replay-window 校验，建议客户端补齐",
@@ -98,6 +103,14 @@ func (a *App) handleBangumiWebhook(w http.ResponseWriter, r *http.Request, _ Par
 			if duration <= 0 {
 				duration = numeric(item["RunTimeTicks"]) / 10000000
 			}
+			// PlayedAt 优先用 header 时间戳：同一份字节重放总是命中相同 PlayedAt，
+			// store 层的 (uid, item_id, played_at) 唯一键保证去重；只有缺 header
+			// 的兼容路径才回落到 time.Now()，那条路径在 SECRET 已被合法持有时
+			// 才会进入，重放风险在这里能容忍。
+			playedAt := headerPlayedAt
+			if playedAt == 0 {
+				playedAt = time.Now().Unix()
+			}
 			// 走幂等版：即便攻击者绕过了 timestamp window 在同一秒内重放同一条
 			// 合法请求，store 层的 (uid, item_id, played_at) 三元组检查会让第二
 			// 次以后的写入直接静默丢弃，不会让 PlaybackRecords 无限堆积。
@@ -107,7 +120,7 @@ func (a *App) handleBangumiWebhook(w http.ResponseWriter, r *http.Request, _ Par
 				Title:     firstNonEmpty(asString(item["Name"]), asString(item["SeriesName"])),
 				MediaType: asString(item["Type"]),
 				Duration:  duration,
-				PlayedAt:  time.Now().Unix(),
+				PlayedAt:  playedAt,
 			})
 			if err != nil {
 				zap.L().Warn("failed to record Bangumi playback webhook", zap.Int64("uid", local.UID), zap.Error(err))

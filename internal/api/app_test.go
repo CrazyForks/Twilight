@@ -2089,9 +2089,14 @@ func TestBangumiWebhookIdempotentReplay(t *testing.T) {
 	}
 
 	body := `{"Event":"PlaybackStopped","UserId":"emby-replay","Item":{"Id":"item-replay","Name":"Replay Title","Type":"Episode","RunTimeTicks":600000000}}`
+	// 同一份字节重放必须用同一份 timestamp header,否则 PlayedAt 在跨秒边
+	// 界会被 time.Now() 拉开,(uid,item_id,played_at) 唯一键失效。这本来
+	// 就是合法重放攻击的前提:攻击者抓的是字节,header 当然也一样。
+	ts := strconv.FormatInt(time.Now().Unix(), 10)
 	for i := 0; i < 5; i++ {
 		rec := doJSONWithHeaders(app, http.MethodPost, "/api/v1/emby/bangumi/webhook", body, nil, map[string]string{
-			"X-Twilight-Bangumi-Token": "webhook-secret",
+			"X-Twilight-Bangumi-Token":     "webhook-secret",
+			"X-Twilight-Bangumi-Timestamp": ts,
 		})
 		if rec.Code != http.StatusOK {
 			t.Fatalf("replay #%d webhook = %d body=%s", i, rec.Code, rec.Body.String())
