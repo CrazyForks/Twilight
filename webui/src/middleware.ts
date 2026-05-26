@@ -1,4 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  AUTH_ROUTE_PREFIXES,
+  PROTECTED_ROUTE_PREFIXES,
+  pathMatches,
+} from "@/lib/auth-routes";
+import { getSessionCookieName } from "@/lib/session-cookie";
 
 /**
  * Middleware：CSP 头 + 服务端 session cookie 守卫。
@@ -33,8 +39,9 @@ import { NextRequest, NextResponse } from "next/server";
  *
  * ## Session cookie 守卫
  *
- * 后端在登录成功时写 `twilight_session`（HttpOnly + SameSite=Lax）。客户端
- * JS 拿不到，但 middleware 在 server 端可以读：
+ * 后端在登录成功时写会话 cookie（默认 `twilight_session`，可通过
+ * `TWILIGHT_SESSION_COOKIE_NAME` 与后端 `session_cookie_name` 对齐）。
+ * 客户端 JS 拿不到，但 middleware 在 server 端可以读：
  *
  *   - protectedPrefixes 里的路径若没有 cookie ⇒ 302 -> /login?next=<path>
  *   - authPrefixes 里的路径若已有 cookie ⇒ 302 -> /dashboard
@@ -45,28 +52,7 @@ import { NextRequest, NextResponse } from "next/server";
  * 应对"cookie 还在但被 server 标记 invalid / 5xx 后清掉"的退化场景。
  */
 
-const protectedPrefixes = [
-  "/dashboard",
-  "/admin",
-  "/announcements",
-  "/invite",
-  "/media",
-  "/score",
-  "/settings",
-];
-
-const authPrefixes = ["/login", "/register", "/forgot-password"];
-
-const SESSION_COOKIE = "twilight_session";
-
-function pathMatches(pathname: string, prefixes: string[]): boolean {
-  for (const prefix of prefixes) {
-    if (pathname === prefix || pathname.startsWith(prefix + "/")) {
-      return true;
-    }
-  }
-  return false;
-}
+const SESSION_COOKIE = getSessionCookieName();
 
 // safeOrigin 把 NEXT_PUBLIC_API_URL（可能是完整 URL，也可能配了路径）规约为
 // scheme + host + port 的纯 origin，用于 connect-src 白名单。
@@ -93,17 +79,15 @@ export function middleware(request: NextRequest) {
   //    用 redirect 而不是 rewrite：浏览器地址栏要变成 /login，避免用户在
   //    一个看起来仍在 /admin 的 URL 上看到登录页（既会让书签错乱，也容易
   //    被钓鱼站借用）。`next` 仅在白名单内才回填，避免 open redirect。
-  if (!hasSession && pathMatches(pathname, protectedPrefixes)) {
+  if (!hasSession && pathMatches(pathname, PROTECTED_ROUTE_PREFIXES)) {
     const loginURL = new URL("/login", request.url);
-    if (pathMatches(pathname, protectedPrefixes)) {
-      loginURL.searchParams.set("next", pathname + (search || ""));
-    }
+    loginURL.searchParams.set("next", pathname + (search || ""));
     return NextResponse.redirect(loginURL);
   }
 
   // 2) 已登录访问登录/注册/找回密码 → 直接送回 /dashboard，避免回退按钮
   //    把已登录用户卡在登录页上反复 submit。
-  if (hasSession && pathMatches(pathname, authPrefixes)) {
+  if (hasSession && pathMatches(pathname, AUTH_ROUTE_PREFIXES)) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 

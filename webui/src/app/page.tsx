@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
+import { getSessionCookieName } from "@/lib/session-cookie";
 
 /**
  * Root path 的唯一职责是：把请求重定向到 /dashboard 或 /login。
@@ -23,6 +24,6 @@ import { redirect } from "next/navigation";
  * 阶段的肉眼闪烁，不替代鉴权。
  */
 export default async function Home() {
-  const sessionCookie = (await cookies()).get("twilight_session")?.value;
+  const sessionCookie = (await cookies()).get(getSessionCookieName())?.value;
   redirect(sessionCookie ? "/dashboard" : "/login");
 }

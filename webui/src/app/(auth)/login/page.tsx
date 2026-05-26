@@ -14,34 +14,12 @@ import { useSystemStore } from "@/store/system";
 import { SITE_NAME } from "@/lib/site-config";
 import { sanitizeExternalUrl } from "@/lib/safe-url";
 import { friendlyError } from "@/lib/validators";
-
-const protectedRedirectPrefixes = [
-  "/dashboard",
-  "/admin",
-  "/announcements",
-  "/invite",
-  "/media",
-  "/score",
-  "/settings",
-];
-
-function pathMatches(pathname: string, prefixes: string[]): boolean {
-  return prefixes.some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
-}
+import { safeProtectedRedirectTarget } from "@/lib/auth-routes";
 
 function loginRedirectTarget(): string {
   if (typeof window === "undefined") return "/dashboard";
   const next = new URLSearchParams(window.location.search).get("next");
-  if (!next || !next.startsWith("/") || next.startsWith("//")) return "/dashboard";
-
-  try {
-    const url = new URL(next, "https://twilight.local");
-    if (url.origin !== "https://twilight.local") return "/dashboard";
-    if (!pathMatches(url.pathname, protectedRedirectPrefixes)) return "/dashboard";
-    return `${url.pathname}${url.search}${url.hash}`;
-  } catch {
-    return "/dashboard";
-  }
+  return safeProtectedRedirectTarget(next);
 }
 
 export default function LoginPage() {

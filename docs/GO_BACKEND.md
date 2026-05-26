@@ -84,7 +84,10 @@ Go 后端继续读取现有 TOML，运行时主配置文件固定为当前工作
 | `TWILIGHT_RUNTIME_LOG_LIMIT` | 管理后台实时日志保留行数。 |
 | `TWILIGHT_REDIS_URL` | Redis URL，例如 `redis://:password@127.0.0.1:6379/0`。 |
 | `TWILIGHT_API_CORS_ORIGINS` | 逗号分隔的前端 Origin。 |
+| `TWILIGHT_SESSION_COOKIE_NAME` | 会话 Cookie 名称；若修改，前端 Next 服务也要配置同名变量。 |
 | `TWILIGHT_SESSION_COOKIE_SECURE` | HTTPS 部署时设为 `true`。 |
+| `TWILIGHT_SESSION_COOKIE_SAMESITE` | Cookie SameSite 策略：`lax` / `strict` / `none`。 |
+| `TWILIGHT_SESSION_COOKIE_DOMAIN` | 跨子域共享会话时填写父域，例如 `.example.com`。 |
 
 配置通过 Web 管理端保存时会先写备份，再热重载可在线生效的字段；监听端口、存储 driver 等启动期字段仍需要进程重启。
 

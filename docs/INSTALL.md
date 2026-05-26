@@ -25,6 +25,8 @@ HTTPS 反向代理部署时必须注意：
 
 - `TWILIGHT_SESSION_COOKIE_SECURE=true`
 - `TWILIGHT_API_CORS_ORIGINS=https://你的前端域名`
+- 如果前端和 API 是不同子域，后端需设置 `TWILIGHT_SESSION_COOKIE_DOMAIN=.example.com`，并按域名关系设置 `TWILIGHT_SESSION_COOKIE_SAMESITE`。
+- 如果修改了后端 `session_cookie_name` / `TWILIGHT_SESSION_COOKIE_NAME`，前端 Next 服务也必须配置同名 `TWILIGHT_SESSION_COOKIE_NAME`，否则服务端路由守卫会读不到登录 cookie。
 - 不要把 `*` 用作带 Cookie 登录态接口的 CORS Origin。
 
 ## PostgreSQL 配置
@@ -89,7 +91,7 @@ pnpm start -p 3000
 ## 特殊部署环境注意事项
 
 - 1Panel Go 运行环境：运行目录必须指向项目根目录，启动命令使用 `./bin/twilight api --host 0.0.0.0 --port 5000 --config config.toml`。运行入口会拒绝其它目录的配置文件，避免面板环境误读；不要把 `config.toml`、`.env`、1Panel 运行配置提交到 Git。
-- 反向代理：推荐后端只监听 `127.0.0.1:5000`，由 Nginx/Caddy/1Panel OpenResty 暴露 HTTPS；跨域部署时 `session_cookie_samesite` 必须与域名关系匹配。
+- 反向代理：推荐后端只监听 `127.0.0.1:5000`，由 Nginx/Caddy/1Panel OpenResty 暴露 HTTPS；跨域部署时 `session_cookie_domain` / `session_cookie_samesite` 必须与域名关系匹配。
 - 同域部署：前端 `/api/*` 反代到后端时，`NEXT_PUBLIC_API_URL` 可以留空；分离域名部署时必须设置为后端 HTTPS 地址，并同步后端 `cors_origins`。
 - Cloudflare/OpenNext：标准 Node/1Panel 部署不需要启用 OpenNext dev 初始化；只有 Cloudflare 本地开发需要设置 `TWILIGHT_OPENNEXT_DEV=true`。
 - systemd：项目路径、配置路径和二进制路径不要包含空白或 `%`，setup 脚本会拒绝这类路径，避免 unit 解析歧义。

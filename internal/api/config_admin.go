@@ -684,6 +684,7 @@ func configSectionDefs() []configSectionDef {
 			{Key: "session_cookie_name", Label: "Cookie 名称", Type: "string", Description: "会话 Cookie 名称"},
 			{Key: "session_cookie_secure", Label: "Secure Cookie", Type: "bool", Description: "HTTPS 部署应开启"},
 			{Key: "session_cookie_samesite", Label: "SameSite", Type: "string", Description: "lax/strict/none"},
+			{Key: "session_cookie_domain", Label: "Cookie Domain", Type: "string", Description: "跨子域共享会话时填写父域，例如 .example.com；单域部署留空"},
 			{Key: "trust_proxy_headers", Label: "信任代理 IP", Type: "bool", Description: "仅在可信反代后开启"},
 			{Key: "trusted_proxy_cidrs", Label: "可信反代 CIDR", Type: "list", Description: "上游反代的 IP / CIDR；启用 trust_proxy_headers 时必须配置，否则任何客户端都可伪造 X-Forwarded-For"},
 		}},
@@ -768,7 +769,7 @@ func configValues(cfg config.Config) map[string]map[string]any {
 		},
 		"API": {
 			"host": cfg.Host, "port": cfg.Port, "cors_origins": cfg.CORSOrigins, "upload_folder": cfg.UploadDir, "max_upload_size": cfg.MaxUploadSize,
-			"session_cookie_name": cfg.SessionCookie, "session_cookie_secure": cfg.CookieSecure, "session_cookie_samesite": cfg.CookieSameSite, "trust_proxy_headers": cfg.TrustProxyHeaders, "trusted_proxy_cidrs": cfg.TrustedProxyCIDRs,
+			"session_cookie_name": cfg.SessionCookie, "session_cookie_secure": cfg.CookieSecure, "session_cookie_samesite": cfg.CookieSameSite, "session_cookie_domain": cfg.CookieDomain, "trust_proxy_headers": cfg.TrustProxyHeaders, "trusted_proxy_cidrs": cfg.TrustedProxyCIDRs,
 		},
 		"Security":     {"bot_internal_secret": cfg.BotInternalSecret},
 		"Scheduler":    {"enabled": cfg.SchedulerEnabled, "expired_check_time": cfg.SchedulerExpiredCheckTime, "expiring_check_time": cfg.SchedulerExpiringCheckTime, "daily_stats_time": cfg.SchedulerDailyStatsTime, "session_cleanup_interval": cfg.SchedulerSessionCleanupInterval},

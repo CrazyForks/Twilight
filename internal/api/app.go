@@ -424,6 +424,9 @@ func liveAppliedConfigFields(previous, next config.Config) []string {
 	if !strings.EqualFold(previous.CookieSameSite, next.CookieSameSite) {
 		add("session_cookie_samesite")
 	}
+	if previous.CookieDomain != next.CookieDomain {
+		add("session_cookie_domain")
+	}
 	if previous.RegisterEnabled != next.RegisterEnabled {
 		add("register_enabled")
 	}
@@ -1439,11 +1442,11 @@ func maskAPIKey(key string) (prefix, suffix, masked string) {
 // dispatcher（app.go:611）处把非 admin 阻挡在外，但 handler 自身再确认一次
 // caller 角色，避免：
 //
-//   1. 路由表手抖把 admin handler 挂到 AuthUser；
-//   2. 同一 handler 同时挂在 AuthUser / AuthAdmin 两条路由（典型如
-//      handleLoginHistory / handleWatchStats / handleDevices），handler 内部
-//      靠 path string 推断鉴权时漏判；
-//   3. 未来引入 ApiKey / TG webhook 等新鉴权来源时绕过 AuthAdmin。
+//  1. 路由表手抖把 admin handler 挂到 AuthUser；
+//  2. 同一 handler 同时挂在 AuthUser / AuthAdmin 两条路由（典型如
+//     handleLoginHistory / handleWatchStats / handleDevices），handler 内部
+//     靠 path string 推断鉴权时漏判；
+//  3. 未来引入 ApiKey / TG webhook 等新鉴权来源时绕过 AuthAdmin。
 //
 // 写为 true 时表示已写 403，调用方直接 return 即可。
 func requireAdmin(w http.ResponseWriter, r *http.Request) bool {

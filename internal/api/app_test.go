@@ -1185,8 +1185,8 @@ func TestConfigFileChangeHotReloadsRuntimeLogLevel(t *testing.T) {
 }
 
 // TestReloadConfigSurfacesLiveAppliedFields 锁定 reload 响应里的
-// `live_applied` 列表必须列出本次实际生效的 cookie 三件套（session_cookie /
-// cookie_secure / cookie_samesite），并且写出来的 cookie header 立刻反映
+// `live_applied` 列表必须列出本次实际生效的 cookie 配置（session_cookie /
+// cookie_secure / cookie_samesite / cookie_domain），并且写出来的 cookie header 立刻反映
 // 新配置。这是 R55-2 整改的可观察性合同：cookie 字段不会"沉默成功"也不会
 // "沉默失败"——值真的变了就出现在 live_applied，下一次 setSessionCookie
 // 就用新值。
@@ -1194,7 +1194,7 @@ func TestReloadConfigSurfacesLiveAppliedFields(t *testing.T) {
 	app := newTestApp(t)
 	app.cfg().ConfigFile = filepath.Join(app.cfg().DatabaseDir, "config.toml")
 
-	writeCfg := func(cookieName, sameSite string, secure bool) {
+	writeCfg := func(cookieName, sameSite string, secure bool, domain string) {
 		t.Helper()
 		content := "[Global]\n" +
 			"databases_dir = " + strconv.Quote(app.cfg().DatabaseDir) + "\n\n" +
@@ -1205,7 +1205,8 @@ func TestReloadConfigSurfacesLiveAppliedFields(t *testing.T) {
 			"[Security]\n" +
 			"session_cookie_name = " + strconv.Quote(cookieName) + "\n" +
 			"session_cookie_samesite = " + strconv.Quote(sameSite) + "\n" +
-			"session_cookie_secure = " + strconv.FormatBool(secure) + "\n"
+			"session_cookie_secure = " + strconv.FormatBool(secure) + "\n" +
+			"session_cookie_domain = " + strconv.Quote(domain) + "\n"
 		if err := os.WriteFile(app.cfg().ConfigFile, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -1216,7 +1217,8 @@ func TestReloadConfigSurfacesLiveAppliedFields(t *testing.T) {
 	app.cfg().SessionCookie = "twilight_session"
 	app.cfg().CookieSecure = false
 	app.cfg().CookieSameSite = "lax"
-	writeCfg("twilight_session", "lax", false)
+	app.cfg().CookieDomain = ""
+	writeCfg("twilight_session", "lax", false, "")
 	app.configSignature = configFileSignature(app.cfg().ConfigFile)
 
 	// 注册一个账户，使后续 login 能成功（reload 之后才测 cookie，避免 reload
@@ -1224,13 +1226,13 @@ func TestReloadConfigSurfacesLiveAppliedFields(t *testing.T) {
 	_ = doJSON(app, http.MethodPost, "/api/v1/users/register", `{"username":"reloadops","password":"Password123456"}`, nil)
 
 	// 改 cookie 三件套并触发 reload
-	writeCfg("twilight_secure_session", "strict", true)
+	writeCfg("twilight_secure_session", "strict", true, ".example.com")
 	info, err := app.reloadConfig()
 	if err != nil {
 		t.Fatalf("reload returned err: %v", err)
 	}
 	live, _ := info["live_applied"].([]string)
-	expected := map[string]bool{"session_cookie_name": false, "session_cookie_secure": false, "session_cookie_samesite": false}
+	expected := map[string]bool{"session_cookie_name": false, "session_cookie_secure": false, "session_cookie_samesite": false, "session_cookie_domain": false}
 	for _, name := range live {
 		if _, ok := expected[name]; ok {
 			expected[name] = true
@@ -1257,6 +1259,9 @@ func TestReloadConfigSurfacesLiveAppliedFields(t *testing.T) {
 	}
 	if sess.SameSite != http.SameSiteStrictMode {
 		t.Fatalf("expected SameSite=Strict after reload, got %v", sess.SameSite)
+	}
+	if sess.Domain != "example.com" {
+		t.Fatalf("expected Domain=example.com after reload, got %q", sess.Domain)
 	}
 }
 
@@ -3726,10 +3731,10 @@ func TestUserEntitlementOKExpiredBlocksInviteMint(t *testing.T) {
 // TestForgotPasswordRejectsExpiredAccount 锁定 R62-7 不变量：
 // emby 鉴权通过但面板侧账号 entitlement 已过期（Active=true & ExpiredAt<now）
 // 时不应进入密码重置 + emby 写新密码流程。否则
-//   1) embySetUserEnabled 在过期态会立即把账号 disable，用户拿到的"new
-//      _password"登录就失败；
-//   2) 攻击者拿到 emby 密码可以反复 mint 面板凭据，把已经被运维软冻结的账号
-//      当成绕开续费的入口。
+//  1. embySetUserEnabled 在过期态会立即把账号 disable，用户拿到的"new
+//     _password"登录就失败；
+//  2. 攻击者拿到 emby 密码可以反复 mint 面板凭据，把已经被运维软冻结的账号
+//     当成绕开续费的入口。
 func TestForgotPasswordRejectsExpiredAccount(t *testing.T) {
 	app := newTestApp(t)
 	emby := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
