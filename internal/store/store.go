@@ -963,10 +963,13 @@ func (s *Store) saveLocked() error {
 	// 回退到 .bak（避免一次坏写盖掉所有用户数据）。复用 writeFileAtomicSync
 	// 走 tmp + fsync(file) + rename + fsync(dir)：之前裸 os.WriteFile + Rename
 	// 没有 fsync，掉电后 .bak 可能仍是 page cache 里半字节状态，最坏 state.json
-	// 与 .bak 同时损坏 = 没有恢复路径。helper 失败仅 log，不影响主写入。
+	// 与 .bak 同时损坏 = 没有恢复路径。helper 失败仅写 stderr，**不能**走
+	// zap.L() —— saveLocked 当前持有 s.mu，而全局 zap sink 注册了 runtime
+	// log 路由会回调 AddRuntimeLog 再次申请 s.mu，构成自旋死锁（Windows CI
+	// 上 dir.Sync 必然失败，必中此路径，而 Linux/macOS 通常成功才掩盖）。
 	if existing, readErr := os.ReadFile(s.path); readErr == nil && len(existing) > 0 {
 		if err := writeFileAtomicSync(s.path+".bak", existing, 0o600); err != nil {
-			zap.L().Warn("state .bak shadow copy failed", zap.String("path", s.path), zap.Error(err))
+			fmt.Fprintf(os.Stderr, "twilight: state .bak shadow copy failed path=%s err=%v\n", s.path, err)
 		}
 	}
 	tmp := s.path + ".tmp"
@@ -1373,11 +1376,16 @@ func writeFileAtomicSync(path string, data []byte, perm os.FileMode) error {
 	}
 	_ = os.Chmod(path, perm)
 	if dir, dirErr := os.Open(filepath.Dir(path)); dirErr == nil {
-		// dir.Sync 失败仅 zap.Warn 一下：rename 已经成功，重启后能从 path
-		// 找到新内容；只是父目录元数据未必持久化，断电恢复时 path 可能短
-		// 暂"消失"。多数 fs 上不会真的发生，但记录下便于 ops 排障。
+		// dir.Sync 失败仅写 stderr：rename 已经成功，重启后能从 path 找到
+		// 新内容；只是父目录元数据未必持久化，断电恢复时 path 可能短暂
+		// "消失"。多数 fs 上不会真的发生，记录下便于 ops 排障。
+		//
+		// **不能**走 zap.L()——本 helper 会被 saveLocked 在持有 s.mu 时调用，
+		// 全局 zap sink 注册了 runtime log 路由会回调 AddRuntimeLog 再次申请
+		// s.mu 形成自旋死锁。Windows 上 fsync 目录不被支持，dir.Sync 必然
+		// 进入此分支，是发现该死锁的实际触发点。
 		if syncErr := dir.Sync(); syncErr != nil {
-			zap.L().Warn("atomic write parent dir sync failed", zap.String("path", path), zap.Error(syncErr))
+			fmt.Fprintf(os.Stderr, "twilight: atomic write parent dir sync failed path=%s err=%v\n", path, syncErr)
 		}
 		_ = dir.Close()
 	}
