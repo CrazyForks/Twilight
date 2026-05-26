@@ -175,8 +175,7 @@ func (a *App) handleEmbyTestV2(w http.ResponseWriter, r *http.Request, _ Params)
 }
 
 func (a *App) handleEmbyCleanupOrphans(w http.ResponseWriter, r *http.Request, _ Params) {
-	if a.cfg().EmbyURL == "" {
-		failWithCode(w, http.StatusBadRequest, ErrEmbyNotConfigured, "Emby 未配置，请先在系统配置中填写 Emby 服务地址")
+	if a.requireEmbyConfigured(w) {
 		return
 	}
 	var remote []map[string]any
@@ -203,8 +202,7 @@ func (a *App) handleEmbyCleanupOrphans(w http.ResponseWriter, r *http.Request, _
 }
 
 func (a *App) handleEmbyImportUsers(w http.ResponseWriter, r *http.Request, _ Params) {
-	if a.cfg().EmbyURL == "" {
-		failWithCode(w, http.StatusBadRequest, ErrEmbyNotConfigured, "Emby 未配置，请先在系统配置中填写 Emby 服务地址")
+	if a.requireEmbyConfigured(w) {
 		return
 	}
 	payload := decodeMap(r)
@@ -270,8 +268,7 @@ func (a *App) handleEmbyResetBindings(w http.ResponseWriter, r *http.Request, _ 
 }
 
 func (a *App) handleEmbyDeleteUnlinked(w http.ResponseWriter, r *http.Request, _ Params) {
-	if a.cfg().EmbyURL == "" {
-		failWithCode(w, http.StatusBadRequest, ErrEmbyNotConfigured, "Emby 未配置，请先在系统配置中填写 Emby 服务地址")
+	if a.requireEmbyConfigured(w) {
 		return
 	}
 	dryRun := boolValue(decodeMap(r), "dry_run", false)
@@ -322,8 +319,7 @@ func (a *App) handleCreateStandaloneEmbyV2(w http.ResponseWriter, r *http.Reques
 		failWithCode(w, http.StatusBadRequest, ErrEmbyPasswordTooShort, "密码长度需至少 8 位")
 		return
 	}
-	if a.cfg().EmbyURL == "" {
-		failWithCode(w, http.StatusBadRequest, ErrEmbyNotConfigured, "Emby 未配置，请先在系统配置中填写 Emby 服务地址")
+	if a.requireEmbyConfigured(w) {
 		return
 	}
 	var createdUser map[string]any
@@ -794,8 +790,7 @@ func (a *App) handleTelegramKickUnbound(w http.ResponseWriter, r *http.Request, 
 		ok(w, "telegram kick preview complete", base)
 		return
 	}
-	if !a.telegramAvailable() {
-		failWithCode(w, http.StatusBadRequest, ErrTGNotConfigured, "Telegram 未配置，请先在系统配置中填写 Telegram Bot Token")
+	if a.requireTelegramConfigured(w) {
 		return
 	}
 	adminSet := a.telegramAdminSet(r.Context(), chatID)

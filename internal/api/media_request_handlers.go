@@ -60,8 +60,7 @@ func (a *App) handleInventorySearch(w http.ResponseWriter, r *http.Request, _ Pa
 		failWithCode(w, http.StatusBadRequest, ErrMediaRequestQueryRequired, "missing search query")
 		return
 	}
-	if a.cfg().EmbyURL == "" {
-		failWithCode(w, http.StatusBadRequest, ErrEmbyNotConfigured, "Emby not configured")
+	if a.requireEmbyConfigured(w) {
 		return
 	}
 	limit := clamp(queryInt(r, "limit", 20), 1, 50)

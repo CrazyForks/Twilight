@@ -183,6 +183,35 @@ func renewExpiryAndReactivate(u *store.User, newExpiredAt int64) {
 	}
 }
 
+// requireEmbyConfigured 把"Emby URL 未配置 → 写一致的 400 响应"的样板收敛
+// 到一处。原先 admin_extra.go / media_request_handlers.go 等 5 个 handler 各自
+// 写一遍 `if a.cfg().EmbyURL == "" { failWithCode(...) }`，文案分裂成两种
+// （"Emby not configured" / "Emby 未配置，请先在系统配置中..."）。
+//
+// 状态码保持 400 与现有 5 个 call site 对齐，避免给前端带来"昨天 400 今天 503"
+// 的隐性 breaking change——library_handlers.go 走的是 503（service unavailable
+// 语义上更准确），那条路径对外契约已经稳定，本次不动。
+//
+// 返回 true 表示已经写出响应、调用方应直接 return。
+func (a *App) requireEmbyConfigured(w http.ResponseWriter) bool {
+	if strings.TrimSpace(a.cfg().EmbyURL) == "" {
+		failWithCode(w, http.StatusBadRequest, ErrEmbyNotConfigured, "Emby 未配置，请先在系统配置中填写 Emby 服务地址")
+		return true
+	}
+	return false
+}
+
+// requireTelegramConfigured 与 requireEmbyConfigured 同构，集中维护"Bot Token
+// 未配置 / Telegram 模式未启用"分支。状态码 400 与 admin_extra.go:798 唯一现存
+// call site 对齐。
+func (a *App) requireTelegramConfigured(w http.ResponseWriter) bool {
+	if !a.telegramAvailable() {
+		failWithCode(w, http.StatusBadRequest, ErrTGNotConfigured, "Telegram 未配置，请先在系统配置中填写 Telegram Bot Token")
+		return true
+	}
+	return false
+}
+
 func paginate[T any](items []T, page, perPage int) []T {
 	if perPage <= 0 {
 		return items
