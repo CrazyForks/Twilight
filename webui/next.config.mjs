@@ -11,7 +11,7 @@ const nextConfig = {
     const rules = [
       {
         source: '/favicon.ico',
-        destination: '/favicon.svg',
+        destination: '/favicon.png',
       },
     ];
 
