@@ -3801,3 +3801,83 @@ func TestSessionCookieOmitsDomainWhenUnset(t *testing.T) {
 		t.Fatalf("csrf cookie Domain = %q, want empty (host-only)", csrf.Domain)
 	}
 }
+
+// TestBatchUserOutcomesCarryStableErrorCodes 锁住 R64-8 的契约：批量响应里
+// 每条失败 outcome 都附带 errors[].code（一个稳定的 ErrCode 字符串），前端
+// 用它做 UI 分支（"用户不存在" / "受保护账号" / "命中自己" / "未绑定 Emby"），
+// 而不是去 grep errors[].error 里漂浮的中文文案 / 拼接后的 fmt.Errorf 字符串。
+//
+// 这里覆盖的 4 条失败路径恰好是 batch_user_handlers.go 之前裸 fmt.Errorf 的
+// 全部位置：
+//   - delete 命中 self → BATCH_SELF_TARGET
+//   - disable 命中不存在的 uid → USER_NOT_FOUND
+//   - libraries 命中无 emby 的用户 → USER_NO_EMBY
+//   - delete 命中 protected admin → USER_PROTECTED
+func TestBatchUserOutcomesCarryStableErrorCodes(t *testing.T) {
+	app := newTestApp(t)
+	adminCookies := registerAndLogin(t, app, "admin", "Admin123456")
+	csrfCookie := findCookie(adminCookies, "twilight_session_csrf")
+	if csrfCookie == nil {
+		t.Fatal("missing csrf cookie")
+	}
+	headers := map[string]string{"X-CSRF-Token": csrfCookie.Value, "X-Twilight-Client": "webui"}
+
+	// admin 的 UID = 1。再造一个普通 user 留给后面的 disable 用，但故意不
+	// 把它放进请求里——下面 disable 走的是不存在的 uid=9999 路径。
+	_, err := app.store().CreateUser(store.User{Username: "ghost", PasswordHash: "x", Role: store.RoleNormal, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	type errEntry struct {
+		UID  int64  `json:"uid"`
+		Code string `json:"code"`
+	}
+	type batchResp struct {
+		Data struct {
+			Errors []errEntry `json:"errors"`
+		} `json:"data"`
+	}
+
+	parse := func(t *testing.T, body string) []errEntry {
+		t.Helper()
+		var br batchResp
+		if err := json.Unmarshal([]byte(body), &br); err != nil {
+			t.Fatalf("decode batch resp: %v body=%s", err, body)
+		}
+		return br.Data.Errors
+	}
+
+	// 1) delete 命中 self（UID 1） → BATCH_SELF_TARGET
+	delBody := fmt.Sprintf(`{"confirm":%q,"uids":[1]}`, confirmBatchDeleteUsers)
+	resp := doJSONWithHeaders(app, http.MethodPost, "/api/v1/batch/users/delete", delBody, adminCookies, headers)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("delete self batch status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	errs := parse(t, resp.Body.String())
+	if len(errs) != 1 || errs[0].UID != 1 || errs[0].Code != string(ErrBatchSelfTarget) {
+		t.Fatalf("expected BATCH_SELF_TARGET on uid=1, got %+v", errs)
+	}
+
+	// 2) disable 命中不存在 uid=9999 → USER_NOT_FOUND
+	disBody := fmt.Sprintf(`{"confirm":%q,"uids":[9999]}`, confirmBatchDisableUsers)
+	resp = doJSONWithHeaders(app, http.MethodPost, "/api/v1/batch/users/disable", disBody, adminCookies, headers)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("disable missing batch status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	errs = parse(t, resp.Body.String())
+	if len(errs) != 1 || errs[0].UID != 9999 || errs[0].Code != string(ErrUserNotFound) {
+		t.Fatalf("expected USER_NOT_FOUND on uid=9999, got %+v", errs)
+	}
+
+	// 3) libraries 命中 ghost（UID 2，无 emby）→ USER_NO_EMBY
+	libBody := fmt.Sprintf(`{"confirm":%q,"uids":[2],"action":"set","library_ids":[]}`, confirmBatchUserLibraries)
+	resp = doJSONWithHeaders(app, http.MethodPost, "/api/v1/batch/users/libraries", libBody, adminCookies, headers)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("libraries no-emby batch status=%d body=%s", resp.Code, resp.Body.String())
+	}
+	errs = parse(t, resp.Body.String())
+	if len(errs) != 1 || errs[0].UID != 2 || errs[0].Code != string(ErrUserHasNoEmby) {
+		t.Fatalf("expected USER_NO_EMBY on uid=2, got %+v", errs)
+	}
+}

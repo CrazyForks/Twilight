@@ -29,11 +29,11 @@ func (a *App) handleBatchToggleUsers(w http.ResponseWriter, r *http.Request, ena
 	for _, uid := range uniqueInt64s(uids) {
 		target, okUser := a.store().User(uid)
 		if !okUser {
-			addBatchOutcome(result, uid, fmt.Errorf("user not found"))
+			addBatchOutcomeWithCode(result, uid, ErrUserNotFound, fmt.Errorf("user not found"))
 			continue
 		}
 		if a.userIsProtected(target) {
-			addBatchOutcome(result, uid, fmt.Errorf("cannot batch toggle protected account: %s", a.protectedUserReason(target)))
+			addBatchOutcomeWithCode(result, uid, ErrUserProtected, fmt.Errorf("cannot batch toggle protected account: %s", a.protectedUserReason(target)))
 			continue
 		}
 		updated, err := a.store().UpdateUser(uid, func(u *store.User) error { u.Active = enable; return nil })
@@ -79,16 +79,16 @@ func (a *App) handleBatchDeleteUsers(w http.ResponseWriter, r *http.Request, _ P
 	result := batchResult(len(uids))
 	for _, uid := range uniqueInt64s(uids) {
 		if uid == current(r).User.UID {
-			addBatchOutcome(result, uid, fmt.Errorf("cannot delete current admin"))
+			addBatchOutcomeWithCode(result, uid, ErrBatchSelfTarget, fmt.Errorf("cannot delete current admin"))
 			continue
 		}
 		target, okUser := a.store().User(uid)
 		if !okUser {
-			addBatchOutcome(result, uid, fmt.Errorf("user not found"))
+			addBatchOutcomeWithCode(result, uid, ErrUserNotFound, fmt.Errorf("user not found"))
 			continue
 		}
 		if a.userIsProtected(target) {
-			addBatchOutcome(result, uid, fmt.Errorf("cannot batch delete protected account: %s", a.protectedUserReason(target)))
+			addBatchOutcomeWithCode(result, uid, ErrUserProtected, fmt.Errorf("cannot batch delete protected account: %s", a.protectedUserReason(target)))
 			continue
 		}
 		if deleteEmby && a.cfg().EmbyURL != "" {
@@ -141,11 +141,11 @@ func (a *App) handleBatchUserLibraries(w http.ResponseWriter, r *http.Request, _
 	for _, uid := range uniqueInt64s(uids) {
 		target, okUser := a.store().User(uid)
 		if !okUser {
-			addBatchOutcome(result, uid, fmt.Errorf("user not found"))
+			addBatchOutcomeWithCode(result, uid, ErrUserNotFound, fmt.Errorf("user not found"))
 			continue
 		}
 		if target.EmbyID == "" {
-			addBatchOutcome(result, uid, fmt.Errorf("user has no Emby account"))
+			addBatchOutcomeWithCode(result, uid, ErrUserHasNoEmby, fmt.Errorf("user has no Emby account"))
 			continue
 		}
 		addBatchOutcome(result, uid, a.embySetLibrariesByAction(r.Context(), target, action, ids, names, enableAll))

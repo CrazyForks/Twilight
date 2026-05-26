@@ -1046,14 +1046,25 @@ func batchResult(total int) map[string]any {
 	return map[string]any{"total": total, "success": 0, "failed": 0, "errors": []map[string]any{}}
 }
 
+// addBatchOutcome 累加单条 outcome 到批量响应里。code 可空字符串，表示"未携
+// 带结构化码"——这种调用点应当尽快迁移到具名 ErrCode（参见 R64-8）。前端约
+// 定按 errors[].code 做 switch，errors[].error 仅作运维日志用文案。
 func addBatchOutcome(result map[string]any, uid int64, err error) {
+	addBatchOutcomeWithCode(result, uid, "", err)
+}
+
+func addBatchOutcomeWithCode(result map[string]any, uid int64, code ErrCode, err error) {
 	if err == nil {
 		result["success"] = result["success"].(int) + 1
 		return
 	}
 	result["failed"] = result["failed"].(int) + 1
 	errorsList := result["errors"].([]map[string]any)
-	errorsList = append(errorsList, map[string]any{"uid": uid, "error": err.Error()})
+	entry := map[string]any{"uid": uid, "error": err.Error()}
+	if code != "" {
+		entry["code"] = string(code)
+	}
+	errorsList = append(errorsList, entry)
 	result["errors"] = errorsList
 }
 

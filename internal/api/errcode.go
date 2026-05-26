@@ -330,6 +330,13 @@ const (
 	// 替换若干"裸 fail() + 中文 message"调用点，统一前端文案契约。
 	ErrBatchDaysInvalid              ErrCode = "BATCH_DAYS_INVALID"
 	ErrBatchLibraryActionInvalid     ErrCode = "BATCH_LIBRARY_ACTION_INVALID"
+	// ErrBatchSelfTarget：批量操作命中当前 admin 自己（典型是 batch-delete
+	// 把自己也勾上）。前端拿到这条码即可在结果列表里高亮 self 行而不是把
+	// 通用的 "user not found" 文案铺满。
+	ErrBatchSelfTarget ErrCode = "BATCH_SELF_TARGET"
+	// ErrUserHasNoEmby：批量库权限 / 批量同步类操作只对绑定了 Emby 的账号
+	// 有意义；未绑定的用户被批量挑中时，前端按这条码引导到"先绑定 Emby"。
+	ErrUserHasNoEmby ErrCode = "USER_NO_EMBY"
 	ErrRegcodeStorageMismatch        ErrCode = "REGCODE_STORAGE_MISMATCH"
 	ErrRuntimeLogStreamUnsupported   ErrCode = "RUNTIME_LOG_STREAM_UNSUPPORTED"
 	ErrDemoActionRateLimited         ErrCode = "DEMO_ACTION_RATE_LIMITED"
