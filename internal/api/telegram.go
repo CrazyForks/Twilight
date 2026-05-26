@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -22,16 +23,33 @@ func (a *App) telegramAvailable() bool {
 	return a.cfg().TelegramMode && strings.TrimSpace(a.cfg().TelegramBotToken) != ""
 }
 
-func (a *App) telegramEndpoint(method string) string {
-	base := strings.TrimRight(firstNonEmpty(a.cfg().TelegramAPIURL, "https://api.telegram.org"), "/")
+func (a *App) telegramEndpoint(method string) (string, error) {
+	rawBase := strings.TrimRight(firstNonEmpty(a.cfg().TelegramAPIURL, "https://api.telegram.org"), "/")
+	// telegramEndpoint 现在返回 error：与 Emby / Bangumi / TMDB 对齐，配置面
+	// 被入侵或 admin 误填后，能在拼出含 bot token 的 URL **之前** 否决。
+	// 之前是 "TrimRight + 拼字符串"，scheme=javascript: 或 host=元数据 IP 都
+	// 会原样喂给 net/http，bot token 直接泄漏到攻击者控制的目标。
+	//
+	// 在 base 已经带 "/bot<TOKEN>" 路径时，我们要校验的仍然只是 host+scheme，
+	// 所以校验前剥掉 path（与 bangumiEndpoint 同样套路）。
+	probeBase := rawBase
+	if pb, err := url.Parse(rawBase); err == nil {
+		clean := *pb
+		clean.Path = ""
+		clean.RawPath = ""
+		probeBase = clean.String()
+	}
+	if _, err := validateOutboundBaseURL(probeBase, "Telegram"); err != nil {
+		return "", err
+	}
 	token := strings.TrimSpace(a.cfg().TelegramBotToken)
-	if strings.HasSuffix(base, "/bot"+token) {
-		return base + "/" + method
+	if strings.HasSuffix(rawBase, "/bot"+token) {
+		return rawBase + "/" + method, nil
 	}
-	if strings.HasSuffix(base, "/bot") {
-		return base + token + "/" + method
+	if strings.HasSuffix(rawBase, "/bot") {
+		return rawBase + token + "/" + method, nil
 	}
-	return base + "/bot" + token + "/" + method
+	return rawBase + "/bot" + token + "/" + method, nil
 }
 
 func (a *App) setTelegramRuntimeStatus(polling bool, err error) {
@@ -67,7 +85,11 @@ func (a *App) telegramPostWithTimeout(ctx context.Context, method string, body m
 		return fmt.Errorf("Telegram is not enabled or bot token is not configured")
 	}
 	var payload telegramResponse
-	if err := postJSONWithTimeout(ctx, a.telegramEndpoint(method), map[string]string{"Accept": "application/json"}, body, &payload, timeout); err != nil {
+	endpoint, endpointErr := a.telegramEndpoint(method)
+	if endpointErr != nil {
+		return fmt.Errorf("%s", a.telegramSanitizeError(endpointErr))
+	}
+	if err := postJSONWithTimeout(ctx, endpoint, map[string]string{"Accept": "application/json"}, body, &payload, timeout); err != nil {
 		return fmt.Errorf("%s", a.telegramSanitizeError(err))
 	}
 	if !payload.OK {

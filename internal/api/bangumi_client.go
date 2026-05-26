@@ -60,6 +60,20 @@ func bangumiEndpoint(base, path string, values url.Values) (string, error) {
 	if base == "" {
 		base = "https://api.bgm.tv/v0"
 	}
+	// 与 Emby/Telegram/TMDB 共享 SSRF 否决：拒绝 link-local / 云元数据 IP /
+	// 非 http(s) scheme / query+fragment。这里 base 可能本身已经带了 /v0
+	// 路径后缀（兼容老配置），所以校验前用一份去掉 path 的"纯 base"喂给
+	// validateOutboundBaseURL（它的语义是"裸 base URL 不应带 query/fragment"）。
+	cleanedBase := base
+	if cb, err := url.Parse(base); err == nil {
+		probe := *cb
+		probe.Path = ""
+		probe.RawPath = ""
+		cleanedBase = probe.String()
+	}
+	if _, err := validateOutboundBaseURL(cleanedBase, "Bangumi"); err != nil {
+		return "", err
+	}
 	parsed, err := url.Parse(base)
 	if err != nil {
 		return "", err

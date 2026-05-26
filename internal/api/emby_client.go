@@ -3,9 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
-	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"sync"
 
@@ -65,59 +63,12 @@ func (a *App) validatedEmbyEndpoint(apiPath string) (string, error) {
 }
 
 // validateEmbyURL 拆出来便于单测；返回 trim 右斜杠的 base URL。
-func validateEmbyURL(raw string) (string, error) {
-	u, err := url.Parse(raw)
-	if err != nil {
-		return "", fmt.Errorf("Emby URL 解析失败: %w", err)
-	}
-	scheme := strings.ToLower(u.Scheme)
-	if scheme != "http" && scheme != "https" {
-		return "", fmt.Errorf("Emby URL 协议不支持: %q（仅允许 http / https）", u.Scheme)
-	}
-	host := u.Hostname()
-	if host == "" {
-		return "", fmt.Errorf("Emby URL 缺少 host: %q", raw)
-	}
-	if ip := net.ParseIP(host); ip != nil {
-		if err := refuseUnsafeEmbyIP(ip); err != nil {
-			return "", err
-		}
-	}
-	// 路径里只保留 base，不允许 query / fragment 形成隐式参数注入面。
-	if u.RawQuery != "" || u.Fragment != "" {
-		return "", fmt.Errorf("Emby URL 不应包含 query / fragment: %q", raw)
-	}
-	cleaned := strings.TrimRight(u.String(), "/")
-	return cleaned, nil
-}
-
-// refuseUnsafeEmbyIP 拒绝典型 SSRF 目标。**允许 loopback**——这是 Twilight
-// 与 Emby 同机 / docker-compose 同 stack 部署的主流形态，禁掉会把绝大多数
-// 部署直接打死；而 loopback "泄露 token" 的实际接收方仍然是 admin 自己的
-// 主机，结合 R53-1 的跨主机 follow 防护，不构成真正的 SSRF 出口。
 //
-// 真正不应该出现在 Emby 反代理目标里的是：
-//   - link-local（169.254.0.0/16、IPv6 fe80::/10）
-//   - 云元数据 magic IP（169.254.169.254 AWS/GCP/Azure，100.100.100.200 Aliyun）
-//   - 0.0.0.0/:: unspecified
-func refuseUnsafeEmbyIP(ip net.IP) error {
-	switch {
-	case ip.IsLinkLocalUnicast(), ip.IsLinkLocalMulticast():
-		return fmt.Errorf("Emby URL 指向链路本地地址 (%s)，禁止访问以避免 SSRF", ip.String())
-	case ip.IsUnspecified():
-		return fmt.Errorf("Emby URL host 为 0.0.0.0/::，配置无效")
-	}
-	// AWS / GCP / Azure / 阿里云元数据 magic IP 显式拒绝。多数已经被
-	// IsLinkLocalUnicast 覆盖（169.254.169.254 属于 link-local），这里只
-	// 兜底 100.100.100.200 这类不在 link-local 段的元数据 IP。
-	if ip.To4() != nil {
-		v4 := ip.To4().String()
-		switch v4 {
-		case "100.100.100.200":
-			return fmt.Errorf("Emby URL 指向云元数据地址 (%s)，禁止访问以避免 SSRF", v4)
-		}
-	}
-	return nil
+// 现在转调通用 validateOutboundBaseURL，与 Bangumi/Telegram/TMDB 共享同一套
+// scheme / host / link-local / 元数据 IP / query-fragment 否决规则——避免
+// "Emby 校验三道、其他三家裸奔" 的异步 SSRF 表面。
+func validateEmbyURL(raw string) (string, error) {
+	return validateOutboundBaseURL(raw, "Emby")
 }
 
 func (a *App) embyHeaders() map[string]string {

@@ -1668,8 +1668,33 @@ func TestTelegramEndpointAcceptsCommonBaseURLs(t *testing.T) {
 	}
 	for base, want := range cases {
 		app.cfg().TelegramAPIURL = base
-		if got := app.telegramEndpoint("getMe"); got != want {
+		got, err := app.telegramEndpoint("getMe")
+		if err != nil {
+			t.Fatalf("telegramEndpoint(%q) err=%v", base, err)
+		}
+		if got != want {
 			t.Fatalf("telegramEndpoint(%q) = %q, want %q", base, got, want)
+		}
+	}
+}
+
+// TestTelegramEndpointRejectsUnsafeBaseURLs 验证 telegramEndpoint 现在会
+// 否决 link-local / 元数据 IP / 非 http(s) scheme 的 base URL，避免 bot
+// token 在拼出 /bot<TOKEN>/method 之前就被发到攻击者控制的目标。
+func TestTelegramEndpointRejectsUnsafeBaseURLs(t *testing.T) {
+	app := newTestApp(t)
+	app.cfg().TelegramMode = true
+	app.cfg().TelegramBotToken = "123:ABC"
+	cases := []string{
+		"http://169.254.169.254",
+		"http://100.100.100.200",
+		"http://0.0.0.0",
+		"javascript:alert(1)",
+	}
+	for _, base := range cases {
+		app.cfg().TelegramAPIURL = base
+		if _, err := app.telegramEndpoint("getMe"); err == nil {
+			t.Fatalf("telegramEndpoint(%q) should reject but returned nil error", base)
 		}
 	}
 }
@@ -3235,6 +3260,45 @@ func TestValidateEmbyURLRejectsUnsafeTargets(t *testing.T) {
 				t.Fatalf("validateEmbyURL(%q) err=%v, wantErr=%v", tc.input, err, tc.wantErr)
 			}
 		})
+	}
+}
+
+// TestValidateOutboundBaseURLForAllServices 锁定 Bangumi / Telegram / TMDB
+// 与 Emby 共享同一套 SSRF 否决：scheme 必须 http(s)、host 不能是 link-local
+// /unspecified / 阿里云 magic IP，且 base URL 不允许带 query / fragment。
+// 这条测试存在的意义是防止以后有人单独修 Emby 校验时漏改其他三家。
+func TestValidateOutboundBaseURLForAllServices(t *testing.T) {
+	type tc struct {
+		input   string
+		wantErr bool
+	}
+	cases := []tc{
+		{"https://api.example.com", false},
+		{"http://10.0.0.5", false},
+		{"http://127.0.0.1:8080", false},
+		{"http://169.254.169.254", true},
+		{"http://100.100.100.200", true},
+		{"http://[fe80::1]", true},
+		{"http://0.0.0.0", true},
+		{"javascript:alert(1)", true},
+		{"http:///path", true},
+		{"http://api.example.com/?k=v", true},
+		{"http://api.example.com/#x", true},
+	}
+	for _, svc := range []string{"Bangumi", "Telegram", "TMDB", "Emby"} {
+		for _, c := range cases {
+			c := c
+			t.Run(svc+"_"+c.input, func(t *testing.T) {
+				_, err := validateOutboundBaseURL(c.input, svc)
+				gotErr := err != nil
+				if gotErr != c.wantErr {
+					t.Fatalf("validateOutboundBaseURL(%q,%s) err=%v wantErr=%v", c.input, svc, err, c.wantErr)
+				}
+				if err != nil && !strings.Contains(err.Error(), svc) {
+					t.Fatalf("error message must surface service name %q, got %q", svc, err.Error())
+				}
+			})
+		}
 	}
 }
 
