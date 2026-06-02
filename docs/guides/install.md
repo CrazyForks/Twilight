@@ -146,7 +146,8 @@ pnpm start -p 3000
 
 - 同域部署：前端把 `/api/*` 反代到后端时，`NEXT_PUBLIC_API_URL` 可以留空。
 - 分离域名部署：必须把 `NEXT_PUBLIC_API_URL` 设为后端的 HTTPS 地址，并在后端 `cors_origins` 中逐项列出前端域名。
-- 如果后端改了 `session_cookie_name`（`TWILIGHT_SESSION_COOKIE_NAME`），前端 Next 服务也必须配置同名的 `TWILIGHT_SESSION_COOKIE_NAME`，否则服务端路由守卫读不到登录 cookie。
+- 如果后端改了 `session_cookie_name`（`TWILIGHT_SESSION_COOKIE_NAME`），前端 Next 服务也应配置同名的 `TWILIGHT_SESSION_COOKIE_NAME`，确保同源部署或强制开启服务端路由守卫时能读到登录 cookie。
+- 当 `NEXT_PUBLIC_API_URL` 指向不同 origin 时，WebUI 默认关闭服务端 cookie 守卫，由客户端 layout 调 `/users/me` 校验登录态，避免登录成功后因 Web 域读不到 API 域 cookie 反复跳回 `/login`。
 
 `cors_origins` 只能填写协议、主机和端口，例如 `https://panel.example.com`；尾斜杠会被自动处理，但不要带 `/admin` 这类路径。
 
@@ -160,9 +161,10 @@ pnpm start -p 3000
 | `cors_origins` / `TWILIGHT_API_CORS_ORIGINS` | 前端 HTTPS 域名 | 显式逐项列出，例如 `https://app.example.com`。 |
 | `session_cookie_samesite` / `TWILIGHT_SESSION_COOKIE_SAMESITE` | `Strict` 或 `None` | 同站部署用 `Strict`；前后端跨域必须用 `None`（且 `secure=true`）。 |
 | `session_cookie_domain` / `TWILIGHT_SESSION_COOKIE_DOMAIN` | `.example.com` | 仅在前端与 API 是不同子域时设置为共同顶级域，让会话 cookie 跨子域共享；单 origin 部署应留空，写 Domain 反而扩大暴露面。 |
+| `TWILIGHT_WEBUI_SESSION_COOKIE_GUARD` | 留空 / `true` / `false` | WebUI 服务端路由守卫开关。留空时同源启用、跨 origin API 关闭；确认跨子域 cookie 已共享且希望 SSR 阶段拦截时可设 `true`。 |
 
 - 不要把 `*` 作为带 Cookie 登录态接口的 CORS Origin——含 `*` 时浏览器会禁用 Cookie，登录会失败。
-- 双子域场景（如 webui `https://twilight.example.com`、API `https://twilightapi.example.com`）必须设置 `session_cookie_domain = ".example.com"`，否则浏览器把 cookie 锁在 API 子域，webui 的鉴权请求一律 401，Next 中间件也读不到登录 cookie。
+- 双子域场景（如 webui `https://twilight.example.com`、API `https://twilightapi.example.com`）若希望浏览器对两个子域都携带会话，必须设置 `session_cookie_domain = ".example.com"`。未共享 cookie 时，API 鉴权请求会返回 401；WebUI 的服务端路由守卫默认不会在跨 origin API 下误判并重定向，但客户端仍会按 `/users/me` 的 401 清理登录态。
 
 ### 可信代理
 

@@ -1,6 +1,10 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { getSessionCookieName } from "@/lib/session-cookie";
+import {
+  getSessionCookieName,
+  requestOriginFromHeaders,
+  shouldUseSessionCookieGuard,
+} from "@/lib/session-cookie";
 
 /**
  * (auth) 路由组覆盖 /login、/register、/forgot-password。这些页面对"已登录
@@ -12,8 +16,9 @@ import { getSessionCookieName } from "@/lib/session-cookie";
  * 回 /dashboard。这个窗口期对快网络来说一闪而过，对慢机器/慢网络则是几百
  * 毫秒的诡异闪烁。
  *
- * 改成 server component：SSR 阶段读会话 cookie，存在直接 302
- * 到 /dashboard，不存在才正常渲染壳子。与 page.tsx / middleware 的策略保持一致——
+ * 改成 server component：同源 / 共享 cookie 域部署下，SSR 阶段读会话 cookie，
+ * 存在直接 302 到 /dashboard，不存在才正常渲染壳子。跨 origin 直连 API 时
+ * Web 域可能读不到 API 域 cookie，此处不做服务端跳转，避免误判。
  * "cookie 仅证明曾登录过，session 是否真的有效仍由后端在每个 API 校验"。
  */
 export default async function AuthLayout({
@@ -21,8 +26,10 @@ export default async function AuthLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const sessionCookie = (await cookies()).get(getSessionCookieName())?.value;
-  if (sessionCookie) {
+  const requestHeaders = await headers();
+  const useCookieGuard = shouldUseSessionCookieGuard(requestOriginFromHeaders(requestHeaders));
+  const sessionCookie = useCookieGuard ? (await cookies()).get(getSessionCookieName())?.value : "";
+  if (useCookieGuard && sessionCookie) {
     redirect("/dashboard");
   }
   return (

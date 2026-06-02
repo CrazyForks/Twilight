@@ -73,7 +73,7 @@ GET /api/v1/apikey/status?apikey=<api_key>
 
 Cookie 鉴权的变更类请求（`POST` / `PUT` / `DELETE`）不再要求额外令牌。后端只校验有效登录会话、Bearer Token 或 API Key；`X-Twilight-Client: webui` 仅作为允许的 CORS 请求头保留，不参与鉴权。
 
-双子域部署时，只需要确保 `session_cookie_domain` 让前端站点与 API 站点能共享 `HttpOnly` session cookie。生产环境的凭据型 CORS 仍必须显式列出可信 HTTPS Origin，不能使用 `*`。
+双子域部署时，如需两个子域都能携带同一登录会话，应设置 `session_cookie_domain` 让前端站点与 API 站点共享 `HttpOnly` session cookie。生产环境的凭据型 CORS 仍必须显式列出可信 HTTPS Origin，不能使用 `*`。WebUI 服务端路由守卫默认只在同源 / 反代部署下启用；跨 origin API 场景由浏览器请求 `/users/me` 完成后端权威校验。
 
 更多机制说明见 [安全加固](../guides/security.md)。
 

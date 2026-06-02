@@ -2251,19 +2251,86 @@ func TestTelegramGroupUserPanelShowsEmbyInfoAndActions(t *testing.T) {
 
 	user := store.User{UID: 42, Username: "alpha", Role: store.RoleNormal, Active: true, TelegramID: 1001, TelegramUsername: "alpha_tg", EmbyID: "emby-user", EmbyUsername: "alpha-emby", RegisterTime: time.Now().Unix(), LibrarySelfService: true}
 	text := app.telegramGroupUserPanelText(context.Background(), user)
-	for _, want := range []string{"== Web 账号 ==", "== Emby 远端 ==", "远端用户名: remote-alpha", "远端状态: 禁用", "媒体库自助: 开启"} {
+	for _, want := range []string{"== Web 账号 ==", "== Emby 远端 ==", "远端用户名: remote-alpha", "远端状态: 禁用", "媒体库自助: 开启", "最近活动: 2026-01-02 03:04"} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("panel text missing %q:\n%s", want, text)
 		}
+	}
+	if strings.Contains(text, "T03:04:05Z") {
+		t.Fatalf("panel should normalize raw Emby activity time:\n%s", text)
 	}
 	if strings.Contains(text, "emby-user") || strings.Contains(text, "emby-token") {
 		t.Fatalf("panel leaked sensitive Emby identifier/token:\n%s", text)
 	}
 
 	labels := telegramInlineButtonLabels(app.telegramGroupUserPanelMarkup("tok", user, ""))
-	for _, want := range []string{"禁用 Emby", "启用 Emby", "删除 Emby", "删除用户"} {
+	for _, want := range []string{"关闭面板", "禁用 Emby", "启用 Emby", "删除 Emby", "删除用户"} {
 		if !stringSliceContains(labels, want) {
 			t.Fatalf("panel buttons missing %q: %#v", want, labels)
+		}
+	}
+}
+
+func TestTelegramPanelCloseRequiresAdminAndDeletesPanel(t *testing.T) {
+	app := newTestApp(t)
+	app.cfg().TelegramMode = true
+	app.cfg().TelegramBotToken = "123:ABC"
+	app.cfg().TelegramAdminIDs = []int64{9001}
+	tgRequests := make(chan map[string]any, 12)
+	tg := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Error(err)
+		}
+		body["_path"] = r.URL.Path
+		select {
+		case tgRequests <- body:
+		default:
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"result":true}`))
+	}))
+	defer tg.Close()
+	app.cfg().TelegramAPIURL = tg.URL
+
+	user, err := app.store().CreateUser(store.User{Username: "close-target", Role: store.RoleNormal, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	panel := telegramPanelContext{Token: "tok-close", ChatID: -1001, MessageID: 9001, CommandMessageID: 77, TargetUID: user.UID, ExpiresAt: time.Now().Add(telegramPanelTTL).Unix()}
+	app.telegramSavePanel(panel)
+	defer app.telegramDeletePanel(panel.Token)
+
+	callback := func(actorID int64, callbackID string) map[string]any {
+		return map[string]any{
+			"id":   callbackID,
+			"data": "gadm:act:close:" + panel.Token,
+			"from": map[string]any{"id": actorID},
+			"message": map[string]any{
+				"message_id": panel.MessageID,
+				"chat":       map[string]any{"id": panel.ChatID},
+			},
+		}
+	}
+
+	app.telegramHandleCallback(context.Background(), callback(9002, "cb-denied"))
+	if _, ok := app.telegramPanel(panel.Token); !ok {
+		t.Fatal("non-admin close removed the panel")
+	}
+
+	app.telegramHandleCallback(context.Background(), callback(9001, "cb-close"))
+	if _, ok := app.telegramPanel(panel.Token); ok {
+		t.Fatal("admin close did not remove the panel")
+	}
+
+	deadline := time.After(time.Second)
+	for {
+		select {
+		case req := <-tgRequests:
+			if req["_path"] == "/bot123:ABC/deleteMessage" && numeric(req["chat_id"]) == panel.ChatID && numeric(req["message_id"]) == panel.MessageID {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("admin close did not delete Telegram message")
 		}
 	}
 }
@@ -2349,8 +2416,8 @@ func TestTelegramProtectedTargetUsesUnifiedProtectedUsers(t *testing.T) {
 			t.Fatalf("expected protected Telegram target: %#v", user)
 		}
 		labels := telegramInlineButtonLabels(app.telegramGroupUserPanelMarkup("tok", user, ""))
-		if len(labels) != 1 || labels[0] != "刷新" {
-			t.Fatalf("protected target should only expose refresh button, got %#v", labels)
+		if len(labels) != 2 || labels[0] != "刷新" || labels[1] != "关闭面板" {
+			t.Fatalf("protected target should only expose refresh and close buttons, got %#v", labels)
 		}
 	}
 }

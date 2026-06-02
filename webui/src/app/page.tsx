@@ -1,6 +1,10 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { getSessionCookieName } from "@/lib/session-cookie";
+import {
+  getSessionCookieName,
+  requestOriginFromHeaders,
+  shouldUseSessionCookieGuard,
+} from "@/lib/session-cookie";
 
 /**
  * Root path 的唯一职责是：把请求重定向到 /dashboard 或 /login。
@@ -16,14 +20,21 @@ import { getSessionCookieName } from "@/lib/session-cookie";
  *      /dashboard 之间做服务端 redirect，根路径反而退化到客户端 effect，
  *      逻辑分裂，新人难判断"哪个文件在主导跳转"。
  *
- * 改成 server component：SSR 阶段就读 cookie 决定 redirect 目标，浏览器
- * 收到的第一份 HTTP 响应就是 302，不需要等 React 跑起来。
+ * 同源 / 共享 cookie 域部署下，SSR 阶段就读 cookie 决定 redirect 目标，浏览器
+ * 收到的第一份 HTTP 响应就是 302，不需要等 React 跑起来。跨 origin 直连 API
+ * 时 Web 域可能读不到 API 域 cookie，此时直接进入 /dashboard，由客户端 layout
+ * 调 /users/me 做权威校验，避免已登录用户被根路径送回 /login。
  *
  * 注意：cookie 仅证明"曾经登录过"——session 是否真的有效仍由后端在每个
  * API 请求里校验，与 middleware.ts 注释里说的同一道理。这里只为消除 SSR
  * 阶段的肉眼闪烁，不替代鉴权。
  */
 export default async function Home() {
+  const requestHeaders = await headers();
+  if (!shouldUseSessionCookieGuard(requestOriginFromHeaders(requestHeaders))) {
+    redirect("/dashboard");
+  }
+
   const sessionCookie = (await cookies()).get(getSessionCookieName())?.value;
   redirect(sessionCookie ? "/dashboard" : "/login");
 }

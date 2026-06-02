@@ -4,7 +4,7 @@ import {
   PROTECTED_ROUTE_PREFIXES,
   pathMatches,
 } from "@/lib/auth-routes";
-import { getSessionCookieName } from "@/lib/session-cookie";
+import { getSessionCookieName, shouldUseSessionCookieGuard } from "@/lib/session-cookie";
 
 /**
  * Middleware：CSP 头 + 服务端 session cookie 守卫。
@@ -40,15 +40,18 @@ import { getSessionCookieName } from "@/lib/session-cookie";
  *
  * 后端在登录成功时写会话 cookie（默认 `twilight_session`，可通过
  * `TWILIGHT_SESSION_COOKIE_NAME` 与后端 `session_cookie_name` 对齐）。
- * 客户端 JS 拿不到，但 middleware 在 server 端可以读：
+ * 客户端 JS 拿不到，但同源 / 共享 cookie 域部署时 middleware 在 server 端可以读：
  *
  *   - protectedPrefixes 里的路径若没有 cookie ⇒ 302 -> /login?next=<path>
  *   - authPrefixes 里的路径若已有 cookie ⇒ 302 -> /dashboard
  *
  * 注意：cookie 仅证明"曾经登录过"，session 是否真的有效仍由后端在每个 API
  * 请求里校验；这里的目的只是消除 SSR 阶段的"先渲染管理面板，再被 client
- * effect 踢走"闪烁，不替代后端鉴权。前端的 router 仍然保留 useEffect 兜底，
- * 应对"cookie 还在但被 server 标记 invalid / 5xx 后清掉"的退化场景。
+ * effect 踢走"闪烁，不替代后端鉴权。若 `NEXT_PUBLIC_API_URL` 指向不同 origin，
+ * 默认关闭这层 cookie 守卫，避免 API 域 cookie 无法被 Web 域读取时形成
+ * `/dashboard -> /login -> /dashboard` 循环；此时由客户端 layout 调 `/users/me`
+ * 完成权威校验。需要在跨 origin 共享 cookie 域并保留守卫时，可设置
+ * `TWILIGHT_WEBUI_SESSION_COOKIE_GUARD=true`。
  */
 
 const SESSION_COOKIE = getSessionCookieName();
@@ -72,13 +75,14 @@ function safeOrigin(raw: string | undefined): string {
 
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
-  const hasSession = Boolean(request.cookies.get(SESSION_COOKIE)?.value);
+  const useCookieGuard = shouldUseSessionCookieGuard(request.nextUrl.origin);
+  const hasSession = useCookieGuard && Boolean(request.cookies.get(SESSION_COOKIE)?.value);
 
   // 1) 未登录访问受保护页面 → 直接 302 到 /login？next=...
   //    用 redirect 而不是 rewrite：浏览器地址栏要变成 /login，避免用户在
   //    一个看起来仍在 /admin 的 URL 上看到登录页（既会让书签错乱，也容易
   //    被钓鱼站借用）。`next` 仅在白名单内才回填，避免 open redirect。
-  if (!hasSession && pathMatches(pathname, PROTECTED_ROUTE_PREFIXES)) {
+  if (useCookieGuard && !hasSession && pathMatches(pathname, PROTECTED_ROUTE_PREFIXES)) {
     const loginURL = new URL("/login", request.url);
     loginURL.searchParams.set("next", pathname + (search || ""));
     return NextResponse.redirect(loginURL);
@@ -86,7 +90,7 @@ export function middleware(request: NextRequest) {
 
   // 2) 已登录访问登录/注册/找回密码 → 直接送回 /dashboard，避免回退按钮
   //    把已登录用户卡在登录页上反复 submit。
-  if (hasSession && pathMatches(pathname, AUTH_ROUTE_PREFIXES)) {
+  if (useCookieGuard && hasSession && pathMatches(pathname, AUTH_ROUTE_PREFIXES)) {
     return NextResponse.redirect(new URL("/dashboard", request.url));
   }
 

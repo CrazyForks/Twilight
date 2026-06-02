@@ -115,6 +115,7 @@ bash start_backend_dev.sh
 - 设置了 `NEXT_PUBLIC_API_URL` 时，浏览器端直连该后端地址。
 - 未设置 `NEXT_PUBLIC_API_URL` 时（典型的本地开发），Next 的 `rewrites` 会把 `/api/*` 代理到 `BACKEND_URL`（默认 `http://localhost:5000`），避免跨域。
 - `TWILIGHT_SESSION_COOKIE_NAME` 必须与后端 `session_cookie_name` / `TWILIGHT_SESSION_COOKIE_NAME` 保持一致，默认 `twilight_session`；仅在改过后端会话 Cookie 名时才需要设置。
+- WebUI 的服务端 cookie 守卫默认只在同源 / 反代部署下启用；当 `NEXT_PUBLIC_API_URL` 指向不同 origin 时，受保护路由交给客户端 layout 调 `/users/me` 校验，避免 Web 域读不到 API 域 cookie 导致登录后被踢回 `/login`。若跨子域已正确共享 cookie 且需要保留服务端守卫，可设置 `TWILIGHT_WEBUI_SESSION_COOKIE_GUARD=true`。
 - `SITE_NAME` / `SITE_TITLE` / `SITE_DESCRIPTION` / `SITE_ICON` 是运行时可注入的展示文案，由 `app/layout.tsx` 每次请求读取，改完即生效，无需重新构建。
 
 ### 前端契约

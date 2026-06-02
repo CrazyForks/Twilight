@@ -146,6 +146,7 @@ systemd 部署对应三个服务单元：`twilight`、`twilight-bot`、`twilight
 | `TWILIGHT_SESSION_COOKIE_SAMESITE` | `lax` / `strict` / `none`。 |
 | `TWILIGHT_SESSION_COOKIE_DOMAIN` | 跨子域共享会话时填父域，例如 `.example.com`。 |
 | `TWILIGHT_SESSION_TTL_SECONDS` | 会话有效期（秒）。 |
+| `TWILIGHT_WEBUI_SESSION_COOKIE_GUARD` | WebUI 服务端路由守卫开关；留空时同源启用、跨 origin API 关闭，可显式设 `true` / `false`。 |
 | `TWILIGHT_BOT_INTERNAL_SECRET` | Bot 内部回调密钥。 |
 | `TWILIGHT_ADMIN_UIDS` / `TWILIGHT_ADMIN_USERNAMES` | 启动时强制提权的管理员 UID / 用户名列表。 |
 

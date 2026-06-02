@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -69,9 +70,10 @@ func (a *App) telegramResolveGroupUserTargetValues(query string, replyTelegramID
 
 func (a *App) telegramSendGroupAdminAuth(ctx context.Context, chatID, commandMessageID int64, fields []string, message map[string]any) {
 	panel := a.telegramCreateAuthPanel(chatID, commandMessageID, telegramCommandQuery(fields), telegramReplyTelegramID(message))
-	markup := telegramInlineKeyboard([][]telegramInlineButton{{
-		{Text: "验证管理员身份", Data: "gadm:auth:" + panel.Token},
-	}})
+	markup := telegramInlineKeyboard([][]telegramInlineButton{
+		{{Text: "验证管理员身份", Data: "gadm:auth:" + panel.Token}},
+		{{Text: "关闭面板", Data: "gadm:act:close:" + panel.Token}},
+	})
 	messageID, err := a.telegramSendMessageWithMarkup(ctx, chatID, "匿名管理员指令需要先验证真实 Telegram 身份。", markup)
 	if err != nil {
 		return
@@ -286,6 +288,12 @@ func (a *App) telegramHandleCallback(ctx context.Context, callback map[string]an
 		return
 	}
 	action := parts[2]
+	if action == "close" {
+		a.telegramDeletePanel(panel.Token)
+		_ = a.telegramAnswerCallbackQuery(ctx, callbackID, "面板已关闭。", false)
+		_ = a.telegramDeleteMessage(ctx, panel.ChatID, panel.MessageID)
+		return
+	}
 	panel = a.telegramTouchPanel(panel)
 	_ = a.telegramAnswerCallbackQuery(ctx, callbackID, "操作处理中。", false)
 	a.telegramApplyPanelAction(ctx, panel, action)
@@ -539,19 +547,19 @@ func (a *App) telegramGroupUserPanelEmbyLines(ctx context.Context, u store.User)
 	if boolish(policy["IsAdministrator"]) {
 		adminState = "管理员"
 	}
-	lastActivity := firstNonEmpty(asString(remote["LastActivityDate"]), asString(remote["DateLastActivity"]), asString(remote["LastLoginDate"]), "-")
 	return append(lines,
 		"远端用户名: "+remoteName,
 		"远端状态: "+remoteStatus,
 		"远端权限: "+adminState,
 		"隐藏状态: "+telegramYesNoLabel(boolish(policy["IsHidden"])),
-		"最近活动: "+truncateString(lastActivity, 80),
+		"最近活动: "+telegramActivityTimeLabel(remote["LastActivityDate"], remote["DateLastActivity"], remote["LastLoginDate"]),
 	)
 }
 
 func (a *App) telegramGroupUserPanelMarkup(token string, u store.User, confirmAction string) any {
 	panelRows := [][]telegramInlineButton{{
 		{Text: "刷新", Data: "gadm:act:refresh:" + token},
+		{Text: "关闭面板", Data: "gadm:act:close:" + token},
 	}}
 	protected := a.telegramProtectedTarget(u)
 	if protected {
@@ -665,6 +673,78 @@ func telegramUnixTimeLabel(ts int64) string {
 		return "-"
 	}
 	return time.Unix(ts, 0).Format("2006-01-02 15:04")
+}
+
+func telegramActivityTimeLabel(values ...any) string {
+	for _, value := range values {
+		raw := strings.TrimSpace(asString(value))
+		if raw == "" {
+			continue
+		}
+		if t, ok := telegramParseActivityTime(raw); ok {
+			return telegramTimeLabel(t)
+		}
+		return truncateString(raw, 80)
+	}
+	return "-"
+}
+
+func telegramParseActivityTime(raw string) (time.Time, bool) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || strings.EqualFold(trimmed, "null") {
+		return time.Time{}, true
+	}
+	if n, err := strconv.ParseFloat(trimmed, 64); err == nil {
+		if n <= 0 {
+			return time.Time{}, true
+		}
+		return telegramUnixNumberTime(n), true
+	}
+
+	for _, layout := range []string{
+		time.RFC3339Nano,
+		"2006-01-02T15:04:05.999999999",
+		"2006-01-02T15:04:05",
+		"2006-01-02 15:04:05.999999999",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+	} {
+		var (
+			t   time.Time
+			err error
+		)
+		if strings.Contains(layout, "Z07") {
+			t, err = time.Parse(layout, trimmed)
+		} else {
+			t, err = time.ParseInLocation(layout, trimmed, time.Local)
+		}
+		if err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func telegramUnixNumberTime(value float64) time.Time {
+	switch {
+	case value >= 1e18:
+		return time.Unix(0, int64(value)).UTC()
+	case value >= 1e15:
+		return time.UnixMicro(int64(value)).UTC()
+	case value >= 1e12:
+		return time.UnixMilli(int64(value)).UTC()
+	default:
+		seconds := int64(value)
+		nanos := int64((value - float64(seconds)) * 1e9)
+		return time.Unix(seconds, nanos).UTC()
+	}
+}
+
+func telegramTimeLabel(t time.Time) string {
+	if t.IsZero() || t.Year() <= 1 {
+		return "-"
+	}
+	return t.Format("2006-01-02 15:04")
 }
 
 func firstNonZeroInt64(values ...int64) int64 {

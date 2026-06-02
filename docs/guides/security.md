@@ -55,6 +55,7 @@ allow_credential = true
   - `session_cookie_secure = true`（默认即 `true`；纯 HTTP 调试才显式关闭，否则会话明文走线）；
   - 合理的 `session_cookie_samesite`（默认 `lax`，可选 `strict` / `none`）。
 - session cookie（默认名 `twilight_session`）为 `HttpOnly`。`session_cookie_domain` 单 origin 部署留空；双子域部署（webui 与 API 不同子域）需设为 `.example.com` 让两子域共享 cookie。
+- WebUI 服务端 cookie 守卫只用于减少 SSR 闪烁，不替代后端鉴权；跨 origin API 默认关闭该守卫，由客户端请求 `/users/me` 获取后端权威登录态。确认跨子域 cookie 已共享时，可用 `TWILIGHT_WEBUI_SESSION_COOKIE_GUARD=true` 强制启用。
 - 会话 TTL 由 `session_cookie_ttl`（默认 7 天）控制；登出会清除 session cookie。
 
 ### 3.3 Cookie 写请求
