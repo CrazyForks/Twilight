@@ -244,11 +244,10 @@ class ApiClient {
   }
 
   async getRegisterBindCodeStatus(code: string, signal?: AbortSignal) {
-    const q = new URLSearchParams({ code, wait: "30" }).toString();
+    const q = new URLSearchParams({ code }).toString();
     // 后端约定：code 在 DB 不存在 / 已过期 / 已确认 都是 *终态*，
     // 通过 data.terminal === true 表示；其中 invalid 区分"不存在/过期"和"已确认"。
     // 这一端点不会再为业务无效抛 HTTP 404——上面的字段是唯一可信信号。
-    // wait=30 启用 HTTP long-poll：后端最多 hold 30s，状态变化时立即返回。
     return apiRequest<{
       code?: string;
       confirmed?: boolean;
@@ -258,7 +257,7 @@ class ApiClient {
     }>(
       `/users/telegram/register/bind-code/status?${q}`,
       { signal },
-      { timeoutMs: 45_000 },
+      { timeoutMs: 10_000 },
     );
   }
 
@@ -1509,7 +1508,7 @@ class ApiClient {
   }
 
   async createRegcode(data: CreateRegcodeData) {
-    return this.request<{ codes: string[]; count: number; decoy?: boolean; target_username?: string }>("/admin/regcodes", {
+    return this.request<{ codes: string[]; count: number; decoy?: boolean; target_username?: string; target_telegram_username?: string; target_telegram_id?: number }>("/admin/regcodes", {
       method: "POST",
       body: JSON.stringify(data),
     });

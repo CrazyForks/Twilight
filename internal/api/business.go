@@ -431,22 +431,24 @@ func regcodeDTO(code store.RegCode) map[string]any {
 	}
 	usedByUIDs := regcodeUsedByUIDs(code)
 	return map[string]any{
-		"code":                 code.Code,
-		"type":                 code.Type,
-		"type_name":            regcodeTypeName(code.Type),
-		"is_decoy":             code.IsDecoy,
-		"validity_time":        code.ValidityTime,
-		"use_count":            code.UseCount,
-		"use_count_limit":      code.UseCountLimit,
-		"days":                 normalizeRegCodeDays(code.Days),
-		"active":               code.Active,
-		"status":               regcodeStatus(code),
-		"note":                 code.Note,
-		"target_username":      code.TargetUsername,
-		"created_time":         created,
-		"used_by":              joinInt64(usedByUIDs),
-		"used_by_uids":         usedByUIDs,
-		"used_by_telegram_ids": code.UsedByTelegramIDs,
+		"code":                     code.Code,
+		"type":                     code.Type,
+		"type_name":                regcodeTypeName(code.Type),
+		"is_decoy":                 code.IsDecoy,
+		"validity_time":            code.ValidityTime,
+		"use_count":                code.UseCount,
+		"use_count_limit":          code.UseCountLimit,
+		"days":                     normalizeRegCodeDays(code.Days),
+		"active":                   code.Active,
+		"status":                   regcodeStatus(code),
+		"note":                     code.Note,
+		"target_username":          code.TargetUsername,
+		"target_telegram_username": code.TargetTelegramUsername,
+		"target_telegram_id":       zeroNil(code.TargetTelegramID),
+		"created_time":             created,
+		"used_by":                  joinInt64(usedByUIDs),
+		"used_by_uids":             usedByUIDs,
+		"used_by_telegram_ids":     code.UsedByTelegramIDs,
 	}
 }
 
@@ -463,6 +465,21 @@ func (a *App) regcodeDTO(code store.RegCode) map[string]any {
 	if strings.TrimSpace(code.TargetUsername) != "" {
 		if user, ok := a.store().FindUserByUsername(code.TargetUsername); ok {
 			item["target_uid"] = user.UID
+			item["target_resolved_username"] = user.Username
+		}
+	} else if code.TargetTelegramID != 0 {
+		if user, ok := a.store().FindUserByTelegramID(code.TargetTelegramID); ok {
+			item["target_uid"] = user.UID
+			item["target_resolved_username"] = user.Username
+		}
+	} else if strings.TrimSpace(code.TargetTelegramUsername) != "" {
+		target := normalizeRegcodeTargetTelegramUsername(code.TargetTelegramUsername)
+		for _, user := range a.store().ListUsers() {
+			if normalizeRegcodeTargetTelegramUsername(user.TelegramUsername) == target {
+				item["target_uid"] = user.UID
+				item["target_resolved_username"] = user.Username
+				break
+			}
 		}
 	}
 	return item
@@ -678,9 +695,9 @@ func (a *App) previewCode(ctx context.Context, code string, user store.User) (ma
 			a.recordViolation(ctx, user, code, "regcode_decoy", "使用诱饵注册码")
 			return nil, "", false
 		}
-		// Target username restriction: record violation if mismatch
-		if reg.TargetUsername != "" && !strings.EqualFold(reg.TargetUsername, user.Username) {
-			a.recordViolation(ctx, user, code, "regcode_target_mismatch", "使用指名注册码（目标用户: "+reg.TargetUsername+"）")
+		// Target restriction: record violation if mismatch.
+		if reason := regcodeTargetMismatchReason(reg, user); reason != "" {
+			a.recordViolation(ctx, user, code, "regcode_target_mismatch", "使用指名注册码（"+reason+"）")
 			return nil, "", false
 		}
 		if regcodeStatus(reg) != "available" {
@@ -716,6 +733,19 @@ func (a *App) previewCode(ctx context.Context, code string, user store.User) (ma
 		return codePreview("invite", 1, invite.Days, inviter), "invite", true
 	}
 	return nil, "", false
+}
+
+func regcodeTargetMismatchReason(reg store.RegCode, user store.User) string {
+	if reg.TargetUsername != "" && !strings.EqualFold(reg.TargetUsername, user.Username) {
+		return "目标用户: " + reg.TargetUsername
+	}
+	if reg.TargetTelegramID != 0 && reg.TargetTelegramID != user.TelegramID {
+		return "目标 Telegram ID: " + strconv.FormatInt(reg.TargetTelegramID, 10)
+	}
+	if reg.TargetTelegramUsername != "" && normalizeRegcodeTargetTelegramUsername(reg.TargetTelegramUsername) != normalizeRegcodeTargetTelegramUsername(user.TelegramUsername) {
+		return "目标 Telegram 用户名: @" + normalizeRegcodeTargetTelegramUsername(reg.TargetTelegramUsername)
+	}
+	return ""
 }
 
 // recordViolation logs a code violation and applies the configured punitive action.

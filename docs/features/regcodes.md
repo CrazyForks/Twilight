@@ -36,11 +36,12 @@
 | `used_by` / `used_by_uids` / `used_by_telegram_ids` | 使用者记录（最近一次 UID、去重后的 UID 列表、去重后的 Telegram ID 列表），仅管理员页面可查。 |
 | `active` | 是否启用；停用后不可使用。用满次数时会被自动置为 `false`。 |
 | `is_decoy` | 是否为诱饵码（蜜罐）。 |
-| `target_username` | 指名卡码：非空时仅限该用户名（不区分大小写）使用。 |
+| `target_username` | 指名卡码：非空时仅限该 Web 用户名（不区分大小写）使用。 |
+| `target_telegram_username` / `target_telegram_id` | 指名卡码：非空时仅限匹配的 Telegram 用户名或 Telegram ID 使用；注册时需提供已确认的 Telegram 注册绑定码。 |
 | `created_at` / `created_time` | 创建时间戳（秒）；`created_time` 缺省时回落到 `created_at`。 |
 | `note` | 管理员备注（创建时截断到 120 字符）。 |
 
-> `OTHER`（JSON 元数据）是旧 Python 实现的字段，Go 版本已将 `decoy`、`target_username`、`note` 提升为结构体一级字段，不再有 `OTHER` 包裹。
+> `OTHER`（JSON 元数据）是旧 Python 实现的字段，Go 版本已将 `decoy`、`target_username`、`target_telegram_username`、`target_telegram_id`、`note` 提升为结构体一级字段，不再有 `OTHER` 包裹。
 
 ### 取值校验与规范化
 
@@ -52,6 +53,9 @@
 - `use_count_limit`：传 `0` 自动转 `1`；小于 `-1` 报错「使用次数上限只能为 -1 或正整数」。
 - `count`：批量生成数量，自动夹取到 `1`-`100`。
 - `target_username`：可选；非空时长度须为 3-32 字符，且不含 `/ \ @ : <空字符> < > " ' &`，否则返回 `REGCODE_TARGET_BAD`。
+- `target_telegram_username`：可选；可带或不带 `@`，保存时会去掉 `@` 并转小写；长度须为 5-32 字符，只能包含字母、数字和下划线。
+- `target_telegram_id`：可选；必须为正整数。
+- 三种指名目标（Web 用户名 / TG 用户名 / TG ID）只能指定一种，否则返回 `REGCODE_TARGET_BAD`。
 
 > 持久化时 `UpsertRegCode` 还会兜底：`validity_time==0 -> -1`、`use_count_limit==0 -> 1`、新建且未使用却 `active=false` 时强制 `active=true`。
 
@@ -70,6 +74,8 @@
   "random_algorithm": "base32-20",
   "decoy": false,
   "target_username": "",
+  "target_telegram_username": "",
+  "target_telegram_id": null,
   "note": ""
 }
 ```
@@ -136,7 +142,7 @@
 
 - **按 IP 限流**：每分钟最多 10 次，超限返回 `RATE_LIMITED`，防止枚举。
 - **不泄露使用者信息**：返回里没有 `used_by` / Telegram 等字段。
-- 诱饵码（`is_decoy`）与指名码（`target_username` 非空）一律按「不存在」处理，返回 `REGCODE_NOT_FOUND`，避免在公开接口暴露其存在。
+- 诱饵码（`is_decoy`）与指名码（任一 `target_*` 非空）一律按「不存在」处理，返回 `REGCODE_NOT_FOUND`，避免在公开接口暴露其存在。
 
 ### 旧续期入口 `POST /api/v1/users/me/renew`（鉴权：AuthUser）
 
@@ -147,7 +153,7 @@
 当 `[SAR].register_code_limit` 开启且非首个管理员注册（`bootstrapMode`）时，注册必须带有效的 type=1 注册码：
 
 - 注册整体按 IP 限流（`rate_limit_register_per_10m`）；带注册码时再叠加一道 `register:regcode:<ip>` 限流，每分钟 10 次。
-- 注册码校验同样排除诱饵码、`type!=1`、用户名不匹配的指名码与不可用状态。
+- 注册码校验同样排除诱饵码、`type!=1`、指名目标不匹配与不可用状态。若注册卡码指定了 TG 用户名或 TG ID，注册请求必须携带已确认的 `telegram_bind_code`，后端用绑定码中的 Telegram 身份做匹配。
 - 建账号与消费注册码经 `CreateUserWithRegCode` 在同一把锁内原子完成，规避并发重复注册。
 
 ## 管理接口（鉴权：AuthAdmin）

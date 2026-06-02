@@ -89,6 +89,8 @@ export default function AdminRegcodesPage() {
     format: "",
     randomAlgorithm: "",
     targetUsername: "",
+    targetTelegramUsername: "",
+    targetTelegramId: "",
   });
   const [createDecoy, setCreateDecoy] = useState(false);
   const [isPermanentDays, setIsPermanentDays] = useState(false);
@@ -131,13 +133,13 @@ export default function AdminRegcodesPage() {
     setCreateDecoy(false);
     if (activeTab === "1") {
       setIsPermanentDays(false);
-      setCreateData({ days: "30", validityTime: "-1", useCountLimit: "1", count: "1", format: "", randomAlgorithm: "", targetUsername: "" });
+      setCreateData({ days: "30", validityTime: "-1", useCountLimit: "1", count: "1", format: "", randomAlgorithm: "", targetUsername: "", targetTelegramUsername: "", targetTelegramId: "" });
     } else if (activeTab === "2") {
       setIsPermanentDays(false);
-      setCreateData({ days: "30", validityTime: "72", useCountLimit: "1", count: "1", format: "", randomAlgorithm: "", targetUsername: "" });
+      setCreateData({ days: "30", validityTime: "72", useCountLimit: "1", count: "1", format: "", randomAlgorithm: "", targetUsername: "", targetTelegramUsername: "", targetTelegramId: "" });
     } else {
       setIsPermanentDays(true);
-      setCreateData({ days: "-1", validityTime: "-1", useCountLimit: "-1", count: "1", format: "", randomAlgorithm: "", targetUsername: "" });
+      setCreateData({ days: "-1", validityTime: "-1", useCountLimit: "-1", count: "1", format: "", randomAlgorithm: "", targetUsername: "", targetTelegramUsername: "", targetTelegramId: "" });
     }
   }, [activeTab, createOpen]);
 
@@ -145,6 +147,19 @@ export default function AdminRegcodesPage() {
     const count = parseInt(createData.count, 10);
     if (Number.isNaN(count) || count < 1 || count > 100) {
       toast({ title: "参数错误", description: "生成数量必须在 1-100 之间", variant: "destructive" });
+      return;
+    }
+    const targetUsername = createData.targetUsername.trim();
+    const targetTelegramUsername = createData.targetTelegramUsername.trim().replace(/^@+/, "");
+    const targetTelegramIdText = createData.targetTelegramId.trim();
+    const targetCount = [targetUsername, targetTelegramUsername, targetTelegramIdText].filter(Boolean).length;
+    if (targetCount > 1) {
+      toast({ title: "指名目标冲突", description: "用户名、TG 用户名、TG ID 只能填写其中一个", variant: "destructive" });
+      return;
+    }
+    const targetTelegramId = targetTelegramIdText ? Number.parseInt(targetTelegramIdText, 10) : undefined;
+    if (targetTelegramIdText && (!/^\d+$/.test(targetTelegramIdText) || !targetTelegramId || targetTelegramId <= 0)) {
+      toast({ title: "参数错误", description: "TG ID 必须为正整数", variant: "destructive" });
       return;
     }
     setIsCreating(true);
@@ -161,7 +176,9 @@ export default function AdminRegcodesPage() {
         decoy: createDecoy,
         format: createData.format.trim() || undefined,
         random_algorithm: createData.randomAlgorithm || undefined,
-        target_username: createData.targetUsername.trim() || undefined,
+        target_username: targetUsername || undefined,
+        target_telegram_username: targetTelegramUsername || undefined,
+        target_telegram_id: targetTelegramId,
       });
 
       if (res.success && res.data) {
@@ -485,6 +502,20 @@ export default function AdminRegcodesPage() {
     return "-";
   };
 
+  const resolvedTargetSuffix = (code: Regcode) => {
+    if (code.target_resolved_username && code.target_uid) return ` · ${code.target_resolved_username} / UID ${code.target_uid}`;
+    if (code.target_resolved_username) return ` · ${code.target_resolved_username}`;
+    if (code.target_uid) return ` · UID ${code.target_uid}`;
+    return "";
+  };
+
+  const regcodeTargetLabel = (code: Regcode) => {
+    if (code.target_username) return `Web: ${userLabel(code.target_username, code.target_uid)}`;
+    if (code.target_telegram_username) return `TG: @${code.target_telegram_username}${resolvedTargetSuffix(code)}`;
+    if (code.target_telegram_id) return `TG ID: ${code.target_telegram_id}${resolvedTargetSuffix(code)}`;
+    return "";
+  };
+
   const regcodeUsedByLabel = (code: Regcode) => {
     if (code.used_by_usernames?.length) return code.used_by_usernames.join("、");
     if (code.used_by_uids?.length) return code.used_by_uids.map((uid) => `UID ${uid}`).join("、");
@@ -616,15 +647,37 @@ export default function AdminRegcodesPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label>指定使用用户</Label>
+                  <Label>指定 Web 用户名</Label>
                   <Input
                     value={createData.targetUsername}
                     onChange={(e) => setCreateData({ ...createData, targetUsername: e.target.value })}
-                    placeholder="留空则不限制；填写用户名后仅该用户可用"
+                    placeholder="留空则不限制；仅该 Web 用户名可用"
                   />
                   <p className="text-[11px] text-muted-foreground">
-                    适用于注册码、续期码和白名单码。目标用户名需与 Web 账号用户名一致，比较时不区分大小写。
+                    与下面 TG 用户名 / TG ID 三选一；目标用户名比较时不区分大小写。
                   </p>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label>指定 TG 用户名</Label>
+                    <Input
+                      value={createData.targetTelegramUsername}
+                      onChange={(e) => setCreateData({ ...createData, targetTelegramUsername: e.target.value })}
+                      placeholder="如 username，不需要 @"
+                    />
+                    <p className="text-[11px] text-muted-foreground">用户注册或兑换时绑定的 Telegram 用户名必须匹配。</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>指定 TG ID</Label>
+                    <Input
+                      value={createData.targetTelegramId}
+                      onChange={(e) => setCreateData({ ...createData, targetTelegramId: e.target.value })}
+                      placeholder="如 123456789"
+                      inputMode="numeric"
+                    />
+                    <p className="text-[11px] text-muted-foreground">最稳定的指名方式；注册时需先完成 Telegram 绑定码验证。</p>
+                  </div>
                 </div>
 
                 <div className="space-y-2 rounded-xl border border-border/80 bg-muted/30 p-3">
@@ -916,7 +969,7 @@ export default function AdminRegcodesPage() {
       <Card>
         <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-[minmax(240px,1.2fr)_0.8fr_0.8fr_0.8fr_0.7fr_auto]">
           <Input
-            placeholder="搜索卡码 / 备注 / 使用 UID"
+            placeholder="搜索卡码 / 备注 / 使用 UID / 指名 TG"
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
           />
@@ -996,7 +1049,7 @@ export default function AdminRegcodesPage() {
                         <span className="mt-2 flex flex-wrap gap-1">
                           {getTypeBadge(code.type)}
                           {getStatusBadge(code)}
-                          {code.target_username ? <Badge variant="secondary">仅 {userLabel(code.target_username, code.target_uid)}</Badge> : null}
+                          {regcodeTargetLabel(code) ? <Badge variant="secondary">仅 {regcodeTargetLabel(code)}</Badge> : null}
                           {code.is_decoy ? <Badge variant="destructive">假卡码</Badge> : <Badge variant="outline">正常卡码</Badge>}
                         </span>
                       </span>
@@ -1141,7 +1194,7 @@ export default function AdminRegcodesPage() {
                             {getTypeBadge(code.type)}
                             {code.is_decoy ? <Badge variant="destructive">假卡码</Badge> : <Badge variant="outline">正常卡码</Badge>}
                           </div>
-                          {code.target_username ? <div className="truncate text-xs text-muted-foreground" title={userLabel(code.target_username, code.target_uid)}>仅限用户：{userLabel(code.target_username, code.target_uid)}</div> : null}
+                          {regcodeTargetLabel(code) ? <div className="truncate text-xs text-muted-foreground" title={regcodeTargetLabel(code)}>仅限：{regcodeTargetLabel(code)}</div> : null}
                           <div className="flex gap-1">
                             <Input
                               value={noteDrafts[code.code] ?? code.note ?? ""}

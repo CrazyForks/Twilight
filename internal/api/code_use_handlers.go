@@ -198,7 +198,7 @@ func (a *App) handleRegcodeCheck(w http.ResponseWriter, r *http.Request, _ Param
 	code := stringValue(payload, "reg_code")
 	if code != "" {
 		if reg, okReg := a.store().RegCode(code); okReg {
-			if reg.IsDecoy || reg.TargetUsername != "" {
+			if reg.IsDecoy || reg.TargetUsername != "" || reg.TargetTelegramUsername != "" || reg.TargetTelegramID != 0 {
 				failWithCode(w, http.StatusNotFound, ErrRegcodeNotFound, "注册码不存在")
 				return
 			}

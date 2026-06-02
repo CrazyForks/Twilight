@@ -466,7 +466,10 @@ export interface Regcode {
   status?: "available" | "disabled" | "used_up" | "expired";
   note?: string;
   target_username?: string;
+  target_telegram_username?: string;
+  target_telegram_id?: number;
   target_uid?: number;
+  target_resolved_username?: string;
   used: boolean;
   used_by?: number | string;
   used_by_uids?: number[];
@@ -487,6 +490,8 @@ export interface CreateRegcodeData {
   format?: string;
   random_algorithm?: string;
   target_username?: string;
+  target_telegram_username?: string;
+  target_telegram_id?: number;
 }
 
 export interface ConfigFieldOption {

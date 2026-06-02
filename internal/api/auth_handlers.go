@@ -307,15 +307,11 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request, _ Params) {
 			return
 		}
 		reg, okReg := a.store().RegCode(regCode)
-		if !okReg || reg.IsDecoy || reg.Type != 1 || reg.TargetUsername != "" && !strings.EqualFold(reg.TargetUsername, username) || regcodeStatus(reg) != "available" {
+		if !okReg || reg.IsDecoy || reg.Type != 1 || regcodeStatus(reg) != "available" {
 			failWithCode(w, http.StatusBadRequest, ErrRegcodeInvalid, "注册码无效、已用完或已过期")
 			return
 		}
 		registerReg = reg
-		if reached, current, limit := a.embyCapacityReachedExcluding(0, regCode, ""); reached {
-			failWithCode(w, http.StatusConflict, ErrEmbyCapacityReached, fmt.Sprintf("Emby 用户数量已达上限 %d/%d", current, limit))
-			return
-		}
 	}
 	var telegramID int64
 	var telegramUsername string
@@ -349,6 +345,16 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request, _ Params) {
 		}
 		telegramID = bind.TelegramID
 		telegramUsername = bind.TelegramUsername
+	}
+	if registerReg.Code != "" && regcodeTargetMismatchReason(registerReg, store.User{Username: username, TelegramID: telegramID, TelegramUsername: telegramUsername}) != "" {
+		failWithCode(w, http.StatusBadRequest, ErrRegcodeInvalid, "注册码无效、已用完或已过期")
+		return
+	}
+	if registerReg.Code != "" {
+		if reached, current, limit := a.embyCapacityReachedExcluding(0, regCode, ""); reached {
+			failWithCode(w, http.StatusConflict, ErrEmbyCapacityReached, fmt.Sprintf("Emby 用户数量已达上限 %d/%d", current, limit))
+			return
+		}
 	}
 	passwordHash, err := security.HashPassword(password)
 	if err != nil {

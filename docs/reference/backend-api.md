@@ -1119,9 +1119,14 @@ curl -X POST "http://localhost:5000/api/v1/admin/emby/sync" \
   "count": 1,
   "format": "TW-{type}-{random}",
   "random_algorithm": "base32-20",
-  "decoy": false
+  "decoy": false,
+  "target_username": "",
+  "target_telegram_username": "",
+  "target_telegram_id": null
 }
 ```
+
+- `target_username`、`target_telegram_username`、`target_telegram_id` 三者只能填写一个，用于生成指名卡码。
 
 ```bash
 curl -X POST "http://localhost:5000/api/v1/admin/regcodes" \

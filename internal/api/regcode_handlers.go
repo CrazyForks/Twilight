@@ -27,7 +27,7 @@ func (a *App) handleListRegcodes(w http.ResponseWriter, r *http.Request, _ Param
 				continue
 			}
 		}
-		if search != "" && !strings.Contains(strings.ToLower(code.Code+" "+code.Note+" "+code.TargetUsername+" "+joinInt64(regcodeUsedByUIDs(code))+" "+joinInt64(code.UsedByTelegramIDs)), search) {
+		if search != "" && !strings.Contains(strings.ToLower(code.Code+" "+code.Note+" "+code.TargetUsername+" "+code.TargetTelegramUsername+" "+strconv.FormatInt(code.TargetTelegramID, 10)+" "+joinInt64(regcodeUsedByUIDs(code))+" "+joinInt64(code.UsedByTelegramIDs)), search) {
 			continue
 		}
 		items = append(items, dto)
@@ -76,8 +76,29 @@ func (a *App) handleCreateRegcodes(w http.ResponseWriter, r *http.Request, _ Par
 	algorithm := firstNonEmpty(stringValue(payload, "random_algorithm"), a.cfg().RegCodeRandomAlgorithm, "base32-20")
 	codes := make([]string, 0, count)
 	targetUsername := strings.TrimSpace(stringValue(payload, "target_username"))
+	targetTelegramUsername := normalizeRegcodeTargetTelegramUsername(firstNonEmpty(stringValue(payload, "target_telegram_username"), stringValue(payload, "target_tg_username"), stringValue(payload, "target_tgusername"), stringValue(payload, "tgusername")))
+	rawTargetTelegramID := firstNonEmpty(stringValue(payload, "target_telegram_id"), stringValue(payload, "target_tg_id"), stringValue(payload, "target_tg_userid"), stringValue(payload, "target_tguserid"), stringValue(payload, "tguserid"))
+	targetTelegramID := numeric(rawTargetTelegramID)
 	if targetUsername != "" && !validRegcodeTargetUsername(targetUsername) {
 		failWithCode(w, http.StatusBadRequest, ErrRegcodeTargetBad, "目标用户名长度需为 3-32 个字符，且不能包含特殊路径或注入字符")
+		return
+	}
+	if targetTelegramUsername != "" && !validRegcodeTargetTelegramUsername(targetTelegramUsername) {
+		failWithCode(w, http.StatusBadRequest, ErrRegcodeTargetBad, "目标 Telegram 用户名需为 5-32 个字符，只能包含字母、数字和下划线")
+		return
+	}
+	if rawTargetTelegramID != "" && targetTelegramID <= 0 {
+		failWithCode(w, http.StatusBadRequest, ErrRegcodeTargetBad, "目标 Telegram ID 必须为正整数")
+		return
+	}
+	targetCount := 0
+	for _, hasTarget := range []bool{targetUsername != "", targetTelegramUsername != "", targetTelegramID > 0} {
+		if hasTarget {
+			targetCount++
+		}
+	}
+	if targetCount > 1 {
+		failWithCode(w, http.StatusBadRequest, ErrRegcodeTargetBad, "指名卡码只能指定一个目标：用户名、Telegram 用户名或 Telegram ID")
 		return
 	}
 	seen := map[string]bool{}
@@ -102,12 +123,12 @@ func (a *App) handleCreateRegcodes(w http.ResponseWriter, r *http.Request, _ Par
 			return
 		}
 		seen[code] = true
-		if err := a.store().UpsertRegCode(store.RegCode{Code: code, Type: codeType, ValidityTime: validity, UseCountLimit: useLimit, Days: days, Note: truncateString(stringValue(payload, "note"), 120), IsDecoy: boolValue(payload, "decoy", false), TargetUsername: targetUsername, Active: true}); statusFromError(w, err) {
+		if err := a.store().UpsertRegCode(store.RegCode{Code: code, Type: codeType, ValidityTime: validity, UseCountLimit: useLimit, Days: days, Note: truncateString(stringValue(payload, "note"), 120), IsDecoy: boolValue(payload, "decoy", false), TargetUsername: targetUsername, TargetTelegramUsername: targetTelegramUsername, TargetTelegramID: targetTelegramID, Active: true}); statusFromError(w, err) {
 			return
 		}
 		codes = append(codes, code)
 	}
-	ok(w, "注册码已创建", map[string]any{"codes": codes, "count": len(codes), "decoy": boolValue(payload, "decoy", false), "target_username": targetUsername})
+	ok(w, "注册码已创建", map[string]any{"codes": codes, "count": len(codes), "decoy": boolValue(payload, "decoy", false), "target_username": targetUsername, "target_telegram_username": targetTelegramUsername, "target_telegram_id": zeroNil(targetTelegramID)})
 }
 
 func (a *App) handleUpdateRegcode(w http.ResponseWriter, r *http.Request, params Params) {
@@ -138,6 +159,23 @@ func (a *App) handleDeleteRegcode(w http.ResponseWriter, r *http.Request, params
 
 func validRegcodeTargetUsername(username string) bool {
 	return len(username) >= 3 && len(username) <= 32 && !strings.ContainsAny(username, "/\\@:\x00<>\"'&")
+}
+
+func normalizeRegcodeTargetTelegramUsername(username string) string {
+	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(username), "@"))
+}
+
+func validRegcodeTargetTelegramUsername(username string) bool {
+	if len(username) < 5 || len(username) > 32 {
+		return false
+	}
+	for _, ch := range username {
+		if ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '_' {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 func (a *App) handleBatchDeleteRegcodes(w http.ResponseWriter, r *http.Request, _ Params) {

@@ -3331,6 +3331,124 @@ func TestTargetedRegcodesAreCreatedListedAndEnforced(t *testing.T) {
 	}
 }
 
+func TestTelegramTargetedRegcodesAreCreatedListedAndEnforced(t *testing.T) {
+	app := newTestApp(t)
+	_ = doJSON(app, http.MethodPost, "/api/v1/users/register", `{"username":"admin","password":"Admin123456"}`, nil)
+	adminLogin := doJSON(app, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"Admin123456"}`, nil)
+	adminCookie := findCookie(adminLogin.Result().Cookies(), "twilight_session")
+
+	created := doJSONWithHeaders(app, http.MethodPost, "/api/v1/admin/regcodes", `{"type":2,"days":10,"count":1,"target_telegram_id":4242,"format":"TGTG-{random}","random_algorithm":"digits-12"}`, []*http.Cookie{adminCookie}, map[string]string{"X-Twilight-Client": "webui"})
+	if created.Code != http.StatusOK {
+		t.Fatalf("create telegram targeted regcode status=%d body=%s", created.Code, created.Body.String())
+	}
+	var env envelope
+	if err := json.Unmarshal(created.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	code := env.Data.(map[string]any)["codes"].([]any)[0].(string)
+	reg, ok := app.store().RegCode(code)
+	if !ok || reg.TargetTelegramID != 4242 {
+		t.Fatalf("target telegram id was not saved: %#v", reg)
+	}
+	list := doJSONWithHeaders(app, http.MethodGet, "/api/v1/admin/regcodes?search=4242", ``, []*http.Cookie{adminCookie}, nil)
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), `"target_telegram_id":4242`) {
+		t.Fatalf("target telegram id was not searchable/listed, status=%d body=%s", list.Code, list.Body.String())
+	}
+
+	alpha, err := app.store().CreateUser(store.User{Username: "alpha", Role: store.RoleNormal, Active: true, TelegramID: 4242, TelegramUsername: "alpha_tg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	beta, err := app.store().CreateUser(store.User{Username: "beta", Role: store.RoleNormal, Active: true, TelegramID: 9898, TelegramUsername: "beta_tg"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/users/me/renew", strings.NewReader(`{"reg_code":"`+code+`"}`))
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, principal{User: beta}))
+	rr := httptest.NewRecorder()
+	app.handleRenew(rr, req, nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("non-target tg id user should not renew, status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	reg, _ = app.store().RegCode(code)
+	if reg.UseCount != 0 {
+		t.Fatalf("target tg mismatch consumed regcode, use_count=%d", reg.UseCount)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/users/me/renew", strings.NewReader(`{"reg_code":"`+code+`"}`))
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, principal{User: alpha}))
+	rr = httptest.NewRecorder()
+	app.handleRenew(rr, req, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("target tg id user should renew, status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	created = doJSONWithHeaders(app, http.MethodPost, "/api/v1/admin/regcodes", `{"type":2,"days":5,"count":1,"target_telegram_username":"@alpha_tg","format":"TGTU-{random}","random_algorithm":"digits-12"}`, []*http.Cookie{adminCookie}, map[string]string{"X-Twilight-Client": "webui"})
+	if created.Code != http.StatusOK {
+		t.Fatalf("create telegram username targeted regcode status=%d body=%s", created.Code, created.Body.String())
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	usernameCode := env.Data.(map[string]any)["codes"].([]any)[0].(string)
+	reg, ok = app.store().RegCode(usernameCode)
+	if !ok || reg.TargetTelegramUsername != "alpha_tg" {
+		t.Fatalf("target telegram username was not normalized/saved: %#v", reg)
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/users/me/renew", strings.NewReader(`{"reg_code":"`+usernameCode+`"}`))
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, principal{User: beta}))
+	rr = httptest.NewRecorder()
+	app.handleRenew(rr, req, nil)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("non-target tg username user should not renew, status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/users/me/renew", strings.NewReader(`{"reg_code":"`+usernameCode+`"}`))
+	req = req.WithContext(context.WithValue(req.Context(), principalKey, principal{User: alpha}))
+	rr = httptest.NewRecorder()
+	app.handleRenew(rr, req, nil)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("target tg username user should renew, status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRegisterCodeLimitHonorsTelegramTarget(t *testing.T) {
+	app := newTestApp(t)
+	adminResp := doJSON(app, http.MethodPost, "/api/v1/users/register", `{"username":"admin","password":"Admin123456"}`, nil)
+	if adminResp.Code != http.StatusCreated {
+		t.Fatalf("bootstrap register status=%d body=%s", adminResp.Code, adminResp.Body.String())
+	}
+	app.cfg().RegisterCodeLimit = true
+
+	if err := app.store().UpsertRegCode(store.RegCode{Code: "TG-REGISTER", Type: 1, Days: 7, ValidityTime: -1, UseCountLimit: 1, Active: true, TargetTelegramID: 424242}); err != nil {
+		t.Fatal(err)
+	}
+	missingBind := doJSON(app, http.MethodPost, "/api/v1/users/register", `{"username":"tg-target","password":"User123456","reg_code":"TG-REGISTER"}`, nil)
+	if missingBind.Code != http.StatusBadRequest {
+		t.Fatalf("telegram targeted register code without bind should fail, status=%d body=%s", missingBind.Code, missingBind.Body.String())
+	}
+	reg, _ := app.store().RegCode("TG-REGISTER")
+	if reg.UseCount != 0 {
+		t.Fatalf("missing bind consumed telegram targeted register code, use_count=%d", reg.UseCount)
+	}
+
+	now := time.Now().Unix()
+	if err := app.store().UpsertBindCode(store.BindCode{Code: "TGREG123456", Scene: "register", Confirmed: true, TelegramID: 424242, TelegramUsername: "target_tg", CreatedAt: now, ExpiresAt: now + 600}); err != nil {
+		t.Fatal(err)
+	}
+	created := doJSON(app, http.MethodPost, "/api/v1/users/register", `{"username":"tg-target","password":"User123456","reg_code":"TG-REGISTER","telegram_bind_code":"TGREG123456"}`, nil)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("telegram targeted register should succeed with matching bind, status=%d body=%s", created.Code, created.Body.String())
+	}
+	user, ok := app.store().FindUserByUsername("tg-target")
+	if !ok || user.TelegramID != 424242 || user.TelegramUsername != "target_tg" {
+		t.Fatalf("registered user did not inherit telegram bind: %#v", user)
+	}
+	reg, _ = app.store().RegCode("TG-REGISTER")
+	if reg.UseCount != 1 || reg.UsedBy != user.UID || len(reg.UsedByTelegramIDs) != 1 || reg.UsedByTelegramIDs[0] != 424242 {
+		t.Fatalf("telegram targeted register code usage was not persisted: %#v", reg)
+	}
+}
+
 func TestRegisterCodeLimitConsumesRegcodeAtomically(t *testing.T) {
 	app := newTestApp(t)
 	adminResp := doJSON(app, http.MethodPost, "/api/v1/users/register", `{"username":"admin","password":"Admin123456"}`, nil)

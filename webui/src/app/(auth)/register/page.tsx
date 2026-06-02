@@ -100,14 +100,14 @@ export default function RegisterPage() {
     }
   };
 
-  // 拿到绑定码后开始长轮询，直到 Bot 端确认或绑定码过期。
-  // 使用 HTTP long-poll（wait=30s）代替 2s 短轮询，减少无效请求。
+  // 拿到绑定码后短轮询，直到 Bot 端确认或绑定码过期。
   useEffect(() => {
     if (!bindCode || bindConfirmed) return;
 
     let cancelled = false;
     let toastedConfirmed = false;
-    const controller = new AbortController();
+    let timer: number | null = null;
+    let inFlight = false;
 
     const stopWithToast = (title: string, description: string) => {
       setBindCode("");
@@ -116,58 +116,62 @@ export default function RegisterPage() {
       toast({ title, description, variant: "destructive" });
     };
 
-    const poll = async () => {
-      while (!cancelled) {
-        try {
-          const res = await api.getRegisterBindCodeStatus(bindCode, controller.signal);
-          if (cancelled) return;
+    const scheduleNext = (delayMs: number) => {
+      if (cancelled) return;
+      timer = window.setTimeout(() => void poll(), delayMs);
+    };
 
-          // 决定性信号：后端约定 data.terminal === true 表示"无须再轮询"。
-          if (res.data?.terminal) {
-            if (res.data.invalid) {
-              stopWithToast("绑定码已过期", "请重新获取绑定码");
-              return;
-            }
-            if (!toastedConfirmed) {
-              toastedConfirmed = true;
-              setBindConfirmed(true);
-              toast({
-                title: "Telegram 绑定成功",
-                description: "点击下方「注册」按钮即可进入系统",
-                variant: "success",
-              });
-            }
+    const poll = async () => {
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        const res = await api.getRegisterBindCodeStatus(bindCode);
+        if (cancelled) return;
+
+        // 决定性信号：后端约定 data.terminal === true 表示"无须再轮询"。
+        if (res.data?.terminal) {
+          if (res.data.invalid) {
+            stopWithToast("绑定码已过期", "请重新获取绑定码");
             return;
           }
-
-          if (res.success && res.data) {
-            if (typeof res.data.expires_in === "number") {
-              setBindCodeExpiry(res.data.expires_in);
-            }
+          if (!toastedConfirmed) {
+            toastedConfirmed = true;
+            setBindConfirmed(true);
+            toast({
+              title: "Telegram 绑定成功",
+              description: "点击下方「注册」按钮即可进入系统",
+              variant: "success",
+            });
           }
-
-          // 非终态：立即发起下一次长轮询（后端会 hold 最多 30s）
-        } catch (err) {
-          if (cancelled) return;
-          if (err instanceof ApiError) {
-            if (err.errorCode === ErrCodes.RateLimited || err.status === 429) {
-              stopWithToast(
-                "请求过于频繁",
-                "已暂停轮询，请稍后重新获取绑定码再试",
-              );
-              return;
-            } else if (
-              err.errorCode === ErrCodes.TGBindCodeFormat ||
-              (err.status === 400 && err.errorCode === ErrCodes.BadRequest)
-            ) {
-              stopWithToast("绑定码格式无效", "请重新获取绑定码");
-              return;
-            }
-            // 其它 ApiError（疑似上游异常）等待 3s 后重试
-          }
-          // 网络抖动等待 3s 后重试，避免紧密循环
-          await new Promise((resolve) => setTimeout(resolve, 3000));
+          return;
         }
+
+        if (res.success && res.data && typeof res.data.expires_in === "number") {
+          setBindCodeExpiry(res.data.expires_in);
+        }
+        scheduleNext(2000);
+      } catch (err) {
+        if (cancelled) return;
+        if (err instanceof ApiError) {
+          if (err.errorCode === ErrCodes.RateLimited || err.status === 429) {
+            stopWithToast(
+              "请求过于频繁",
+              "已暂停轮询，请稍后重新获取绑定码再试",
+            );
+            return;
+          }
+          if (
+            err.errorCode === ErrCodes.TGBindCodeFormat ||
+            (err.status === 400 && err.errorCode === ErrCodes.BadRequest)
+          ) {
+            stopWithToast("绑定码格式无效", "请重新获取绑定码");
+            return;
+          }
+        }
+        // 网络抖动等待 3s 后重试，避免紧密循环。
+        scheduleNext(3000);
+      } finally {
+        inFlight = false;
       }
     };
 
@@ -175,7 +179,7 @@ export default function RegisterPage() {
 
     return () => {
       cancelled = true;
-      controller.abort();
+      if (timer !== null) window.clearTimeout(timer);
     };
   }, [bindCode, bindConfirmed, toast]);
 

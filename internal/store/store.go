@@ -199,22 +199,24 @@ type InviteCode struct {
 }
 
 type RegCode struct {
-	Code              string  `json:"code"`
-	Type              int     `json:"type"`
-	ValidityTime      int64   `json:"validity_time"`
-	Days              int     `json:"days"`
-	Note              string  `json:"note,omitempty"`
-	UseCountLimit     int     `json:"use_count_limit"`
-	UseCount          int     `json:"use_count"`
-	UsedBy            int64   `json:"used_by,omitempty"`
-	UsedByUIDs        []int64 `json:"used_by_uids,omitempty"`
-	UsedByTelegramIDs []int64 `json:"used_by_telegram_ids,omitempty"`
-	Active            bool    `json:"active"`
-	IsDecoy           bool    `json:"is_decoy"`
-	TargetUsername    string  `json:"target_username,omitempty"`
-	CreatedAt         int64   `json:"created_at"`
-	CreatedTime       int64   `json:"created_time"`
-	ExpiredAt         int64   `json:"expired_at,omitempty"`
+	Code                   string  `json:"code"`
+	Type                   int     `json:"type"`
+	ValidityTime           int64   `json:"validity_time"`
+	Days                   int     `json:"days"`
+	Note                   string  `json:"note,omitempty"`
+	UseCountLimit          int     `json:"use_count_limit"`
+	UseCount               int     `json:"use_count"`
+	UsedBy                 int64   `json:"used_by,omitempty"`
+	UsedByUIDs             []int64 `json:"used_by_uids,omitempty"`
+	UsedByTelegramIDs      []int64 `json:"used_by_telegram_ids,omitempty"`
+	Active                 bool    `json:"active"`
+	IsDecoy                bool    `json:"is_decoy"`
+	TargetUsername         string  `json:"target_username,omitempty"`
+	TargetTelegramUsername string  `json:"target_telegram_username,omitempty"`
+	TargetTelegramID       int64   `json:"target_telegram_id,omitempty"`
+	CreatedAt              int64   `json:"created_at"`
+	CreatedTime            int64   `json:"created_time"`
+	ExpiredAt              int64   `json:"expired_at,omitempty"`
 }
 
 type InviteRelation struct {
@@ -1498,7 +1500,7 @@ func (s *Store) CreateUserWithRegCode(u User, regCode string, telegramID int64) 
 		if err != nil {
 			return err
 		}
-		if reg.Type != 1 || reg.IsDecoy || (reg.TargetUsername != "" && !strings.EqualFold(reg.TargetUsername, u.Username)) {
+		if reg.Type != 1 || reg.IsDecoy || !regCodeMatchesUser(reg, u) {
 			return ErrNotFound
 		}
 
@@ -1523,6 +1525,25 @@ func (s *Store) CreateUserWithRegCode(u User, regCode string, telegramID int64) 
 		return User{}, RegCode{}, err
 	}
 	return created, consumed, nil
+}
+
+func regCodeMatchesUser(reg RegCode, user User) bool {
+	if reg.TargetUsername != "" && !strings.EqualFold(reg.TargetUsername, user.Username) {
+		return false
+	}
+	if reg.TargetTelegramID != 0 && reg.TargetTelegramID != user.TelegramID {
+		return false
+	}
+	if reg.TargetTelegramUsername != "" {
+		if normalizeTelegramUsername(reg.TargetTelegramUsername) != normalizeTelegramUsername(user.TelegramUsername) {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizeTelegramUsername(username string) string {
+	return strings.ToLower(strings.TrimPrefix(strings.TrimSpace(username), "@"))
 }
 
 func (s *Store) FindUserByUsername(username string) (User, bool) {
