@@ -201,36 +201,6 @@ func TestCredentialedCORSRequiresExplicitOrigin(t *testing.T) {
 	}
 }
 
-func TestCookieMutationRejectsCrossSiteOrigin(t *testing.T) {
-	app := newTestApp(t)
-	_ = doJSON(app, http.MethodPost, "/api/v1/users/register", `{"username":"admin","password":"Admin123456"}`, nil)
-	login := doJSON(app, http.MethodPost, "/api/v1/auth/login", `{"username":"admin","password":"Admin123456"}`, nil)
-	cookie := findCookie(login.Result().Cookies(), "twilight_session")
-	if cookie == nil {
-		t.Fatal("missing session cookie")
-	}
-
-	blocked := doJSONWithHeaders(app, http.MethodPut, "/api/v1/users/me", `{"email":"evil@example.com"}`, []*http.Cookie{cookie}, map[string]string{"Origin": "https://evil.example"})
-	if blocked.Code != http.StatusForbidden || !strings.Contains(blocked.Body.String(), "请求来源不允许") {
-		t.Fatalf("cross-site cookie mutation status=%d body=%s", blocked.Code, blocked.Body.String())
-	}
-
-	fetchBlocked := doJSONWithHeaders(app, http.MethodPut, "/api/v1/users/me", `{"email":"evil@example.com"}`, []*http.Cookie{cookie}, map[string]string{"Sec-Fetch-Site": "cross-site"})
-	if fetchBlocked.Code != http.StatusForbidden || !strings.Contains(fetchBlocked.Body.String(), "跨站请求") {
-		t.Fatalf("cross-site fetch metadata status=%d body=%s", fetchBlocked.Code, fetchBlocked.Body.String())
-	}
-
-	allowed := doJSONWithHeaders(app, http.MethodPut, "/api/v1/users/me", `{"email":"admin@example.com"}`, []*http.Cookie{cookie}, map[string]string{"Origin": "http://localhost:3000"})
-	if allowed.Code != http.StatusOK {
-		t.Fatalf("allowed cookie mutation status=%d body=%s", allowed.Code, allowed.Body.String())
-	}
-
-	bearerAllowed := doJSONWithHeaders(app, http.MethodPut, "/api/v1/users/me", `{"email":"bearer@example.com"}`, nil, map[string]string{"Origin": "https://evil.example", "Authorization": "Bearer " + cookie.Value})
-	if bearerAllowed.Code != http.StatusOK {
-		t.Fatalf("bearer mutation should not use cookie CSRF guard: status=%d body=%s", bearerAllowed.Code, bearerAllowed.Body.String())
-	}
-}
-
 func TestBindCodeCreationGETRequiresWebUIIntent(t *testing.T) {
 	app := newTestApp(t)
 
@@ -257,34 +227,16 @@ func TestBindCodeCreationGETRequiresWebUIIntent(t *testing.T) {
 	}
 }
 
-func TestBindCodeWebSocketRequiresAllowedOrigin(t *testing.T) {
+func TestBindCodeWebSocketRejectsMalformedCodeBeforeUpgrade(t *testing.T) {
 	app := newTestApp(t)
-	path := "/api/v1/users/telegram/register/bind-code/ws?code=ABCDEFGH1234"
-
-	missing := doJSONWithHeaders(app, http.MethodGet, path, ``, nil, map[string]string{
+	malformed := doJSONWithHeaders(app, http.MethodGet, "/api/v1/users/telegram/register/bind-code/ws?code=../../bad", ``, nil, map[string]string{
 		"Connection":            "Upgrade",
 		"Upgrade":               "websocket",
 		"Sec-WebSocket-Version": "13",
 		"Sec-WebSocket-Key":     "dGhlIHNhbXBsZSBub25jZQ==",
 	})
-	if missing.Code != http.StatusForbidden {
-		t.Fatalf("ws without origin status=%d body=%s", missing.Code, missing.Body.String())
-	}
-
-	denied := doJSONWithHeaders(app, http.MethodGet, path, ``, nil, map[string]string{
-		"Origin":                "https://evil.example",
-		"Connection":            "Upgrade",
-		"Upgrade":               "websocket",
-		"Sec-WebSocket-Version": "13",
-		"Sec-WebSocket-Key":     "dGhlIHNhbXBsZSBub25jZQ==",
-	})
-	if denied.Code != http.StatusForbidden {
-		t.Fatalf("ws with disallowed origin status=%d body=%s", denied.Code, denied.Body.String())
-	}
-
-	allowedOrigin := doJSONWithHeaders(app, http.MethodGet, path, ``, nil, map[string]string{"Origin": "http://localhost:3000"})
-	if allowedOrigin.Code != http.StatusBadRequest {
-		t.Fatalf("ws allowed origin should proceed to upgrade validation, got status=%d body=%s", allowedOrigin.Code, allowedOrigin.Body.String())
+	if malformed.Code != http.StatusBadRequest || !strings.Contains(malformed.Body.String(), "TG_BIND_CODE_FORMAT_INVALID") {
+		t.Fatalf("ws malformed code status=%d body=%s", malformed.Code, malformed.Body.String())
 	}
 }
 

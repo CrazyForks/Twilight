@@ -100,7 +100,7 @@ systemd 部署对应三个服务单元：`twilight`、`twilight-bot`、`twilight
 
 ### CORS 约束
 
-生产环境必须把 `API.cors_origins` / `TWILIGHT_API_CORS_ORIGINS` 显式设置为前端 HTTPS 域名。后端不会把 `*` 当作携带凭据接口的可信 Origin，避免跨站页面带 Cookie 调用管理接口。Origin 只允许协议 + 主机 + 端口；尾斜杠会被规范化，带路径、查询串或片段的值会被拒绝。
+生产环境若前端与 API 跨 origin 部署，必须把 `API.cors_origins` / `TWILIGHT_API_CORS_ORIGINS` 显式设置为前端 HTTPS 域名。后端不会把 `*` 当作携带凭据接口的可信 Origin，避免低信任页面通过浏览器 JS 读取凭据接口响应。Origin 只允许协议 + 主机 + 端口；尾斜杠会被规范化，带路径、查询串或片段的值会被拒绝。
 
 ## 常用环境变量
 
@@ -262,7 +262,7 @@ Go 后端按统一的业务状态与前端响应形状实现，主要模块：
   - `AuthUser`：登录会话（Cookie）或 Bearer Token。
   - `AuthAdmin`：登录且 `Role == RoleAdmin`。
   - `AuthAPIKey`：`X-API-Key` 头、`Authorization: ApiKey/Bearer` 或 `?apikey=` 查询参数。
-- Cookie 鉴权写请求不再要求 CSRF 令牌，但会校验 `Origin` / `Referer` / `Sec-Fetch-Site` 拦截跨站变更请求；`X-Twilight-Client: webui` 不参与鉴权。
+- Cookie 鉴权写请求不要求 CSRF 令牌，也不做额外来源校验；`X-Twilight-Client: webui` 不参与鉴权。
 - Cookie 会话默认 `HttpOnly`、`Secure=true`、`SameSite=Lax`；可通过 `CookieDomain` 跨子域共享。
 - CORS 必须显式列出可信 Origin；携带凭据接口不接受 `*`。
 - API Key 只保存哈希，明文仅创建时返回一次。

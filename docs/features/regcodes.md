@@ -202,4 +202,4 @@
 | `POST /api/v1/users/me/renew` | AuthUser | 仅接受 type=2 续期码 |
 | `GET/POST/PUT/DELETE /api/v1/admin/regcodes*` | AuthAdmin | 批量删除/清理需确认短语；写操作受数据库一致性护栏约束 |
 
-Cookie 鉴权的变更类请求不再要求 CSRF 令牌，但会校验浏览器来源；Bearer Token 与 API Key 按各自鉴权路径处理。统一响应 envelope 为 `{ success, code, message, data, timestamp }`。鉴权级别与响应约定详见 [API 路由索引](../reference/api-index.md) 与 [后端 API 详参](../reference/backend-api.md)。
+Cookie 鉴权的变更类请求不要求 CSRF 令牌，也不做额外来源校验；Bearer Token 与 API Key 按各自鉴权路径处理。统一响应 envelope 为 `{ success, code, message, data, timestamp }`。鉴权级别与响应约定详见 [API 路由索引](../reference/api-index.md) 与 [后端 API 详参](../reference/backend-api.md)。

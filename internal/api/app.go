@@ -636,9 +636,6 @@ func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if principal != nil && a.blockRestrictedEmbyAdmin(lw, r, route, principal.User) {
 		return
 	}
-	if principal != nil && principal.FromCookie && !a.validateCookieMutationRequest(lw, r) {
-		return
-	}
 	if principal != nil {
 		r = r.WithContext(context.WithValue(r.Context(), principalKey, *principal))
 	}
@@ -871,27 +868,6 @@ func (a *App) corsOriginAllowed(origin string) bool {
 	return false
 }
 
-func (a *App) validateWebSocketOrigin(w http.ResponseWriter, r *http.Request) bool {
-	origin := normalizeCORSOrigin(r.Header.Get("Origin"))
-	if origin == "" {
-		failWithCode(w, http.StatusForbidden, ErrForbidden, "WebSocket Origin 缺失或无效")
-		return false
-	}
-	if a.corsOriginAllowed(origin) || requestHostMatchesOrigin(r, origin) {
-		return true
-	}
-	failWithCode(w, http.StatusForbidden, ErrForbidden, "WebSocket Origin 不允许")
-	return false
-}
-
-func requestHostMatchesOrigin(r *http.Request, origin string) bool {
-	parsed, err := url.Parse(origin)
-	if err != nil || parsed.Host == "" || r.Host == "" {
-		return false
-	}
-	return strings.EqualFold(parsed.Host, r.Host)
-}
-
 func requireWebUIIntent(w http.ResponseWriter, r *http.Request, intent string) bool {
 	if !strings.EqualFold(strings.TrimSpace(r.Header.Get(twilightClientHeader)), "webui") ||
 		!strings.EqualFold(strings.TrimSpace(r.Header.Get(twilightIntentHeader)), intent) {
@@ -912,54 +888,6 @@ func isPrefetchRequest(r *http.Request) bool {
 		}
 	}
 	return false
-}
-
-func (a *App) validateCookieMutationRequest(w http.ResponseWriter, r *http.Request) bool {
-	if isSafeMethod(r.Method) {
-		return true
-	}
-	if strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "cross-site") {
-		failWithCode(w, http.StatusForbidden, ErrForbidden, "跨站请求不允许使用 Cookie 执行变更操作")
-		return false
-	}
-	if origin := normalizeCORSOrigin(r.Header.Get("Origin")); origin != "" {
-		if a.corsOriginAllowed(origin) || requestHostMatchesOrigin(r, origin) {
-			return true
-		}
-		failWithCode(w, http.StatusForbidden, ErrForbidden, "请求来源不允许使用 Cookie 执行变更操作")
-		return false
-	}
-	if referer := refererOrigin(r.Header.Get("Referer")); referer != "" {
-		if a.corsOriginAllowed(referer) || requestHostMatchesOrigin(r, referer) {
-			return true
-		}
-		failWithCode(w, http.StatusForbidden, ErrForbidden, "请求来源不允许使用 Cookie 执行变更操作")
-		return false
-	}
-	return true
-}
-
-func isSafeMethod(method string) bool {
-	switch method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions:
-		return true
-	default:
-		return false
-	}
-}
-
-func refererOrigin(raw string) string {
-	if strings.TrimSpace(raw) == "" {
-		return ""
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return ""
-	}
-	parsed.Path = ""
-	parsed.RawQuery = ""
-	parsed.Fragment = ""
-	return normalizeCORSOrigin(parsed.String())
 }
 
 // validateCORSOriginsStartup 在启动 / reload 时对 CORS 配置做静态体检：

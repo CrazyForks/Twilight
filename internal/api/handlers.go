@@ -528,9 +528,6 @@ func (a *App) handleBindCodeStatusWS(w http.ResponseWriter, r *http.Request, _ P
 		failWithCode(w, http.StatusBadRequest, ErrTGBindCodeFormat, "Telegram 绑定码格式不正确")
 		return
 	}
-	if !a.validateWebSocketOrigin(w, r) {
-		return
-	}
 	conn, err := acceptWebSocket(w, r)
 	if err != nil {
 		return

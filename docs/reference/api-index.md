@@ -24,7 +24,7 @@
 | 响应封装 | 统一 envelope：`{ success, code, error_code, message, data, timestamp }`（见 `internal/api/response.go`，`data`/`error_code` 为空时省略） |
 | 会话鉴权 | 登录态会话 Cookie，或 `Authorization: Bearer <token>` |
 | API Key 鉴权 | `X-API-Key: <key>`、`Authorization: ApiKey <key>` / `Authorization: Bearer <key>`，或 `?apikey=<key>` 查询串（仅当该 Key 开启 `AllowQuery` 时生效，见 `internal/api/app.go` 的 `authenticateAPIKey`） |
-| Cookie 写请求 | 不再要求 CSRF 令牌；Cookie 鉴权的变更请求会校验 `Origin` / `Referer` / `Sec-Fetch-Site`，Bearer / API Key 按各自鉴权路径处理 |
+| Cookie 写请求 | 不要求 CSRF 令牌，也不做额外来源校验；有效登录会话、Bearer Token 或 API Key 即为鉴权边界 |
 | 管理接口归置 | 业务管理接口归入 `/admin/*`，系统配置/运维类归入 `/system/admin/*` |
 | 用户自有资源 | 优先使用 `/users/me/*` |
 | 公开资源 | 必须显式标记为 Public，并评估限流与信息泄露风险 |

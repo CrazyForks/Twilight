@@ -71,7 +71,7 @@ GET /api/v1/apikey/status?apikey=<api_key>
 
 ### 2.3 浏览器写请求
 
-Cookie 鉴权的变更类请求（`POST` / `PUT` / `DELETE`）不再要求 CSRF 令牌，但后端会校验 `Origin` / `Referer` / `Sec-Fetch-Site`，拒绝跨站 Cookie 写请求。Bearer Token 与 API Key 不走 Cookie CSRF 防线，按各自鉴权路径处理。
+Cookie 鉴权的变更类请求（`POST` / `PUT` / `DELETE`）不要求 CSRF 令牌，也不做额外来源校验。后端只校验有效登录会话、Bearer Token 或 API Key。
 
 `X-Twilight-Client: webui` 仅作为前端请求识别与 CORS 允许头保留，不参与鉴权。少数有副作用的 `GET`（例如绑定码创建）还要求 `X-Twilight-Intent: create-bind-code` 显式声明操作意图，用于拦截浏览器预取、链接探测或代理误触发。
 
@@ -177,7 +177,7 @@ Cookie 鉴权的变更类请求（`POST` / `PUT` / `DELETE`）不再要求 CSRF 
 | `GET  /users/register/emby/status` | request_id + IP | 60/60s + 240/60s | Emby 注册队列轮询 |
 | `GET  /users/telegram/register/bind-code` | IP | 5 / 10 分钟 | 生成注册绑定码；需 `X-Twilight-Intent: create-bind-code` |
 | `GET  /users/telegram/register/bind-code/status` | code + IP | 10s timeout / 进程内状态 | 注册绑定码 GET fallback 查询；主流程使用 WebSocket |
-| `GET  /users/telegram/register/bind-code/ws` | IP | 30/min 或登录限流配置较大者 | WebSocket 订阅注册绑定码状态；校验 Origin |
+| `GET  /users/telegram/register/bind-code/ws` | IP | 30/min 或登录限流配置较大者 | WebSocket 订阅注册绑定码状态 |
 | `GET  /users/me/telegram/bind-code` | UID | 5 / 10 分钟 | 已登录用户生成 TG 绑定码；需 `X-Twilight-Intent: create-bind-code` |
 | `POST /users/me/telegram/unbind` | UID | 5 / 10 分钟 | 防恶意频繁解绑 |
 | `POST /users/me/telegram/rebind-request` | UID | 3 / 1 小时 | 换绑申请会进管理员队列，从严限制 |
@@ -191,7 +191,7 @@ Cookie 鉴权的变更类请求（`POST` / `PUT` / `DELETE`）不再要求 CSRF 
 
 #### Telegram 注册绑定码状态通道
 
-注册绑定码状态主通道是 `GET /users/telegram/register/bind-code/ws` WebSocket，后端会在握手前校验绑定码格式与 `Origin`，防止第三方站点跨站监听。`GET /users/telegram/register/bind-code/status` 只作为 WebSocket 不可用或提交前的 fallback 查询。
+注册绑定码状态主通道是 `GET /users/telegram/register/bind-code/ws` WebSocket，后端会在握手前校验绑定码格式。`GET /users/telegram/register/bind-code/status` 只作为 WebSocket 不可用或提交前的 fallback 查询。
 
 绑定码本身只保存在当前 App 进程内存中，重启后失效；多进程部署时 Web API 与 Bot 需要运行在同一 App 实例内才能共享绑定码状态。
 
@@ -435,7 +435,7 @@ curl -X GET "http://localhost:5000/api/v1/users/check-available?username=newuser
 
 `GET /users/telegram/register/bind-code` — 生成注册阶段的 Telegram 绑定码（公开，IP 限流 5/10 分钟）。该 GET 有副作用，调用方必须带 `X-Twilight-Client: webui` 与 `X-Twilight-Intent: create-bind-code`，后端会拒绝预取请求。
 
-`GET /users/telegram/register/bind-code/ws?code=<code>` — WebSocket 订阅绑定码状态（公开，校验 `Origin`）。这是 Web 注册页主路径。
+`GET /users/telegram/register/bind-code/ws?code=<code>` — WebSocket 订阅绑定码状态（公开）。这是 Web 注册页主路径。
 
 `GET /users/telegram/register/bind-code/status?code=<code>` — GET fallback 查询绑定码状态（公开，主要用于 WebSocket 不可用或提交前兜底）。
 
