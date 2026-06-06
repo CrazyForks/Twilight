@@ -42,6 +42,8 @@ const (
 	ErrUserNotFound        ErrCode = "USER_NOT_FOUND"
 	ErrUserLimitReached    ErrCode = "USER_LIMIT_REACHED"
 	ErrUserProtected       ErrCode = "USER_PROTECTED"
+	ErrEmailInvalid        ErrCode = "USER_EMAIL_INVALID"
+	ErrEmailBlacklisted    ErrCode = "USER_EMAIL_BLACKLISTED"
 
 	// === Telegram 绑定 ===
 	ErrTGBindRequired       ErrCode = "TG_BIND_REQUIRED"

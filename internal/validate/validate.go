@@ -5,6 +5,7 @@ package validate
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"unicode"
 )
@@ -92,3 +93,74 @@ func ValidatePasswordLegacy(password string) error {
 	}
 	return nil
 }
+
+var emailPattern = regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+
+func ValidateEmailFormat(email string) error {
+	if len(email) > 256 {
+		return ErrEmailTooLong
+	}
+	if strings.ContainsAny(email, "< >\"'\x00") {
+		return ErrEmailInvalidChars
+	}
+	if !emailPattern.MatchString(email) {
+		return ErrEmailInvalidFormat
+	}
+	return nil
+}
+
+func CheckEmailBlacklist(email string, blacklist []string) bool {
+	lower := strings.ToLower(strings.TrimSpace(email))
+	atIdx := strings.LastIndex(lower, "@")
+	if atIdx < 0 {
+		return false
+	}
+	domain := lower[atIdx+1:]
+	for _, blocked := range blacklist {
+		b := strings.ToLower(strings.TrimSpace(blocked))
+		if b == "" {
+			continue
+		}
+		if !strings.Contains(b, "@") {
+			if domain == b || strings.HasSuffix(domain, "."+b) {
+				return true
+			}
+		} else {
+			if lower == b {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func CheckEmailWhitelist(email string, whitelist []string) bool {
+	lower := strings.ToLower(strings.TrimSpace(email))
+	atIdx := strings.LastIndex(lower, "@")
+	if atIdx < 0 {
+		return false
+	}
+	domain := lower[atIdx+1:]
+	for _, allowed := range whitelist {
+		a := strings.ToLower(strings.TrimSpace(allowed))
+		if a == "" {
+			continue
+		}
+		if !strings.Contains(a, "@") {
+			if domain == a || strings.HasSuffix(domain, "."+a) {
+				return true
+			}
+		} else {
+			if lower == a {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+var (
+	ErrEmailTooLong       = ErrPasswordTooLong
+	ErrEmailInvalidChars  = errors.New("邮箱包含无效字符")
+	ErrEmailInvalidFormat = errors.New("邮箱格式不正确")
+)

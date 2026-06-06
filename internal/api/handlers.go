@@ -85,8 +85,15 @@ func (a *App) handleUpdateMe(w http.ResponseWriter, r *http.Request, _ Params) {
 	}
 	u, err := a.store().UpdateUser(p.User.UID, func(u *store.User) error {
 		if email := stringValue(payload, "email"); email != "" {
-			if len(email) > 256 || strings.ContainsAny(email, "<>\"'\x00") {
-				return fmt.Errorf("invalid email format")
+			if err := validate.ValidateEmailFormat(email); err != nil {
+				return err
+			}
+			email = strings.TrimSpace(email)
+			if len(a.cfg().EmailBlacklist) > 0 && validate.CheckEmailBlacklist(email, a.cfg().EmailBlacklist) {
+				return fmt.Errorf("该邮箱域名不在允许范围内")
+			}
+			if len(a.cfg().EmailWhitelist) > 0 && !validate.CheckEmailWhitelist(email, a.cfg().EmailWhitelist) {
+				return fmt.Errorf("该邮箱域名不在允许范围内")
 			}
 			u.Email = email
 		}
@@ -469,7 +476,7 @@ func (a *App) createBindCode(w http.ResponseWriter, uid int64, scene string) {
 	a.cleanupExpiredBindCodes(time.Now().Unix())
 	code := ""
 	for attempt := 0; attempt < 20; attempt++ {
-		candidate := strings.ToUpper(randomCode(12))
+		candidate := strings.ToUpper(randomCode(6))
 		if _, exists := a.bindCode(candidate); exists {
 			continue
 		}
@@ -496,8 +503,8 @@ func (a *App) handleBindCodeStatus(w http.ResponseWriter, r *http.Request, _ Par
 	waitSec := clamp(queryInt(r, "wait", 0), 0, 60)
 
 	respond := func() {
-		state := a.registerTelegramBindCodeState(code, time.Now().Unix(), true)
-		writeRegisterTelegramBindCodeState(w, state)
+		state := a.telegramBindCodeState(code, 0, "register", time.Now().Unix(), true)
+		writeTelegramBindCodeState(w, state)
 	}
 
 	// 即时模式
@@ -507,7 +514,7 @@ func (a *App) handleBindCodeStatus(w http.ResponseWriter, r *http.Request, _ Par
 	}
 
 	// Long-poll 模式：先检查一次，如果已经是终态直接返回
-	state := a.registerTelegramBindCodeState(code, time.Now().Unix(), true)
+	state := a.telegramBindCodeState(code, 0, "register", time.Now().Unix(), true)
 	if state.Terminal {
 		respond()
 		return
@@ -521,14 +528,12 @@ func (a *App) handleBindCodeStatus(w http.ResponseWriter, r *http.Request, _ Par
 	for {
 		select {
 		case <-r.Context().Done():
-			// 客户端断开连接
 			return
 		case <-deadline:
-			// 超时，返回当前状态（非终态）
 			respond()
 			return
 		case <-ticker.C:
-			state = a.registerTelegramBindCodeState(code, time.Now().Unix(), true)
+			state = a.telegramBindCodeState(code, 0, "register", time.Now().Unix(), true)
 			if state.Terminal {
 				respond()
 				return
@@ -553,7 +558,7 @@ func (a *App) handleBindCodeStatusWS(w http.ResponseWriter, r *http.Request, _ P
 	}
 	defer conn.Close()
 
-	sendState := func(state registerTelegramBindCodeState) bool {
+	sendState := func(state telegramBindCodeState) bool {
 		data := state.response()
 		data["type"] = "status"
 		payload, err := json.Marshal(data)
@@ -566,7 +571,7 @@ func (a *App) handleBindCodeStatusWS(w http.ResponseWriter, r *http.Request, _ P
 	updates, unsubscribe := a.bindStatus.subscribe(code)
 	defer unsubscribe()
 
-	state := a.registerTelegramBindCodeState(code, time.Now().Unix(), true)
+	state := a.telegramBindCodeState(code, 0, "register", time.Now().Unix(), true)
 	if !sendState(state) || state.Terminal {
 		writeWebSocketClose(conn)
 		return
@@ -577,7 +582,7 @@ func (a *App) handleBindCodeStatusWS(w http.ResponseWriter, r *http.Request, _ P
 	heartbeat := time.NewTicker(30 * time.Second)
 	defer heartbeat.Stop()
 
-	resetExpiryTimer := func(next registerTelegramBindCodeState) {
+	resetExpiryTimer := func(next telegramBindCodeState) {
 		if !expiryTimer.Stop() {
 			select {
 			case <-expiryTimer.C:
@@ -592,21 +597,21 @@ func (a *App) handleBindCodeStatusWS(w http.ResponseWriter, r *http.Request, _ P
 		case <-r.Context().Done():
 			return
 		case <-updates:
-			state = a.registerTelegramBindCodeState(code, time.Now().Unix(), true)
+			state = a.telegramBindCodeState(code, 0, "register", time.Now().Unix(), true)
 			if !sendState(state) || state.Terminal {
 				writeWebSocketClose(conn)
 				return
 			}
 			resetExpiryTimer(state)
 		case <-expiryTimer.C:
-			state = a.registerTelegramBindCodeState(code, time.Now().Unix(), true)
+			state = a.telegramBindCodeState(code, 0, "register", time.Now().Unix(), true)
 			if !sendState(state) || state.Terminal {
 				writeWebSocketClose(conn)
 				return
 			}
 			resetExpiryTimer(state)
 		case <-heartbeat.C:
-			state = a.registerTelegramBindCodeState(code, time.Now().Unix(), true)
+			state = a.telegramBindCodeState(code, 0, "register", time.Now().Unix(), true)
 			if !sendState(state) || state.Terminal {
 				writeWebSocketClose(conn)
 				return
@@ -615,7 +620,132 @@ func (a *App) handleBindCodeStatusWS(w http.ResponseWriter, r *http.Request, _ P
 	}
 }
 
-func bindStateExpiryWait(state registerTelegramBindCodeState) time.Duration {
+func (a *App) handleUserBindCodeStatus(w http.ResponseWriter, r *http.Request, _ Params) {
+	code := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("code")))
+	if !telegramBindCodePattern.MatchString(code) {
+		failWithCode(w, http.StatusBadRequest, ErrTGBindCodeFormat, "Telegram 绑定码格式不正确")
+		return
+	}
+	uid := current(r).User.UID
+	waitSec := clamp(queryInt(r, "wait", 0), 0, 60)
+
+	respond := func() {
+		state := a.telegramBindCodeState(code, uid, "", time.Now().Unix(), true)
+		writeTelegramBindCodeState(w, state)
+	}
+
+	if waitSec <= 0 {
+		respond()
+		return
+	}
+
+	state := a.telegramBindCodeState(code, uid, "", time.Now().Unix(), true)
+	if state.Terminal {
+		respond()
+		return
+	}
+
+	deadline := time.After(time.Duration(waitSec) * time.Second)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-deadline:
+			respond()
+			return
+		case <-ticker.C:
+			state = a.telegramBindCodeState(code, uid, "", time.Now().Unix(), true)
+			if state.Terminal {
+				respond()
+				return
+			}
+		}
+	}
+}
+
+func (a *App) handleUserBindCodeStatusWS(w http.ResponseWriter, r *http.Request, _ Params) {
+	uid := current(r).User.UID
+	if !a.allowRate(r.Context(), rateKey("user-bind-status-ws:", uid), 10, time.Minute) {
+		failWithCode(w, http.StatusTooManyRequests, ErrRateLimited, "请求过于频繁，请稍后再试")
+		return
+	}
+	code := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("code")))
+	if !telegramBindCodePattern.MatchString(code) {
+		failWithCode(w, http.StatusBadRequest, ErrTGBindCodeFormat, "Telegram 绑定码格式不正确")
+		return
+	}
+	conn, err := acceptWebSocket(w, r)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	sendState := func(state telegramBindCodeState) bool {
+		data := state.response()
+		data["type"] = "status"
+		payload, err := json.Marshal(data)
+		if err != nil {
+			return true
+		}
+		return writeWebSocketText(conn, payload) == nil
+	}
+
+	updates, unsubscribe := a.bindStatus.subscribe(code)
+	defer unsubscribe()
+
+	state := a.telegramBindCodeState(code, uid, "", time.Now().Unix(), true)
+	if !sendState(state) || state.Terminal {
+		writeWebSocketClose(conn)
+		return
+	}
+
+	expiryTimer := time.NewTimer(bindStateExpiryWait(state))
+	defer expiryTimer.Stop()
+	heartbeat := time.NewTicker(30 * time.Second)
+	defer heartbeat.Stop()
+
+	resetExpiryTimer := func(next telegramBindCodeState) {
+		if !expiryTimer.Stop() {
+			select {
+			case <-expiryTimer.C:
+			default:
+			}
+		}
+		expiryTimer.Reset(bindStateExpiryWait(next))
+	}
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-updates:
+			state = a.telegramBindCodeState(code, uid, "", time.Now().Unix(), true)
+			if !sendState(state) || state.Terminal {
+				writeWebSocketClose(conn)
+				return
+			}
+			resetExpiryTimer(state)
+		case <-expiryTimer.C:
+			state = a.telegramBindCodeState(code, uid, "", time.Now().Unix(), true)
+			if !sendState(state) || state.Terminal {
+				writeWebSocketClose(conn)
+				return
+			}
+			resetExpiryTimer(state)
+		case <-heartbeat.C:
+			state = a.telegramBindCodeState(code, uid, "", time.Now().Unix(), true)
+			if !sendState(state) || state.Terminal {
+				writeWebSocketClose(conn)
+				return
+			}
+		}
+	}
+}
+
+func bindStateExpiryWait(state telegramBindCodeState) time.Duration {
 	if state.ExpiresIn <= 0 {
 		return time.Second
 	}

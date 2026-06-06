@@ -168,6 +168,10 @@ type Config struct {
 	AutoCleanupPendingEmby       bool
 	AutoCleanupPendingEmbyDays   int
 
+	EmailValidationMode string
+	EmailBlacklist      []string
+	EmailWhitelist      []string
+
 	RateLimitEnabled                  bool
 	RateLimitGlobalPerMinute          int
 	RateLimitLoginPerMinute           int
@@ -368,6 +372,9 @@ func Load(path string) (Config, error) {
 	cfg.AutoCleanupNoEmbyDays = reader.intValue(cfg.AutoCleanupNoEmbyDays, "SAR.auto_cleanup_no_emby_days", "Register.auto_cleanup_no_emby_days", "auto_cleanup_no_emby_days")
 	cfg.AutoCleanupPendingEmby = reader.boolValue(cfg.AutoCleanupPendingEmby, "SAR.auto_cleanup_pending_emby", "Register.auto_cleanup_pending_emby", "auto_cleanup_pending_emby")
 	cfg.AutoCleanupPendingEmbyDays = reader.intValue(cfg.AutoCleanupPendingEmbyDays, "SAR.auto_cleanup_pending_emby_days", "Register.auto_cleanup_pending_emby_days", "auto_cleanup_pending_emby_days")
+	cfg.EmailValidationMode = reader.stringValue(cfg.EmailValidationMode, "SAR.email_validation_mode", "email_validation_mode")
+	cfg.EmailBlacklist = reader.stringListValue(cfg.EmailBlacklist, "SAR.email_blacklist", "email_blacklist")
+	cfg.EmailWhitelist = reader.stringListValue(cfg.EmailWhitelist, "SAR.email_whitelist", "email_whitelist")
 	cfg.NotificationEnabled = reader.boolValue(cfg.NotificationEnabled, "Notification.enabled", "notification_enabled")
 	cfg.NotificationExpiryRemindDays = reader.intValue(cfg.NotificationExpiryRemindDays, "Notification.expiry_remind_days", "expiry_remind_days")
 	cfg.RateLimitEnabled = reader.boolValue(cfg.RateLimitEnabled, "RateLimit.enabled", "rate_limit_enabled")
@@ -698,6 +705,15 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("TWILIGHT_AUTO_CLEANUP_PENDING_EMBY_DAYS"); v != "" {
 		cfg.AutoCleanupPendingEmbyDays = intValue(v, cfg.AutoCleanupPendingEmbyDays)
+	}
+	if v := os.Getenv("TWILIGHT_EMAIL_VALIDATION_MODE"); v != "" {
+		cfg.EmailValidationMode = strings.TrimSpace(v)
+	}
+	if v := os.Getenv("TWILIGHT_EMAIL_BLACKLIST"); v != "" {
+		cfg.EmailBlacklist = listValue(v)
+	}
+	if v := os.Getenv("TWILIGHT_EMAIL_WHITELIST"); v != "" {
+		cfg.EmailWhitelist = listValue(v)
 	}
 	if v := os.Getenv("TWILIGHT_REGCODE_FORMAT"); v != "" {
 		cfg.RegCodeFormat = strings.TrimSpace(v)

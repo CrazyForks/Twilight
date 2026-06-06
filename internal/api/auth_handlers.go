@@ -287,6 +287,21 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request, _ Params) {
 		failWithCode(w, http.StatusBadRequest, ErrPasswordWeak, err.Error())
 		return
 	}
+	if email := stringValue(payload, "email"); email != "" {
+		if err := validate.ValidateEmailFormat(email); err != nil {
+			failWithCode(w, http.StatusBadRequest, ErrEmailInvalid, err.Error())
+			return
+		}
+		email = strings.TrimSpace(email)
+		if len(a.cfg().EmailBlacklist) > 0 && validate.CheckEmailBlacklist(email, a.cfg().EmailBlacklist) {
+			failWithCode(w, http.StatusBadRequest, ErrEmailInvalid, "该邮箱域名不在允许范围内")
+			return
+		}
+		if len(a.cfg().EmailWhitelist) > 0 && !validate.CheckEmailWhitelist(email, a.cfg().EmailWhitelist) {
+			failWithCode(w, http.StatusBadRequest, ErrEmailInvalid, "该邮箱域名不在允许范围内")
+			return
+		}
+	}
 	if reached, current, limit := a.systemUserLimitReached(); reached {
 		failWithCode(w, http.StatusConflict, ErrUserLimitReached, fmt.Sprintf("系统用户数量已达上限 %d/%d", current, limit))
 		return
@@ -315,7 +330,7 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request, _ Params) {
 			failWithCode(w, http.StatusBadRequest, ErrTGBindRequired, "需要先完成 Telegram 绑定")
 			return
 		}
-		bindState := a.registerTelegramBindCodeState(telegramBindCode, time.Now().Unix(), true)
+		bindState := a.telegramBindCodeState(telegramBindCode, 0, "register", time.Now().Unix(), true)
 		if bindState.Status != "confirmed" {
 			status := bindState.HTTPStatus
 			if status == 0 {

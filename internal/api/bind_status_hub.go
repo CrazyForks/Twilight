@@ -86,6 +86,12 @@ func (h *bindStatusHub) cleanupExpiredBindCodes(now int64) int {
 	return deleted
 }
 
+// confirmBindCodeAtomic atomically marks a bind code as confirmed. For user-scene
+// codes (bind.UID != 0), it also calls bindUser to immediately bind the user, then
+// keeps the confirmed code in the hub for a 30‑second grace period so that status
+// polling / WebSocket watchers can discover the "bound" result before the code is
+// cleaned up. For register-scene codes (bind.UID == 0), the code remains in the
+// hub until expired or consumed by the registration flow.
 func (h *bindStatusHub) confirmBindCodeAtomic(code string, telegramID int64, telegramUsername string, now int64, telegramIDTaken func(telegramID, allowedUID int64) bool, bindUser func(store.BindCode) (store.User, error)) (store.BindCode, store.User, bool, error) {
 	code = normalizeBindStatusCode(code)
 	h.mu.Lock()
@@ -127,7 +133,8 @@ func (h *bindStatusHub) confirmBindCodeAtomic(code string, telegramID int64, tel
 			}
 			updated = user
 		}
-		delete(h.codes, code)
+		bind.ExpiresAt = now + 30
+		h.codes[code] = bind
 		delete(h.failures, code)
 		h.notifyLocked(code)
 		return bind, updated, true, nil

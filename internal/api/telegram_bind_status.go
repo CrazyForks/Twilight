@@ -7,7 +7,7 @@ import (
 	"github.com/prejudice-studio/twilight/internal/store"
 )
 
-type registerTelegramBindCodeState struct {
+type telegramBindCodeState struct {
 	Code             string
 	Status           string
 	ErrorCode        ErrCode
@@ -20,72 +20,63 @@ type registerTelegramBindCodeState struct {
 	ExpiresIn        int64
 	TelegramID       int64
 	TelegramUsername string
+	TelegramBound    bool
 }
 
-func (a *App) registerTelegramBindCodeState(code string, now int64, cleanupExpired bool) registerTelegramBindCodeState {
+// telegramBindCodeState checks the status of a bind code. If uid is non-zero
+// (user scene), it also verifies the bind code belongs to that user and checks
+// whether the user's Telegram has been bound as a result of the code.
+// If requireScene is non-empty, the code must match that scene exactly.
+func (a *App) telegramBindCodeState(code string, uid int64, requireScene string, now int64, cleanupExpired bool) telegramBindCodeState {
 	code = strings.ToUpper(strings.TrimSpace(code))
 	if !telegramBindCodePattern.MatchString(code) {
-		return registerTelegramBindCodeState{Code: code, Status: "invalid_format", ErrorCode: ErrTGBindCodeFormat, HTTPStatus: http.StatusBadRequest, Message: "Telegram 绑定码格式不正确", Invalid: true, Terminal: true}
+		return telegramBindCodeState{Code: code, Status: "invalid_format", ErrorCode: ErrTGBindCodeFormat, HTTPStatus: http.StatusBadRequest, Message: "Telegram 绑定码格式不正确", Invalid: true, Terminal: true}
 	}
 	bind, okBind := a.bindCode(code)
 	if !okBind {
-		return registerTelegramBindCodeState{Code: code, Status: "not_found", ErrorCode: ErrTGBindCodeNotFound, HTTPStatus: http.StatusBadRequest, Message: "绑定码不存在", Invalid: true, Terminal: true}
+		return telegramBindCodeState{Code: code, Status: "not_found", ErrorCode: ErrTGBindCodeNotFound, HTTPStatus: http.StatusBadRequest, Message: "绑定码不存在", Invalid: true, Terminal: true}
+	}
+	if uid != 0 && bind.UID != uid {
+		return telegramBindCodeState{Code: code, Status: "not_found", ErrorCode: ErrTGBindCodeNotFound, HTTPStatus: http.StatusBadRequest, Message: "绑定码不存在", Invalid: true, Terminal: true}
+	}
+	if requireScene != "" && bind.Scene != requireScene {
+		return telegramBindCodeState{Code: code, Status: "wrong_scene", ErrorCode: ErrTGBindCodeSceneBad, HTTPStatus: http.StatusBadRequest, Message: "绑定码场景无效", Invalid: true, Terminal: true}
 	}
 	if bind.ExpiresAt <= now {
 		if cleanupExpired {
 			_ = a.deleteBindCode(code)
 		}
-		return registerTelegramBindCodeState{Code: code, Status: "expired", ErrorCode: ErrTGBindCodeExpired, HTTPStatus: http.StatusBadRequest, Message: "绑定码无效或已过期", Bind: bind, Invalid: true, Terminal: true}
+		return telegramBindCodeState{Code: code, Status: "expired", ErrorCode: ErrTGBindCodeExpired, HTTPStatus: http.StatusBadRequest, Message: "绑定码无效或已过期", Bind: bind, Invalid: true, Terminal: true}
 	}
-	state := registerTelegramBindCodeState{Code: code, Bind: bind, ExpiresIn: bind.ExpiresAt - now, TelegramID: bind.TelegramID, TelegramUsername: bind.TelegramUsername}
-	if bind.Scene != "register" || bind.UID != 0 {
-		state.Status = "wrong_scene"
-		state.ErrorCode = ErrTGBindCodeSceneBad
-		state.HTTPStatus = http.StatusBadRequest
-		state.Message = "绑定码场景无效"
-		state.Invalid = true
-		state.Terminal = true
-		return state
-	}
-	if !bind.Confirmed || bind.TelegramID == 0 {
-		if a.bindStatus != nil {
-			if failure, ok := a.bindStatus.failure(code, now); ok {
-				state.Status = failure.Status
-				state.ErrorCode = failure.ErrorCode
-				state.HTTPStatus = failure.HTTPStatus
-				state.Message = failure.Message
-				state.Confirmed = false
-				state.Invalid = true
-				state.Terminal = true
-				return state
-			}
-		}
-		state.Status = "pending"
-		state.ErrorCode = ErrTGBindCodeNotConfirm
-		state.HTTPStatus = http.StatusBadRequest
-		state.Message = "绑定码尚未在 Telegram 中确认"
-		state.Confirmed = false
-		state.Terminal = false
-		return state
-	}
-	if existing, okUser := a.store().FindUserByTelegramID(bind.TelegramID); okUser {
-		state.Status = "telegram_taken"
-		state.ErrorCode = ErrTGAlreadyBound
-		state.HTTPStatus = http.StatusConflict
-		state.Message = "该 Telegram 已绑定到账号 " + existing.Username
+	state := telegramBindCodeState{Code: code, Bind: bind, ExpiresIn: bind.ExpiresAt - now, TelegramID: bind.TelegramID, TelegramUsername: bind.TelegramUsername}
+	if bind.Confirmed && bind.TelegramID != 0 {
+		state.Status = "confirmed"
+		state.Message = "绑定码已确认"
 		state.Confirmed = true
-		state.Invalid = true
 		state.Terminal = true
+		state.TelegramBound = bind.UID != 0
 		return state
 	}
-	state.Status = "confirmed"
-	state.Message = "绑定码已确认"
-	state.Confirmed = true
-	state.Terminal = true
+	if a.bindStatus != nil {
+		if failure, ok := a.bindStatus.failure(code, now); ok {
+			state.Status = failure.Status
+			state.ErrorCode = failure.ErrorCode
+			state.HTTPStatus = failure.HTTPStatus
+			state.Message = failure.Message
+			state.Confirmed = false
+			state.Invalid = true
+			state.Terminal = true
+			return state
+		}
+	}
+	state.Status = "pending"
+	state.Message = "绑定码尚未在 Telegram 中确认"
+	state.Confirmed = false
+	state.Terminal = false
 	return state
 }
 
-func writeRegisterTelegramBindCodeState(w http.ResponseWriter, state registerTelegramBindCodeState) {
+func writeTelegramBindCodeState(w http.ResponseWriter, state telegramBindCodeState) {
 	data := state.response()
 	if state.Invalid {
 		writeJSONWithCode(w, http.StatusOK, false, state.ErrorCode, state.Message, data)
@@ -95,7 +86,7 @@ func writeRegisterTelegramBindCodeState(w http.ResponseWriter, state registerTel
 }
 
 func (a *App) recordRegisterBindFailure(bind store.BindCode, code string, status string, errorCode ErrCode, httpStatus int, message string) {
-	if a.bindStatus == nil || bind.Scene != "register" || bind.UID != 0 {
+	if a.bindStatus == nil {
 		return
 	}
 	a.bindStatus.fail(code, bindCodeFailure{Status: status, ErrorCode: errorCode, HTTPStatus: httpStatus, Message: message, ExpiresAt: bind.ExpiresAt})
@@ -160,7 +151,7 @@ func (a *App) confirmBindCodeAtomic(code string, telegramID int64, telegramUsern
 	})
 }
 
-func (s registerTelegramBindCodeState) response() map[string]any {
+func (s telegramBindCodeState) response() map[string]any {
 	data := map[string]any{
 		"code":           s.Code,
 		"status":         s.Status,
@@ -168,7 +159,7 @@ func (s registerTelegramBindCodeState) response() map[string]any {
 		"invalid":        s.Invalid,
 		"terminal":       s.Terminal,
 		"message":        s.Message,
-		"telegram_bound": s.Status == "confirmed",
+		"telegram_bound": s.TelegramBound,
 	}
 	if s.ErrorCode != "" {
 		data["error_code"] = s.ErrorCode

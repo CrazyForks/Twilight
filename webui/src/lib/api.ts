@@ -283,6 +283,35 @@ class ApiClient {
     return url.toString();
   }
 
+  async getBindCodeStatus(code: string, signal?: AbortSignal) {
+    const q = new URLSearchParams({ code }).toString();
+    return apiRequest<{
+      code?: string;
+      status?: string;
+      error_code?: string;
+      message?: string;
+      confirmed?: boolean;
+      expires_in?: number;
+      invalid?: boolean;
+      terminal?: boolean;
+      telegram_bound?: boolean;
+      telegram_id?: number;
+      telegram_username?: string;
+    }>(
+      `/users/me/telegram/bind-code/status?${q}`,
+      { signal },
+      { timeoutMs: 10_000 },
+    );
+  }
+
+  getBindCodeStatusWebSocketUrl(code: string) {
+    const base = API_BASE || (typeof window !== "undefined" ? window.location.origin : "http://localhost");
+    const url = new URL("/api/v1/users/me/telegram/bind-code/ws", base);
+    url.searchParams.set("code", code);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    return url.toString();
+  }
+
   async getRegisterAvailability() {
     return this.request<RegisterAvailability>("/users/check-available");
   }
