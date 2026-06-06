@@ -776,14 +776,14 @@ func (a *App) handleRebindComplete(w http.ResponseWriter, r *http.Request, _ Par
 // telegramStatusFields 统一计算用户 Telegram 绑定 / 换绑状态，供
 // handleTelegramStatus（/users/me/telegram，dashboard 用）与 handleUserSettings
 // （/users/me/settings，设置页用）复用。历史上两处各自手算，导致
-// can_change / can_unbind 在 "used"（换绑已消费）与管理员场景下口径不一致：
-// dashboard 端把 used 当成不能换绑、设置页端却允许；设置页端又漏了管理员可解绑。
-// can_unbind 口径与 handleUnbindTelegram 的服务端校验保持一致：强制绑定下，
-// 非管理员仅在存在 approved 换绑请求时才可解绑。
+// can_change / can_unbind 在 "used"（换绑已消费）与管理员场景下口径不一致。
+// can_unbind 口径必须与 handleUnbindTelegram 的服务端校验完全一致：换绑一律走
+// 审批，非管理员仅在存在 approved 换绑请求时才可解绑（与 force_bind 无关），
+// 否则只能走 can_change 提交换绑申请。管理员不受限。
 func (a *App) telegramStatusFields(u store.User) map[string]any {
 	forceBind := a.cfg().ForceBindTelegram
 	admin := u.Role == store.RoleAdmin
-	canUnbind := !forceBind || admin
+	canUnbind := admin
 	canChange := true
 	pendingRebind := false
 	rebindApproved := false
@@ -827,13 +827,15 @@ func (a *App) handleTelegramStatus(w http.ResponseWriter, r *http.Request, _ Par
 
 func (a *App) handleUnbindTelegram(w http.ResponseWriter, r *http.Request, _ Params) {
 	p := current(r)
-	// Enforce force-bind policy: non-admin users cannot unbind when force_bind_telegram is enabled,
-	// UNLESS an approved rebind request exists (admin granted permission to rebind).
+	// 换绑一律走审批：非管理员解绑必须先有一条 approved 的换绑申请，解绑时消费掉
+	// （approved→used）。这条门禁与 force_bind_telegram 无关——即使关闭强制绑定，
+	// 也不允许用户自助无限解绑/重绑（每次更换都需管理员批准一次，用过即作废）。
+	// 管理员自身不受限。
 	var consumeRebindID int64
-	if a.cfg().ForceBindTelegram && p.User.Role != store.RoleAdmin {
+	if p.User.Role != store.RoleAdmin {
 		latestReq, hasReq := a.store().UserLatestRebindRequest(p.User.UID)
 		if !hasReq || latestReq.Status != "approved" {
-			failWithCode(w, http.StatusForbidden, ErrTGUnbindForbidden, "当前系统要求强制绑定 Telegram，无法解绑")
+			failWithCode(w, http.StatusForbidden, ErrTGUnbindForbidden, "更换 Telegram 需要先提交换绑申请并经管理员批准")
 			return
 		}
 		consumeRebindID = latestReq.ID

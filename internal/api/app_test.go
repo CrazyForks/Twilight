@@ -6096,3 +6096,65 @@ func TestForceBindUnbindConsumesApprovedRebindAndPreservesAudit(t *testing.T) {
 		t.Fatalf("reusing used rebind request should be forbidden, status=%d body=%s", reblocked.Code, reblocked.Body.String())
 	}
 }
+
+// TestUnbindAlwaysRequiresApprovalEvenWithoutForceBind 锁定用户反馈：关闭
+// force_bind_telegram 时，非管理员解绑同样必须先拿到 approved 换绑申请（用过即
+// 作废），杜绝"自助无限解绑/重绑"。每次更换都需管理员批准一次。
+func TestUnbindAlwaysRequiresApprovalEvenWithoutForceBind(t *testing.T) {
+	app := newTestApp(t)
+	app.cfg().ForceBindTelegram = false
+
+	_ = registerAndLogin(t, app, "admin", "Admin123456")
+	userCookies := registerAndLogin(t, app, "tguser", "User123456")
+	user, ok := app.store().FindUserByUsername("tguser")
+	if !ok {
+		t.Fatal("created user not found")
+	}
+	if _, err := app.store().UpdateUser(user.UID, func(u *store.User) error {
+		u.TelegramID = 666001
+		u.TelegramUsername = "tg_old"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	headers := map[string]string{"X-Twilight-Client": "webui"}
+
+	// 没有批准的换绑申请：即便未开启强制绑定，解绑也必须被拒。
+	blocked := doJSONWithHeaders(app, http.MethodPost, "/api/v1/users/me/telegram/unbind", "", userCookies, headers)
+	if blocked.Code != http.StatusForbidden {
+		t.Fatalf("unbind without approval (force_bind off) status=%d body=%s", blocked.Code, blocked.Body.String())
+	}
+
+	// 提交申请 → admin 批准 → 解绑成功，申请被消费成 used。
+	if r := doJSONWithHeaders(app, http.MethodPost, "/api/v1/users/me/telegram/rebind-request", `{"reason":"changed phone"}`, userCookies, headers); r.Code != http.StatusOK {
+		t.Fatalf("rebind-request status=%d body=%s", r.Code, r.Body.String())
+	}
+	pending := app.store().ListRebindRequests("pending")
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending request, got %d", len(pending))
+	}
+	adminCookies := loginCookies(t, app, "admin", "Admin123456")
+	if r := doJSONWithHeaders(app, http.MethodPost, fmt.Sprintf("/api/v1/admin/telegram/rebind-requests/%d/approve", pending[0].ID), `{}`, adminCookies, headers); r.Code != http.StatusOK {
+		t.Fatalf("approve status=%d body=%s", r.Code, r.Body.String())
+	}
+	if r := doJSONWithHeaders(app, http.MethodPost, "/api/v1/users/me/telegram/unbind", "", userCookies, headers); r.Code != http.StatusOK {
+		t.Fatalf("unbind after approval status=%d body=%s", r.Code, r.Body.String())
+	}
+	consumed, found := app.store().UserLatestRebindRequest(user.UID)
+	if !found || consumed.Status != "used" {
+		t.Fatalf("expected used request after unbind, found=%v req=%#v", found, consumed)
+	}
+
+	// 重新绑定后再次解绑：approved 已被消费，必须再次被拒（不能无限换绑）。
+	if _, err := app.store().UpdateUser(user.UID, func(u *store.User) error {
+		u.TelegramID = 666002
+		u.RebindingInProgress = false
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reblocked := doJSONWithHeaders(app, http.MethodPost, "/api/v1/users/me/telegram/unbind", "", userCookies, headers)
+	if reblocked.Code != http.StatusForbidden {
+		t.Fatalf("second unbind without new approval should be forbidden, status=%d body=%s", reblocked.Code, reblocked.Body.String())
+	}
+}
