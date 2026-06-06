@@ -285,8 +285,8 @@ func TestRegcodesPersistAcrossAppRestartButBindCodesDoNot(t *testing.T) {
 	if _, ok := app.bindCode(bindCode); !ok {
 		t.Fatalf("created bind code was not present in memory hub: %s", bindCode)
 	}
-	if _, ok := app.store().BindCode(bindCode); !ok {
-		t.Fatalf("bind code should be stored in persistent store for cross‑process access: %s", bindCode)
+	if _, ok := app.store().BindCode(bindCode); ok {
+		t.Fatalf("bind code leaked into persistent store: %s", bindCode)
 	}
 
 	cfg := *app.cfg()
@@ -309,8 +309,8 @@ func TestRegcodesPersistAcrossAppRestartButBindCodesDoNot(t *testing.T) {
 	if _, ok := restarted.bindCode(bindCode); ok {
 		t.Fatalf("in‑memory bind code hub should be empty after restart: %s", bindCode)
 	}
-	if _, ok := restarted.store().BindCode(bindCode); !ok {
-		t.Fatalf("bind code should persist in store for cross‑process access after restart: %s", bindCode)
+	if _, ok := restarted.store().BindCode(bindCode); ok {
+		t.Fatalf("bind code was persisted after app restart: %s", bindCode)
 	}
 }
 
