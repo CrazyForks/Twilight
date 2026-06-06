@@ -332,9 +332,11 @@ class ApiClient {
   }
 
   async unbindTelegram() {
-    return this.request("/users/me/telegram/unbind", {
-      method: "POST",
-    });
+    return this.request("/users/me/telegram/unbind", { method: "POST" });
+  }
+
+  async completeRebind() {
+    return this.request("/users/me/telegram/rebind-complete", { method: "POST" });
   }
 
   async bindEmbyAccount(embyUsername: string, embyPassword: string) {

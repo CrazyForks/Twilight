@@ -372,8 +372,9 @@ func (a *App) handleUploadServerIcon(w http.ResponseWriter, r *http.Request, _ P
 		return
 	}
 	filename := randomCode(16) + ext
-	filePath, okPath := resolveUploadAssetPath(a.cfg().UploadDir, "server-icon", filename)
-	if !okPath {
+	uploadRoot := firstNonEmpty(a.cfg().UploadDir, "uploads")
+	filePath, err := ResolveWithinRoot(uploadRoot, filepath.Join("server-icon", filename))
+	if err != nil {
 		failWithCode(w, http.StatusInternalServerError, ErrUploadDirInvalid, "上传目录无效")
 		return
 	}
@@ -442,6 +443,10 @@ func (a *App) handleAsset(w http.ResponseWriter, r *http.Request, params Params)
 func resolveUploadAssetPath(uploadDir, kind, filename string) (string, bool) {
 	target, err := ResolveWithinRoot(firstNonEmpty(uploadDir, "uploads"), filepath.Join(kind, filename))
 	if err != nil {
+		return "", false
+	}
+	info, lerr := os.Lstat(target)
+	if lerr != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
 		return "", false
 	}
 	return target, true

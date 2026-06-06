@@ -252,7 +252,7 @@ func runGitOutput(ctx context.Context, cwd string, timeout time.Duration, args .
 	}
 	if err != nil {
 		if stderr.Len() > 0 {
-			return stdout.String(), stderr.String(), fmt.Errorf("%s", strings.TrimSpace(stderr.String()))
+			return stdout.String(), stderr.String(), fmt.Errorf("%s", redactSensitiveText(strings.TrimSpace(stderr.String())))
 		}
 		return stdout.String(), stderr.String(), err
 	}

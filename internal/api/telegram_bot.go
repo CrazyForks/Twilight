@@ -246,7 +246,11 @@ func (a *App) telegramConfirmBindCode(ctx context.Context, chatID, telegramID in
 			_ = a.telegramSendMessage(ctx, chatID, "该绑定码已被其它 Telegram 账号确认，无法重复使用。")
 			return
 		}
-		_ = a.telegramSendMessage(ctx, chatID, "Telegram 绑定已确认，可以回到网页继续。")
+		if bind.UID != 0 {
+			_ = a.telegramSendMessage(ctx, chatID, "Telegram 已成功绑定到你的账号，可以回到网页继续。")
+		} else {
+			_ = a.telegramSendMessage(ctx, chatID, "Telegram 绑定已确认，可以回到网页继续注册。")
+		}
 		return
 	}
 	if existing, okUser := a.store().FindUserByTelegramID(telegramID); okUser && (bind.UID == 0 || existing.UID != bind.UID) {
@@ -286,7 +290,11 @@ func (a *App) telegramConfirmBindCode(ctx context.Context, chatID, telegramID in
 		return
 	}
 	a.clearRegisterBindFailure(code)
-	_ = a.telegramSendMessage(ctx, chatID, "Telegram 绑定已确认，可以回到网页继续。")
+	if bind.UID != 0 {
+		_ = a.telegramSendMessage(ctx, chatID, "Telegram 已成功绑定到你的账号，可以回到网页继续。")
+	} else {
+		_ = a.telegramSendMessage(ctx, chatID, "Telegram 绑定已确认，可以回到网页继续注册。")
+	}
 }
 
 func (a *App) telegramHandleMe(ctx context.Context, chatID, telegramID int64) {

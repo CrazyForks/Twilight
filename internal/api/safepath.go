@@ -22,6 +22,9 @@ func ResolveWithinRoot(root, candidate string) (string, error) {
 	if candidate == "" {
 		return "", ErrUnsafePath
 	}
+	if strings.ContainsRune(candidate, 0) {
+		return "", ErrUnsafePath
+	}
 	base, err := filepath.Abs(root)
 	if err != nil {
 		return "", err
@@ -50,7 +53,7 @@ func ResolveWithinRoot(root, candidate string) (string, error) {
 // 用于备份恢复、上传资源访问等"必须落在 root 直下"的场景。
 func ResolveLeafFile(root, name, requiredExt string) (string, error) {
 	name = strings.TrimSpace(name)
-	if name == "" || filepath.Base(name) != name || filepath.IsAbs(name) || strings.Contains(name, "..") {
+	if name == "" || filepath.Base(name) != name || filepath.IsAbs(name) || strings.Contains(name, "..") || strings.ContainsRune(name, 0) {
 		return "", ErrUnsafePath
 	}
 	if requiredExt != "" {

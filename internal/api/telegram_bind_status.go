@@ -34,6 +34,13 @@ func (a *App) telegramBindCodeState(code string, uid int64, requireScene string,
 	}
 	bind, okBind := a.bindCode(code)
 	if !okBind {
+		if uid != 0 {
+			for _, u := range a.store().ListUsers() {
+				if u.UID == uid && u.TelegramID != 0 {
+					return telegramBindCodeState{Code: code, Status: "bound", Message: "Telegram 已绑定", Confirmed: true, Terminal: true, TelegramBound: true, TelegramID: u.TelegramID, TelegramUsername: u.TelegramUsername}
+				}
+			}
+		}
 		return telegramBindCodeState{Code: code, Status: "not_found", ErrorCode: ErrTGBindCodeNotFound, HTTPStatus: http.StatusBadRequest, Message: "绑定码不存在", Invalid: true, Terminal: true}
 	}
 	if uid != 0 && bind.UID != uid {
@@ -42,14 +49,8 @@ func (a *App) telegramBindCodeState(code string, uid int64, requireScene string,
 	if requireScene != "" && bind.Scene != requireScene {
 		return telegramBindCodeState{Code: code, Status: "wrong_scene", ErrorCode: ErrTGBindCodeSceneBad, HTTPStatus: http.StatusBadRequest, Message: "绑定码场景无效", Invalid: true, Terminal: true}
 	}
-	if bind.ExpiresAt <= now {
-		if cleanupExpired {
-			_ = a.deleteBindCode(code)
-		}
-		return telegramBindCodeState{Code: code, Status: "expired", ErrorCode: ErrTGBindCodeExpired, HTTPStatus: http.StatusBadRequest, Message: "绑定码无效或已过期", Bind: bind, Invalid: true, Terminal: true}
-	}
-	state := telegramBindCodeState{Code: code, Bind: bind, ExpiresIn: bind.ExpiresAt - now, TelegramID: bind.TelegramID, TelegramUsername: bind.TelegramUsername}
 	if bind.Confirmed && bind.TelegramID != 0 {
+		state := telegramBindCodeState{Code: code, Bind: bind, ExpiresIn: bind.ExpiresAt - now, TelegramID: bind.TelegramID, TelegramUsername: bind.TelegramUsername}
 		state.Status = "confirmed"
 		state.Message = "绑定码已确认"
 		state.Confirmed = true
@@ -57,6 +58,13 @@ func (a *App) telegramBindCodeState(code string, uid int64, requireScene string,
 		state.TelegramBound = bind.UID != 0
 		return state
 	}
+	if bind.ExpiresAt <= now {
+		if cleanupExpired {
+			_ = a.deleteBindCode(code)
+		}
+		return telegramBindCodeState{Code: code, Status: "expired", ErrorCode: ErrTGBindCodeExpired, HTTPStatus: http.StatusBadRequest, Message: "绑定码无效或已过期", Bind: bind, Invalid: true, Terminal: true}
+	}
+	state := telegramBindCodeState{Code: code, Bind: bind, ExpiresIn: bind.ExpiresAt - now, TelegramID: bind.TelegramID, TelegramUsername: bind.TelegramUsername}
 	if a.bindStatus != nil {
 		if failure, ok := a.bindStatus.failure(code, now); ok {
 			state.Status = failure.Status

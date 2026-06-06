@@ -7,6 +7,7 @@ import { Sidebar } from "@/components/layout/sidebar";
 import { Header } from "@/components/layout/header";
 import { EmbyPendingModal } from "@/components/emby-pending-modal";
 import { ErrorBoundary } from "@/components/error-boundary";
+import RebindGuard from "@/components/rebind-guard";
 import { Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTheme } from "next-themes";
@@ -214,6 +215,10 @@ export default function MainLayout({
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
+  }
+
+  if (user?.rebinding_in_progress) {
+    return <RebindGuard />;
   }
 
   return (

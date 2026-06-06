@@ -45,6 +45,21 @@ func (c telegramCommandCtx) argString() string {
 // telegramCommandRegistry 定义所有"私聊 + 普通 gating"的命令。
 // 列表顺序无意义；多次注册相同命令会以最后一次为准（go map 行为）。
 var telegramCommandRegistry = map[string]telegramCommandSpec{
+	"/bind": {
+		private: true,
+		handler: func(a *App, ctx context.Context, c telegramCommandCtx) {
+			if len(c.Args) < 1 {
+				_ = a.telegramSendMessage(ctx, c.ChatID, a.telegramBindPrompt())
+				return
+			}
+			code := c.Args[0]
+			if !telegramBindCodePattern.MatchString(code) {
+				_ = a.telegramSendMessage(ctx, c.ChatID, "绑定码格式无效，请在网页重新获取后发送。\n\n示例：/bind ABC123")
+				return
+			}
+			a.telegramConfirmBindCode(ctx, c.ChatID, c.FromID, c.Username, code)
+		},
+	},
 	"/about": {
 		private: true,
 		handler: func(a *App, ctx context.Context, c telegramCommandCtx) {
@@ -114,16 +129,6 @@ var telegramCommandRegistry = map[string]telegramCommandSpec{
 		admin:   true,
 		handler: func(a *App, ctx context.Context, c telegramCommandCtx) {
 			_ = a.telegramSendMessage(ctx, c.ChatID, a.telegramAdminHelpText())
-		},
-	},
-	"/bind": {
-		private: true,
-		handler: func(a *App, ctx context.Context, c telegramCommandCtx) {
-			if len(c.Args) < 1 {
-				_ = a.telegramSendMessage(ctx, c.ChatID, a.telegramBindPrompt())
-				return
-			}
-			a.telegramConfirmBindCode(ctx, c.ChatID, c.FromID, c.Username, c.Args[0])
 		},
 	},
 }

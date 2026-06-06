@@ -1361,6 +1361,7 @@ func publicUser(u store.User) map[string]any {
 		"registration_source_name": registrationSourceLabel(u.RegistrationSource),
 		"registration_code":        u.RegistrationCode,
 		"emby_disabled_by_expiry":  false,
+		"rebinding_in_progress":    u.RebindingInProgress,
 	}
 }
 

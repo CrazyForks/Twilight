@@ -130,6 +130,8 @@ type User struct {
 	LegacyAPIKeyStatus bool     `json:"legacy_api_key_status"`
 	LegacyPermissions  []string `json:"legacy_permissions,omitempty"`
 	PasswordHash       string   `json:"password_hash"`
+	RebindingInProgress bool    `json:"rebinding_in_progress"`
+	RebindingSince     int64    `json:"rebinding_since,omitempty"`
 }
 
 type APIKey struct {

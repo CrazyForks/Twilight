@@ -85,6 +85,7 @@ export interface UserInfo {
   pending_emby?: boolean;  // 系统账号已建但待补建 Emby
   pending_emby_days?: number | null;  // 注册码授予的开通天数（待 Emby 补建）
   emby_disabled_by_expiry?: boolean;  // 到期后仅禁用 Emby，系统账号仍可登录
+  rebinding_in_progress?: boolean;  // 是否处于强制换绑流程中
 }
 
 export interface BatchUserResult {
@@ -193,6 +194,7 @@ export interface TelegramStatus {
   pending_rebind_request?: boolean;
   rebind_request_status?: string | null;
   rebind_request_id?: number | null;
+  rebinding_in_progress?: boolean;
 }
 
 export interface TelegramRebindRequest {

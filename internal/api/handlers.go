@@ -488,11 +488,11 @@ func (a *App) createBindCode(w http.ResponseWriter, uid int64, scene string) {
 		return
 	}
 	now := time.Now().Unix()
-	if err := a.upsertBindCode(store.BindCode{Code: code, Scene: scene, UID: uid, CreatedAt: now, ExpiresAt: now + 600}); err != nil {
+	if err := a.upsertBindCode(store.BindCode{Code: code, Scene: scene, UID: uid, CreatedAt: now, ExpiresAt: now + 300}); err != nil {
 		failWithCode(w, http.StatusInternalServerError, ErrBindCodeSaveFailed, "绑定码保存失败，请稍后重试")
 		return
 	}
-	ok(w, "OK", map[string]any{"bind_code": code, "expires_in": 600})
+	ok(w, "OK", map[string]any{"bind_code": code, "expires_in": 300})
 }
 
 func (a *App) handleBindCodeStatus(w http.ResponseWriter, r *http.Request, _ Params) {
@@ -752,6 +752,27 @@ func bindStateExpiryWait(state telegramBindCodeState) time.Duration {
 	return time.Duration(state.ExpiresIn)*time.Second + time.Second
 }
 
+func (a *App) handleRebindComplete(w http.ResponseWriter, r *http.Request, _ Params) {
+	p := current(r)
+	if !p.User.RebindingInProgress {
+		ok(w, "not in rebinding", nil)
+		return
+	}
+	if p.User.TelegramID == 0 {
+		failWithCode(w, http.StatusBadRequest, ErrTGNotBound, "尚未完成 Telegram 绑定")
+		return
+	}
+	_, err := a.store().UpdateUser(p.User.UID, func(u *store.User) error {
+		u.RebindingInProgress = false
+		u.RebindingSince = 0
+		return nil
+	})
+	if statusFromError(w, err) {
+		return
+	}
+	ok(w, "rebinding complete", publicUser(p.User))
+}
+
 func (a *App) handleTelegramStatus(w http.ResponseWriter, r *http.Request, _ Params) {
 	u := current(r).User
 	canUnbind := !a.cfg().ForceBindTelegram || u.Role == store.RoleAdmin
@@ -788,6 +809,7 @@ func (a *App) handleTelegramStatus(w http.ResponseWriter, r *http.Request, _ Par
 		"pending_rebind_request": pendingRebind,
 		"rebind_request_status":  rebindStatus,
 		"rebind_request_id":      rebindID,
+		"rebinding_in_progress":  u.RebindingInProgress,
 	})
 }
 
@@ -816,7 +838,14 @@ func (a *App) handleUnbindTelegram(w http.ResponseWriter, r *http.Request, _ Par
 	if consumeRebindID > 0 {
 		_ = a.store().ConsumeRebindRequest(consumeRebindID)
 	}
-	ok(w, "Telegram unbound", publicUser(u))
+	_, _ = a.store().UpdateUser(p.User.UID, func(u2 *store.User) error {
+		if u2.Role != store.RoleAdmin {
+			u2.RebindingInProgress = true
+			u2.RebindingSince = time.Now().Unix()
+		}
+		return nil
+	})
+	ok(w, "Telegram unbound. rebinding required", publicUser(u))
 }
 
 func (a *App) handleTelegramRebindRequest(w http.ResponseWriter, r *http.Request, _ Params) {
@@ -882,6 +911,7 @@ func (a *App) handleUserSettings(w http.ResponseWriter, r *http.Request, _ Param
 			"pending_rebind_request": pendingRebind,
 			"rebind_request_status":  rebindStatus,
 			"rebind_request_id":      rebindID,
+			"rebinding_in_progress":  u.RebindingInProgress,
 		},
 		"emby_status":   map[string]any{"is_synced": u.EmbyID != "", "is_active": u.Active, "can_unbind": a.userCanSelfUnbindEmby(u), "active_sessions": 0, "message": "OK"},
 		"system_config": map[string]any{"device_limit_enabled": a.cfg().DeviceLimitEnabled, "max_devices": a.cfg().MaxDevices, "max_streams": a.cfg().MaxStreams, "bangumi_sync_enabled": a.cfg().BangumiEnabled},

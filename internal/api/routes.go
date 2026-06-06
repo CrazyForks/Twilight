@@ -53,6 +53,7 @@ func (a *App) registerRoutes() {
 	a.add(http.MethodGet, "/api/v1/users/me/telegram/bind-code", AuthUser, a.handleUserBindCode)
 	a.add(http.MethodGet, "/api/v1/users/me/telegram/bind-code/status", AuthUser, a.handleUserBindCodeStatus)
 	a.add(http.MethodGet, "/api/v1/users/me/telegram/bind-code/ws", AuthUser, a.handleUserBindCodeStatusWS)
+	a.add(http.MethodPost, "/api/v1/users/me/telegram/rebind-complete", AuthUser, a.handleRebindComplete)
 	a.add(http.MethodGet, "/api/v1/users/me/settings", AuthUser, a.handleUserSettings)
 	a.add(http.MethodGet, "/api/v1/users/:uid/background", AuthUser, a.handleGetBackground)
 	a.add(http.MethodPut, "/api/v1/users/me/background", AuthUser, a.handleUpdateBackground)
