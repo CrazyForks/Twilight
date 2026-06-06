@@ -3019,6 +3019,40 @@ func (s *Store) ConsumeRebindRequest(id int64) error {
 	})
 }
 
+// RevokeApprovedRebindRequests 把所有 status=="approved"（尚未被解绑消费的换绑
+// 许可）批量置为 "revoked"，让持有者立即失去解绑权限，但保留再次申请的能力
+// （CreateRebindRequest 只拦截 pending；revoked 不影响）。用于策略收紧后一键
+// 清理"历史遗留的换绑许可"。不触碰 pending（待审申请）/ used（已用）/
+// RebindingInProgress（正在进行中的换绑不应被打断）。返回被撤销的数量，并保留
+// 更新审核元数据（reviewer / note / reviewedAt）以便审计"谁在何时批量撤销"。
+func (s *Store) RevokeApprovedRebindRequests(reviewerUID int64, note string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	err := s.mutateAndSaveLocked(func() error {
+		count = 0
+		now := time.Now().Unix()
+		for id, req := range s.state.RebindRequests {
+			if req.Status != "approved" {
+				continue
+			}
+			req.Status = "revoked"
+			req.ReviewerUID = reviewerUID
+			if note != "" {
+				req.AdminNote = note
+			}
+			req.ReviewedAt = now
+			s.state.RebindRequests[id] = req
+			count++
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
 func (s *Store) UpsertTelegramRoster(chatID string, telegramID int64, status string, isBot bool) error {
 	chatID = strings.TrimSpace(chatID)
 	if chatID == "" || telegramID <= 0 {

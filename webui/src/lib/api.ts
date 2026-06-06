@@ -888,6 +888,14 @@ class ApiClient {
     });
   }
 
+  // 一键撤销所有"已批准"的换绑许可：所有人立即变为不可换绑（但仍可重新申请）。
+  async revokeAllTelegramRebindApprovals(admin_note?: string) {
+    return this.request<{ revoked: number }>(`/admin/telegram/rebind-requests/revoke-approved`, {
+      method: "POST",
+      body: JSON.stringify({ admin_note }),
+    });
+  }
+
   async getSystemStats() {
     return this.request<SystemStats>("/system/admin/stats");
   }

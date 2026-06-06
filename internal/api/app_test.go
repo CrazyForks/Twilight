@@ -6097,6 +6097,79 @@ func TestForceBindUnbindConsumesApprovedRebindAndPreservesAudit(t *testing.T) {
 	}
 }
 
+// TestRevokeAllRebindApprovalsClearsExistingPermissions 锁定一键撤销换绑权限：
+// 把所有 approved 申请置为 revoked，持有者立即失去解绑权限（解绑 403），但仍可
+// 重新提交申请；不影响 pending / used。
+func TestRevokeAllRebindApprovalsClearsExistingPermissions(t *testing.T) {
+	app := newTestApp(t)
+	app.cfg().ForceBindTelegram = false
+
+	_ = registerAndLogin(t, app, "admin", "Admin123456")
+	userCookies := registerAndLogin(t, app, "tguser", "User123456")
+	user, ok := app.store().FindUserByUsername("tguser")
+	if !ok {
+		t.Fatal("created user not found")
+	}
+	if _, err := app.store().UpdateUser(user.UID, func(u *store.User) error {
+		u.TelegramID = 700001
+		u.TelegramUsername = "tg_old"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	headers := map[string]string{"X-Twilight-Client": "webui"}
+
+	// 用户拿到一条 approved 换绑许可（模拟历史遗留权限）。
+	if r := doJSONWithHeaders(app, http.MethodPost, "/api/v1/users/me/telegram/rebind-request", `{"reason":"legacy"}`, userCookies, headers); r.Code != http.StatusOK {
+		t.Fatalf("rebind-request status=%d body=%s", r.Code, r.Body.String())
+	}
+	pending := app.store().ListRebindRequests("pending")
+	if len(pending) != 1 {
+		t.Fatalf("expected 1 pending, got %d", len(pending))
+	}
+	adminCookies := loginCookies(t, app, "admin", "Admin123456")
+	if r := doJSONWithHeaders(app, http.MethodPost, fmt.Sprintf("/api/v1/admin/telegram/rebind-requests/%d/approve", pending[0].ID), `{}`, adminCookies, headers); r.Code != http.StatusOK {
+		t.Fatalf("approve status=%d body=%s", r.Code, r.Body.String())
+	}
+
+	// 一键撤销所有换绑权限。
+	revoke := doJSONWithHeaders(app, http.MethodPost, "/api/v1/admin/telegram/rebind-requests/revoke-approved", `{}`, adminCookies, headers)
+	if revoke.Code != http.StatusOK {
+		t.Fatalf("revoke-approved status=%d body=%s", revoke.Code, revoke.Body.String())
+	}
+	var revokeBody struct {
+		Data struct {
+			Revoked int `json:"revoked"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(revoke.Body.Bytes(), &revokeBody); err != nil {
+		t.Fatal(err)
+	}
+	if revokeBody.Data.Revoked != 1 {
+		t.Fatalf("expected 1 revoked, got %d (body=%s)", revokeBody.Data.Revoked, revoke.Body.String())
+	}
+
+	// 申请变为 revoked，审计元数据保留。
+	latest, found := app.store().UserLatestRebindRequest(user.UID)
+	if !found || latest.Status != "revoked" {
+		t.Fatalf("expected revoked status, found=%v req=%#v", found, latest)
+	}
+	admin, _ := app.store().FindUserByUsername("admin")
+	if latest.ReviewerUID != admin.UID || latest.ReviewedAt == 0 {
+		t.Fatalf("revoke audit metadata not recorded: %#v", latest)
+	}
+
+	// 持有者立即失去解绑权限。
+	if r := doJSONWithHeaders(app, http.MethodPost, "/api/v1/users/me/telegram/unbind", "", userCookies, headers); r.Code != http.StatusForbidden {
+		t.Fatalf("unbind after revoke should be forbidden, status=%d body=%s", r.Code, r.Body.String())
+	}
+
+	// 但仍可重新提交申请。
+	if r := doJSONWithHeaders(app, http.MethodPost, "/api/v1/users/me/telegram/rebind-request", `{"reason":"again"}`, userCookies, headers); r.Code != http.StatusOK {
+		t.Fatalf("re-apply after revoke should succeed, status=%d body=%s", r.Code, r.Body.String())
+	}
+}
+
 // TestUnbindAlwaysRequiresApprovalEvenWithoutForceBind 锁定用户反馈：关闭
 // force_bind_telegram 时，非管理员解绑同样必须先拿到 approved 换绑申请（用过即
 // 作废），杜绝"自助无限解绑/重绑"。每次更换都需管理员批准一次。

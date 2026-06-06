@@ -8,6 +8,7 @@ import {
   Loader2,
   ChevronLeft,
   ChevronRight,
+  Ban,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -36,6 +37,8 @@ export default function AdminTelegramRebindRequestsPage() {
   const [selectedAction, setSelectedAction] = useState<"approve" | "reject">("approve");
   const [adminNote, setAdminNote] = useState("");
   const [isActioning, setIsActioning] = useState(false);
+  const [revokeOpen, setRevokeOpen] = useState(false);
+  const [isRevoking, setIsRevoking] = useState(false);
 
   const requestsCacheRef = useRef(new Map<string, { requests: TelegramRebindRequest[]; total: number }>());
 
@@ -129,6 +132,28 @@ export default function AdminTelegramRebindRequestsPage() {
     }
   };
 
+  const handleRevokeAll = async () => {
+    setIsRevoking(true);
+    try {
+      const res = await api.revokeAllTelegramRebindApprovals();
+      if (res.success) {
+        toast({
+          title: t("adminTelegramRebind.revokeAllDone", { count: res.data?.revoked ?? 0 }),
+          variant: "success",
+        });
+        setRevokeOpen(false);
+        invalidateRequestsCache();
+        loadRequests();
+      } else {
+        toast({ title: t("common.operationFailed"), description: res.message, variant: "destructive" });
+      }
+    } catch (error: any) {
+      toast({ title: t("common.operationFailed"), description: error.message, variant: "destructive" });
+    } finally {
+      setIsRevoking(false);
+    }
+  };
+
   const getStatusBadge = (status: string) => {
     switch (status) {
       case "pending":
@@ -152,6 +177,13 @@ export default function AdminTelegramRebindRequestsPage() {
             {t("adminReview.rejected")}
           </Badge>
         );
+      case "revoked":
+        return (
+          <Badge variant="secondary">
+            <Ban className="mr-1 h-3 w-3" />
+            {t("adminReview.revoked")}
+          </Badge>
+        );
       default:
         return <Badge variant="secondary">{status}</Badge>;
     }
@@ -171,22 +203,28 @@ export default function AdminTelegramRebindRequestsPage() {
           <h1 className="text-3xl font-bold">{t("adminTelegramRebind.title")}</h1>
           <p className="text-muted-foreground">{t("adminTelegramRebind.description")}</p>
         </div>
-        <Badge variant="outline" className="text-lg px-4 py-2">
-          {t("adminReview.totalRequests", { count: total })}
-        </Badge>
+        <div className="flex items-center gap-3">
+          <Button variant="destructive" onClick={() => setRevokeOpen(true)}>
+            <Ban className="mr-2 h-4 w-4" />
+            {t("adminTelegramRebind.revokeAll")}
+          </Button>
+          <Badge variant="outline" className="text-lg px-4 py-2">
+            {t("adminReview.totalRequests", { count: total })}
+          </Badge>
+        </div>
       </div>
 
       <Card>
         <CardContent className="p-4">
           <div className="mb-4 flex flex-wrap items-center gap-2">
-            {['pending', 'approved', 'rejected'].map((value) => (
+            {['pending', 'approved', 'rejected', 'revoked'].map((value) => (
               <Button
                 key={value}
                 variant={status === value ? 'secondary' : 'outline'}
                 size="sm"
                 onClick={() => { setStatus(value); setPage(1); setSelectedIds(new Set()); }}
               >
-                {value === 'pending' ? t("adminReview.pending") : value === 'approved' ? t("adminReview.approved") : t("adminReview.rejected")}
+                {value === 'pending' ? t("adminReview.pending") : value === 'approved' ? t("adminReview.approved") : value === 'rejected' ? t("adminReview.rejected") : t("adminReview.revoked")}
               </Button>
             ))}
             {status === "pending" && pendingOnPage.length > 0 && (
@@ -352,6 +390,24 @@ export default function AdminTelegramRebindRequestsPage() {
               {isActioning ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : selectedAction === 'approve' ? t("adminTelegramRebind.approve") : t("adminTelegramRebind.reject")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={revokeOpen} onOpenChange={setRevokeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{t("adminTelegramRebind.revokeAllTitle")}</DialogTitle>
+            <DialogDescription>{t("adminTelegramRebind.revokeAllDescription")}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRevokeOpen(false)} disabled={isRevoking}>
+              {t("common.cancel")}
+            </Button>
+            <Button variant="destructive" onClick={handleRevokeAll} disabled={isRevoking}>
+              {isRevoking ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Ban className="mr-2 h-4 w-4" />}
+              {t("adminTelegramRebind.revokeAllConfirm")}
             </Button>
           </DialogFooter>
         </DialogContent>

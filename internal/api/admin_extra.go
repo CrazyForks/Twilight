@@ -687,7 +687,7 @@ func (a *App) handleInviteDetach(w http.ResponseWriter, r *http.Request, params 
 
 func (a *App) handleListRebindRequests(w http.ResponseWriter, r *http.Request, _ Params) {
 	status := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("status")))
-	if status != "" && status != "all" && status != "pending" && status != "approved" && status != "rejected" {
+	if status != "" && status != "all" && status != "pending" && status != "approved" && status != "rejected" && status != "revoked" {
 		failWithCode(w, http.StatusBadRequest, ErrRebindStatusInvalid, "无效的状态过滤值")
 		return
 	}
@@ -745,6 +745,20 @@ func (a *App) handleBatchReviewRebindRequests(w http.ResponseWriter, r *http.Req
 		}
 	}
 	ok(w, "batch review complete", result)
+}
+
+// handleRevokeAllRebindApprovals 一键撤销所有"已批准"的换绑许可：策略收紧后用来
+// 清理历史遗留的换绑权限——所有人立即变为不可换绑，但仍可重新提交申请。
+func (a *App) handleRevokeAllRebindApprovals(w http.ResponseWriter, r *http.Request, _ Params) {
+	note := truncateString(stringValue(decodeMap(r), "admin_note"), 500)
+	if note == "" {
+		note = "管理员批量撤销换绑权限"
+	}
+	count, err := a.store().RevokeApprovedRebindRequests(current(r).User.UID, note)
+	if statusFromError(w, err) {
+		return
+	}
+	ok(w, "revoked", map[string]any{"revoked": count})
 }
 
 func (a *App) handleTelegramRejoinedEnable(w http.ResponseWriter, r *http.Request, _ Params) {
