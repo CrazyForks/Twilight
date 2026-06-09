@@ -75,7 +75,13 @@ import {
 } from "./admin-users-helpers";
 import { AdminEmailDialog } from "./admin-email-dialog";
 import { useSystemStore } from "@/store/system";
-import { renderExpireCell, renderRoleBadge, UserActionsMenu } from "./admin-users-cells";
+import {
+  renderEmbyStatusCell,
+  renderExpireCell,
+  renderRoleBadge,
+  renderWebStatusBadge,
+  UserActionsMenu,
+} from "./admin-users-cells";
 import {
   BindEmbyDialog,
   BulkEnableDialog,
@@ -2136,29 +2142,12 @@ export default function AdminUsersPage() {
                       <div className="mt-1">{getRoleBadge(user.role)}</div>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">状态</p>
-                      <div className="mt-1">
-                        <Badge variant={user.active ? "success" : "destructive"}>
-                          {user.active ? "正常" : "禁用"}
-                        </Badge>
-                      </div>
+                      <p className="text-xs text-muted-foreground">Web 账号状态</p>
+                      <div className="mt-1">{renderWebStatusBadge(user)}</div>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">Emby</p>
-                      <div className="mt-1 flex flex-col gap-0.5 min-w-0">
-                        {user.emby_id ? (
-                          <>
-                            <Badge variant="success" className="w-fit text-[10px]">已绑定</Badge>
-                            <span className="text-xs text-muted-foreground truncate" title={user.emby_username || user.username}>
-                              {user.emby_username || user.username}
-                            </span>
-                          </>
-                        ) : (
-                          <Badge variant="outline" className="w-fit text-[10px] text-muted-foreground">
-                            未绑定
-                          </Badge>
-                        )}
-                      </div>
+                      <p className="text-xs text-muted-foreground">Emby 账号状态</p>
+                      <div className="mt-1 flex min-w-0 flex-col gap-0.5">{renderEmbyStatusCell(user)}</div>
                     </div>
                     <div>
                       <p className="text-xs text-muted-foreground">到期时间</p>
@@ -2195,8 +2184,8 @@ export default function AdminUsersPage() {
                     </th>
                     <th className="px-4 py-3 text-left text-sm font-medium">用户</th>
                     <th className="px-4 py-3 text-left text-sm font-medium">角色</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">状态</th>
-                    <th className="px-4 py-3 text-left text-sm font-medium">Emby</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium">Web 账号状态</th>
+                    <th className="px-4 py-3 text-left text-sm font-medium">Emby 账号状态</th>
                     <th className="px-4 py-3 text-left text-sm font-medium">到期时间</th>
                     <th className="px-4 py-3 text-right text-sm font-medium">操作</th>
                   </tr>
@@ -2255,28 +2244,8 @@ export default function AdminUsersPage() {
                         </div>
                       </td>
                       <td className="px-4 py-3">{getRoleBadge(user.role)}</td>
-                      <td className="px-4 py-3">
-                        <Badge variant={user.active ? "success" : "destructive"}>
-                          {user.active ? "正常" : "禁用"}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-3">
-                        {user.emby_id ? (
-                          <div className="flex flex-col gap-0.5 min-w-0">
-                            <Badge variant="success" className="w-fit text-[10px]">已绑定</Badge>
-                            <span
-                              className="text-xs text-muted-foreground truncate max-w-[160px]"
-                              title={user.emby_username || user.username}
-                            >
-                              {user.emby_username || user.username}
-                            </span>
-                          </div>
-                        ) : (
-                          <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                            未绑定
-                          </Badge>
-                        )}
-                      </td>
+                      <td className="px-4 py-3">{renderWebStatusBadge(user)}</td>
+                      <td className="px-4 py-3">{renderEmbyStatusCell(user)}</td>
                       <td className="px-4 py-3 text-sm">{renderExpireCell(user, t)}</td>
                       <td className="px-4 py-3 text-right">
                         {renderUserActions(user)}

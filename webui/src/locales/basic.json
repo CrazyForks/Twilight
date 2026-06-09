@@ -1592,7 +1592,13 @@
     "devColLastActivity": "最近活跃",
     "devColStatus": "状态",
     "online": "在线",
-    "offline": "离线"
+    "offline": "离线",
+    "clientFilterLabel": "客户端类型",
+    "clientFilterAll": "全部客户端",
+    "clientUnknown": "未知客户端",
+    "clientsTitle": "客户端分布",
+    "clientChipTitle": "{devices} 台设备 · {online} 在线 · {users} 个用户",
+    "ipApproxTooltip": "来自历史登录记录推断，非实时会话"
   },
   "adminEmby": {
     "title": "Emby 管理",

@@ -1404,7 +1404,13 @@
     "devColLastActivity": "最近活躍",
     "devColStatus": "狀態",
     "online": "線上",
-    "offline": "離線"
+    "offline": "離線",
+    "clientFilterLabel": "用戶端類型",
+    "clientFilterAll": "全部用戶端",
+    "clientUnknown": "未知用戶端",
+    "clientsTitle": "用戶端分布",
+    "clientChipTitle": "{devices} 台裝置 · {online} 線上 · {users} 位使用者",
+    "ipApproxTooltip": "依歷史登入記錄推斷，非即時工作階段"
   },
   "adminEmby": {
     "title": "Emby 管理",

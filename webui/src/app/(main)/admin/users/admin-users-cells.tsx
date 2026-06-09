@@ -79,6 +79,62 @@ export function renderExpireCell(user: UserInfo, t: TFunc) {
 }
 
 /**
+ * Web 账号状态徽章：系统账号本身能否登录，仅取决于 active。
+ * 与 Emby 账号状态分开展示——一个用户的网页账号正常、Emby 账号却可能因到期被禁用。
+ */
+export function renderWebStatusBadge(user: UserInfo) {
+  return (
+    <Badge variant={user.active ? "success" : "destructive"}>
+      {user.active ? "正常" : "禁用"}
+    </Badge>
+  );
+}
+
+/**
+ * Emby 账号状态单元格：独立于 Web 账号状态，按绑定 / 待开通 / 启用 / 到期禁用区分。
+ * - pending_emby → 待开通（系统账号已建，等首次登录补建 Emby）
+ * - 无 emby_id → 未绑定
+ * - emby_disabled_by_expiry → 已禁用（到期）
+ * - 其余已绑定 → 已启用，并展示绑定的 Emby 用户名
+ */
+export function renderEmbyStatusCell(user: UserInfo) {
+  if (user.pending_emby) {
+    return (
+      <Badge variant="outline" className="w-fit border-amber-500/40 text-[10px] text-amber-600">
+        待开通
+      </Badge>
+    );
+  }
+  if (!user.emby_id) {
+    return (
+      <Badge variant="outline" className="text-[10px] text-muted-foreground">
+        未绑定
+      </Badge>
+    );
+  }
+  const disabledByExpiry = Boolean(user.emby_disabled_by_expiry);
+  return (
+    <div className="flex min-w-0 flex-col gap-0.5">
+      {disabledByExpiry ? (
+        <Badge variant="destructive" className="w-fit text-[10px]">
+          已禁用（到期）
+        </Badge>
+      ) : (
+        <Badge variant="success" className="w-fit text-[10px]">
+          已启用
+        </Badge>
+      )}
+      <span
+        className="max-w-[160px] truncate text-xs text-muted-foreground"
+        title={user.emby_username || user.username}
+      >
+        {user.emby_username || user.username}
+      </span>
+    </div>
+  );
+}
+
+/**
  * 单行操作下拉菜单。所有交互通过 handlers 注入，组件本身无状态，便于
  * page.tsx 主组件甩开 90+ 行 JSX。子项的可见性 / 禁用规则与原行为一致：
  *   - "取消永久到期" 仅在永久到期 + 非管理员 + 已绑定 Emby 时出现

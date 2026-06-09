@@ -422,8 +422,8 @@ export interface LoginDevice {
 
 // ----- Emby 设备 / IP 审查（按用户聚合，对应 /admin/emby/device-audit） -----
 
-// EmbyAuditDevice 是一台 Emby 设备的审查信息。ip 已在后端解析掉端口（仅当该设备
-// 当前在线、或能从实时会话匹配到时才有值），离线设备的来源 IP 体现在用户级 ips。
+// EmbyAuditDevice 是一台 Emby 设备的审查信息。ip 已在后端解析掉端口；在线设备来自
+// 实时会话，离线设备由后端用历史登录记录回填（此时 ip_approx=true，表示推断值）。
 export interface EmbyAuditDevice {
   device_id: string;
   device_name: string;
@@ -431,7 +431,16 @@ export interface EmbyAuditDevice {
   app_version: string;
   last_activity: string;
   ip: string;
+  ip_approx: boolean; // true=由历史登录记录推断（非实时会话），前端弱化展示并加提示
   online: boolean;
+}
+
+// EmbyAuditClientStat 是按客户端类型（AppName）归类的统计：设备数 / 在线数 / 去重用户数。
+export interface EmbyAuditClientStat {
+  name: string;
+  devices: number;
+  online: number;
+  users: number;
 }
 
 // EmbyAuditLocalUser 是设备审查里携带的完整本地账号信息：网页账号 + Emby 账号 +
@@ -471,6 +480,7 @@ export interface EmbyDeviceAuditSummary {
   online_devices: number;
   total_ips: number;
   activity_available: boolean;
+  clients: EmbyAuditClientStat[];
 }
 
 export interface EmbyDeviceAuditData {

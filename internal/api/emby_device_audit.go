@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/prejudice-studio/twilight/internal/store"
 )
@@ -14,6 +15,27 @@ import (
 // embyDeviceAuditActivityLimit 控制为补全历史登录 IP 而拉取的活动日志条数。
 // 设备审查是管理员按需触发的低频操作，取较大窗口以尽量覆盖离线设备的来源 IP。
 const embyDeviceAuditActivityLimit = 500
+
+// embyDeviceIPCorrelationWindow 限定「用历史登录事件回填离线设备 IP」时，设备最近
+// 活跃时间与登录事件时间的最大允许间隔。Emby 的 /Devices 不返回 IP，离线设备也拿不到
+// 实时会话 IP；当某用户有多个历史登录 IP 时，只把时间上最接近设备最近活跃、且落在窗口
+// 内的那次登录 IP 作为「推断值」回填，超出窗口就不猜，避免把别处的 IP 张冠李戴。
+const embyDeviceIPCorrelationWindow = 12 * time.Hour
+
+// parseEmbyTime 解析 Emby 返回的时间戳（ISO8601，常见为带小数秒的 UTC，也可能带时区
+// 偏移）。解析失败返回零值 + false，调用方据此跳过该条，不影响其余审查数据。
+func parseEmbyTime(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if ts, err := time.Parse(layout, s); err == nil {
+			return ts, true
+		}
+	}
+	return time.Time{}, false
+}
 
 // parseRemoteIP 从 Emby RemoteEndPoint 中提取纯 IP。Emby 的 RemoteEndPoint 常见
 // 形态是 "IP:port"（IPv6 形如 "[::1]:port"），偶尔是裸 IP。旧实现把整段原样当作
@@ -57,15 +79,80 @@ func activityEntryIPs(short string) []string {
 	return out
 }
 
+// embyAuthEvent 是从活动日志解析出的一次登录事件：发生时间 + 来源 IP，用于把
+// 历史登录 IP 时间相关地回填到离线设备。
+type embyAuthEvent struct {
+	at time.Time
+	ip string
+}
+
 // embyAuditUser 是「按 Emby 登录用户聚合」的中间状态：每个 Emby 用户的设备、
-// 去重后的登录 IP、在线设备数与最近活跃时间。
+// 去重后的登录 IP、历史登录事件、在线设备数与最近活跃时间。
 type embyAuditUser struct {
-	embyID   string
-	embyName string
-	devices  []map[string]any
-	ipSet    map[string]bool
-	online   int
-	lastSeen string // RFC3339（UTC），可直接按字符串比较取最大
+	embyID     string
+	embyName   string
+	devices    []map[string]any
+	ipSet      map[string]bool
+	authEvents []embyAuthEvent
+	online     int
+	lastSeen   string // RFC3339（UTC），可直接按字符串比较取最大
+}
+
+// fillDeviceIPsFromHistory 用历史登录 IP 回填没有实时会话 IP 的（通常是离线）设备。
+// Emby /Devices 不带 IP，离线设备拿不到实时会话 IP，但管理员审查时仍想知道这台设备
+// 大致来自哪个 IP。两种回填都标记 ip_approx=true（推断值，非实时会话）：
+//   - 该用户全程只出现过一个 IP：所有设备必然来自它，直接回填；
+//   - 出现多个 IP：取时间上最接近设备最近活跃、且落在允许窗口内的那次登录 IP。
+func fillDeviceIPsFromHistory(u *embyAuditUser) {
+	if len(u.ipSet) == 0 {
+		return
+	}
+	soleIP := ""
+	if len(u.ipSet) == 1 {
+		for ip := range u.ipSet {
+			soleIP = ip
+		}
+	}
+	for _, dev := range u.devices {
+		if asString(dev["ip"]) != "" {
+			continue
+		}
+		// 在线设备的 IP 只认实时会话；没拿到就留空，不用历史值倒推（避免自相矛盾）。
+		if online, _ := dev["online"].(bool); online {
+			continue
+		}
+		if soleIP != "" {
+			dev["ip"] = soleIP
+			dev["ip_approx"] = true
+			continue
+		}
+		if len(u.authEvents) == 0 {
+			continue
+		}
+		devAt, ok := parseEmbyTime(asString(dev["last_activity"]))
+		if !ok {
+			continue
+		}
+		best := ""
+		var bestDiff time.Duration
+		for _, ev := range u.authEvents {
+			diff := devAt.Sub(ev.at)
+			if diff < 0 {
+				diff = -diff
+			}
+			if diff > embyDeviceIPCorrelationWindow {
+				continue
+			}
+			if best == "" || diff < bestDiff {
+				best = ev.ip
+				bestDiff = diff
+			}
+		}
+		if best != "" {
+			dev["ip"] = best
+			dev["ip_approx"] = true
+		}
+	}
 }
 
 // embyAuditLocalUser 把本地账号映射成审查视图需要的完整信息：网页账号、Emby 账号
@@ -136,12 +223,21 @@ func (a *App) buildEmbyDeviceAudit(ctx context.Context) (map[string]any, error) 
 	if err := a.embyGet(ctx, "/Devices", &devResp); err != nil {
 		return nil, err
 	}
+	// 客户端类型聚合：按 AppName 统计设备数 / 在线数 / 去重用户数，给前端做归类与筛选。
+	type clientStat struct {
+		devices int
+		online  int
+		users   map[string]bool
+	}
+	clientStats := map[string]*clientStat{}
+
 	totalDevices := 0
 	onlineDevices := 0
 	for _, d := range devResp.Items {
 		deviceID := asString(d["Id"])
 		uid := asString(d["LastUserId"])
 		last := asString(d["DateLastActivity"])
+		app := asString(d["AppName"])
 		u := getUser(uid)
 		if name := asString(d["LastUserName"]); name != "" && u.embyName == "" {
 			u.embyName = name
@@ -160,12 +256,25 @@ func (a *App) buildEmbyDeviceAudit(ctx context.Context) (map[string]any, error) 
 		u.devices = append(u.devices, map[string]any{
 			"device_id":     deviceID,
 			"device_name":   asString(d["Name"]),
-			"app_name":      asString(d["AppName"]),
+			"app_name":      app,
 			"app_version":   asString(d["AppVersion"]),
 			"last_activity": last,
 			"ip":            ip,
+			"ip_approx":     false,
 			"online":        isOnline,
 		})
+		cs := clientStats[app]
+		if cs == nil {
+			cs = &clientStat{users: map[string]bool{}}
+			clientStats[app] = cs
+		}
+		cs.devices++
+		if isOnline {
+			cs.online++
+		}
+		if uid != "" {
+			cs.users[uid] = true
+		}
 		totalDevices++
 	}
 
@@ -186,10 +295,15 @@ func (a *App) buildEmbyDeviceAudit(ctx context.Context) (map[string]any, error) 
 				continue
 			}
 			u := getUser(uid)
+			date := asString(e["Date"])
+			eventAt, hasAt := parseEmbyTime(date)
 			for _, ip := range ips {
 				u.ipSet[ip] = true
+				if hasAt {
+					u.authEvents = append(u.authEvents, embyAuthEvent{at: eventAt, ip: ip})
+				}
 			}
-			if date := asString(e["Date"]); date > u.lastSeen {
+			if date > u.lastSeen {
 				u.lastSeen = date
 			}
 		}
@@ -199,6 +313,8 @@ func (a *App) buildEmbyDeviceAudit(ctx context.Context) (map[string]any, error) 
 	allIPs := map[string]bool{}
 	out := make([]map[string]any, 0, len(users))
 	for _, u := range users {
+		// 先用历史登录 IP 回填离线设备，再展开 IP 列表与设备排序。
+		fillDeviceIPsFromHistory(u)
 		ips := make([]string, 0, len(u.ipSet))
 		for ip := range u.ipSet {
 			ips = append(ips, ip)
@@ -241,6 +357,25 @@ func (a *App) buildEmbyDeviceAudit(ctx context.Context) (map[string]any, error) 
 		return ii > ij
 	})
 
+	// 客户端归类：按设备数量倒序，并列按名称升序，便于前端做分布展示与下拉筛选。
+	clients := make([]map[string]any, 0, len(clientStats))
+	for name, cs := range clientStats {
+		clients = append(clients, map[string]any{
+			"name":    name,
+			"devices": cs.devices,
+			"online":  cs.online,
+			"users":   len(cs.users),
+		})
+	}
+	sort.SliceStable(clients, func(i, j int) bool {
+		di, _ := clients[i]["devices"].(int)
+		dj, _ := clients[j]["devices"].(int)
+		if di != dj {
+			return di > dj
+		}
+		return asString(clients[i]["name"]) < asString(clients[j]["name"])
+	})
+
 	return map[string]any{
 		"emby_configured": true,
 		"users":           out,
@@ -251,6 +386,7 @@ func (a *App) buildEmbyDeviceAudit(ctx context.Context) (map[string]any, error) 
 			"online_devices":     onlineDevices,
 			"total_ips":          len(allIPs),
 			"activity_available": activityAvailable,
+			"clients":            clients,
 		},
 	}, nil
 }
@@ -264,6 +400,7 @@ func (a *App) handleAdminEmbyDeviceAudit(w http.ResponseWriter, r *http.Request,
 			"summary": map[string]any{
 				"total_users": 0, "linked_users": 0, "total_devices": 0,
 				"online_devices": 0, "total_ips": 0, "activity_available": false,
+				"clients": []any{},
 			},
 		})
 		return

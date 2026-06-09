@@ -1404,7 +1404,13 @@
     "devColLastActivity": "Last active",
     "devColStatus": "Status",
     "online": "Online",
-    "offline": "Offline"
+    "offline": "Offline",
+    "clientFilterLabel": "Client type",
+    "clientFilterAll": "All clients",
+    "clientUnknown": "Unknown client",
+    "clientsTitle": "Client breakdown",
+    "clientChipTitle": "{devices} devices · {online} online · {users} users",
+    "ipApproxTooltip": "Inferred from login history, not a live session"
   },
   "adminEmby": {
     "title": "Emby Management",

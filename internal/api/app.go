@@ -1361,8 +1361,10 @@ func publicUser(u store.User) map[string]any {
 		"registration_source":      u.RegistrationSource,
 		"registration_source_name": registrationSourceLabel(u.RegistrationSource),
 		"registration_code":        u.RegistrationCode,
-		"emby_disabled_by_expiry":  false,
-		"rebinding_in_progress":    u.RebindingInProgress,
+		// 与 handleEmbyURLs 同口径：普通用户到期后只禁用 Emby（系统账号仍可登录），
+		// 据此让管理列表把「Web 账号状态」与「Emby 账号状态」分开展示。
+		"emby_disabled_by_expiry": u.Role == store.RoleNormal && u.ExpiredAt > 0 && u.ExpiredAt < time.Now().Unix(),
+		"rebinding_in_progress":   u.RebindingInProgress,
 	}
 }
 

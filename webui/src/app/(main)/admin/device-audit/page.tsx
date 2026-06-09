@@ -13,6 +13,7 @@ import {
   Network,
   Users as UsersIcon,
   Shield,
+  AppWindow,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,16 @@ type CategoryKey = "all" | "linked" | "unlinked" | "online" | "multiDevice" | "m
 
 // 与后端 permanentExpiryUnix 同量级：超过该阈值视为「永久有效」。
 const PERMANENT_THRESHOLD = 253402214400;
+
+// 客户端筛选的「全部」哨兵，以及「未知客户端」（AppName 为空）的哨兵——Radix Select
+// 不接受空字符串作为 value，所以空 AppName 在下拉里用一个稳定占位值表示。
+const CLIENT_ALL = "all";
+const CLIENT_UNKNOWN = "__unknown__";
+
+// clientFilterValue 把后端的客户端名（可能为空串）映射成可用于 Select / 比较的稳定值。
+function clientFilterValue(name: string): string {
+  return name === "" ? CLIENT_UNKNOWN : name;
+}
 
 function roleLabelKey(role: number): MessageKey {
   if (role === 0) return "deviceAudit.roleAdmin";
@@ -72,6 +83,7 @@ export default function AdminDeviceAuditPage() {
 
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState<CategoryKey>("all");
+  const [clientFilter, setClientFilter] = useState<string>(CLIENT_ALL);
   const [sortKey, setSortKey] = useState<SortKey>("devices");
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -110,7 +122,12 @@ export default function AdminDeviceAuditPage() {
   const visibleUsers = useMemo<EmbyAuditUser[]>(() => {
     if (!data) return [];
     const q = search.trim().toLowerCase();
+    const clientTarget = clientFilter === CLIENT_UNKNOWN ? "" : clientFilter;
     const filtered = data.users.filter((u) => {
+      // 客户端类型筛选：保留至少有一台该客户端设备的用户。
+      if (clientFilter !== CLIENT_ALL) {
+        if (!u.devices.some((d) => (d.app_name || "") === clientTarget)) return false;
+      }
       // 归类
       switch (category) {
         case "linked":
@@ -168,7 +185,7 @@ export default function AdminDeviceAuditPage() {
       }
     });
     return sorted;
-  }, [data, search, category, sortKey]);
+  }, [data, search, category, clientFilter, sortKey]);
 
   const summary = data?.summary;
   const embyConfigured = data?.emby_configured ?? true;
@@ -197,7 +214,7 @@ export default function AdminDeviceAuditPage() {
       {/* Toolbar: search + categorize + sort + summary */}
       <Card>
         <CardContent className="flex flex-col gap-3 p-4">
-          <div className="grid gap-2 lg:grid-cols-[minmax(220px,1fr)_200px_200px]">
+          <div className="grid gap-2 lg:grid-cols-[minmax(200px,1fr)_repeat(3,minmax(150px,180px))]">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <Input
@@ -218,6 +235,19 @@ export default function AdminDeviceAuditPage() {
                 <SelectItem value="online">{t("deviceAudit.filterOnline")}</SelectItem>
                 <SelectItem value="multiDevice">{t("deviceAudit.filterMultiDevice")}</SelectItem>
                 <SelectItem value="multiIp">{t("deviceAudit.filterMultiIp")}</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={clientFilter} onValueChange={setClientFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder={t("deviceAudit.clientFilterLabel")} />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={CLIENT_ALL}>{t("deviceAudit.clientFilterAll")}</SelectItem>
+                {summary?.clients.map((c) => (
+                  <SelectItem key={clientFilterValue(c.name)} value={clientFilterValue(c.name)}>
+                    {(c.name || t("deviceAudit.clientUnknown")) + " · " + c.devices}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             <Select value={sortKey} onValueChange={(value) => setSortKey(value as SortKey)}>
@@ -256,6 +286,46 @@ export default function AdminDeviceAuditPage() {
                   {t("deviceAudit.activityUnavailable")}
                 </Badge>
               )}
+            </div>
+          )}
+          {summary && summary.clients.length > 0 && (
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                <AppWindow className="h-3.5 w-3.5" />
+                {t("deviceAudit.clientsTitle")}
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {summary.clients.map((c) => {
+                  const value = clientFilterValue(c.name);
+                  const active = clientFilter === value;
+                  const label = c.name || t("deviceAudit.clientUnknown");
+                  return (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setClientFilter(active ? CLIENT_ALL : value)}
+                      title={t("deviceAudit.clientChipTitle", {
+                        devices: c.devices,
+                        online: c.online,
+                        users: c.users,
+                      })}
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors ${
+                        active
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border text-muted-foreground hover:bg-muted/60"
+                      }`}
+                    >
+                      <span className="font-medium">{label}</span>
+                      <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-foreground/70">
+                        {c.devices}
+                      </span>
+                      {c.online > 0 && (
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" aria-hidden />
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           )}
         </CardContent>
@@ -516,7 +586,22 @@ export default function AdminDeviceAuditPage() {
                                         <span className="ml-1 text-xs text-muted-foreground">{d.app_version}</span>
                                       )}
                                     </td>
-                                    <td className="p-2 font-mono">{d.ip || "—"}</td>
+                                    <td className="p-2 font-mono">
+                                      {d.ip ? (
+                                        d.ip_approx ? (
+                                          <span
+                                            className="text-muted-foreground"
+                                            title={t("deviceAudit.ipApproxTooltip")}
+                                          >
+                                            ~{d.ip}
+                                          </span>
+                                        ) : (
+                                          d.ip
+                                        )
+                                      ) : (
+                                        "—"
+                                      )}
+                                    </td>
                                     <td className="p-2 text-xs text-muted-foreground">
                                       {formatIso(d.last_activity, locale)}
                                     </td>
