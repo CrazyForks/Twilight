@@ -77,6 +77,11 @@ function userKey(u: EmbyAuditUser, index: number): string {
   return u.emby_user_id || (u.local_user ? `uid:${u.local_user.uid}` : `idx:${index}`);
 }
 
+// 安全访问 devices 数组——后端在某些边缘情况下可能返回 null 而非 []。
+function safeDevices(u: EmbyAuditUser): EmbyAuditDevice[] {
+  return u.devices ?? [];
+}
+
 // 用户级搜索命中字段：Emby 名 / EmbyID / 本地用户名 / UID / 邮箱 / Telegram / 任意 IP。
 function userHaystack(u: EmbyAuditUser): string[] {
   return [
@@ -87,7 +92,7 @@ function userHaystack(u: EmbyAuditUser): string[] {
     u.local_user?.email ?? "",
     u.local_user?.telegram_username ?? "",
     u.local_user?.telegram_id != null ? String(u.local_user.telegram_id) : "",
-    ...u.ips,
+    ...(u.ips ?? []),
   ];
 }
 
@@ -188,16 +193,17 @@ export default function AdminDeviceAuditPage() {
   const devicesForUser = useCallback(
     (u: EmbyAuditUser) =>
       clientFilterActive
-        ? u.devices.filter((d) => (d.app_name || "") === clientFilterTarget)
-        : u.devices,
+        ? safeDevices(u).filter((d) => (d.app_name || "") === clientFilterTarget)
+        : safeDevices(u),
     [clientFilterActive, clientFilterTarget],
   );
 
   // 用户视图：先按客户端 / 归类 / 搜索过滤，再排序。
   const visibleUsers = useMemo<EmbyAuditUser[]>(() => {
     if (!data) return [];
-    const filtered = data.users.filter((u) => {
-      if (clientFilterActive && !u.devices.some((d) => (d.app_name || "") === clientFilterTarget)) {
+    const users = data.users ?? [];
+    const filtered = users.filter((u) => {
+      if (clientFilterActive && !safeDevices(u).some((d) => (d.app_name || "") === clientFilterTarget)) {
         return false;
       }
       if (!userMatchesCategory(u, category)) return false;
@@ -231,9 +237,9 @@ export default function AdminDeviceAuditPage() {
   const visibleDevices = useMemo(() => {
     if (!data) return [] as { user: EmbyAuditUser; device: EmbyAuditDevice; rowKey: string }[];
     const rows: { user: EmbyAuditUser; device: EmbyAuditDevice; rowKey: string }[] = [];
-    data.users.forEach((u, ui) => {
+    (data.users ?? []).forEach((u, ui) => {
       const uk = userKey(u, ui);
-      u.devices.forEach((d, di) => {
+      safeDevices(u).forEach((d, di) => {
         if (clientFilterActive && (d.app_name || "") !== clientFilterTarget) return;
         if (!deviceMatchesCategory(u, d, category)) return;
         if (!matchesSearch(deviceHaystack(u, d), q)) return;
@@ -684,9 +690,9 @@ function UserAuditCard({
             <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               {t("deviceAudit.ipsTitle")}
             </div>
-            {u.ips.length > 0 ? (
+            {(u.ips ?? []).length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
-                {u.ips.map((ip) => (
+                {(u.ips ?? []).map((ip) => (
                   <Badge key={ip} variant="secondary" className="font-mono text-xs">
                     {ip}
                   </Badge>
@@ -726,7 +732,7 @@ function UserAuditCard({
                           <td className="p-2">
                             <div className="font-medium">{d.device_name || "—"}</div>
                             <div className="font-mono text-[11px] text-muted-foreground">
-                              {d.device_id ? `${d.device_id.slice(0, 12)}…` : "—"}
+                              {d.device_id ? (d.device_id.length > 12 ? `${d.device_id.slice(0, 12)}…` : d.device_id) : "—"}
                             </div>
                           </td>
                           <td className="p-2">
@@ -822,7 +828,7 @@ function DeviceTableView({
                     <td className="p-2.5">
                       <div className="font-medium">{d.device_name || "—"}</div>
                       <div className="font-mono text-[11px] text-muted-foreground">
-                        {d.device_id ? `${d.device_id.slice(0, 12)}…` : "—"}
+                        {d.device_id ? (d.device_id.length > 12 ? `${d.device_id.slice(0, 12)}…` : d.device_id) : "—"}
                       </div>
                     </td>
                     <td className="p-2.5">

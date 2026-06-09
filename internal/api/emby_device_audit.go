@@ -313,6 +313,12 @@ func (a *App) buildEmbyDeviceAudit(ctx context.Context) (map[string]any, error) 
 	allIPs := map[string]bool{}
 	out := make([]map[string]any, 0, len(users))
 	for _, u := range users {
+		// 确保 devices 非 nil——用户可能仅出现在 Sessions/ActivityLog 而不在
+		// /Devices 列表中（如已删除设备），nil slice 序列化为 JSON null 会导致
+		// 前端对 .filter()/.some() 调用崩溃。
+		if u.devices == nil {
+			u.devices = []map[string]any{}
+		}
 		// 先用历史登录 IP 回填离线设备，再展开 IP 列表与设备排序。
 		fillDeviceIPsFromHistory(u)
 		ips := make([]string, 0, len(u.ipSet))
