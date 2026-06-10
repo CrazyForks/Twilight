@@ -886,6 +886,41 @@ class ApiClient {
     });
   }
 
+  // 单独启停用户的 Emby 账号，不改动 Web 账号状态（与「禁用 Web 顺带关停 Emby」相对）。
+  async setUserEmbyEnabled(uid: number, enable: boolean) {
+    return this.request<{ uid: number; emby_enabled: boolean }>(
+      `/admin/users/${uid}/emby/${enable ? "enable" : "disable"}`,
+      { method: "POST" },
+    );
+  }
+
+  // 批量单独启停 Emby 账号（保留 Web）。
+  async batchToggleEmby(selection: number[] | BatchUserSelection, enable: boolean) {
+    return this.request<BatchUserResult & { skipped_no_emby?: number; emby_enabled?: boolean }>(
+      `/batch/users/emby/${enable ? "enable" : "disable"}`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          ...this.batchUserSelectionBody(selection),
+          confirm: enable ? confirmPhrases.batchEmbyEnable : confirmPhrases.batchEmbyDisable,
+        }),
+      },
+      { timeoutMs: 600_000 },
+    );
+  }
+
+  // 批量强制刷新外部状态（Telegram 用户名 + Emby 启停核对）。非破坏性、无需确认短语。
+  async batchRefreshStatus(selection: number[] | BatchUserSelection) {
+    return this.request<BatchUserResult & { telegram_updated?: number; emby_disabled?: number }>(
+      `/batch/users/refresh-status`,
+      {
+        method: "POST",
+        body: JSON.stringify(this.batchUserSelectionBody(selection)),
+      },
+      { timeoutMs: 600_000 },
+    );
+  }
+
   private batchUserSelectionBody(selection: number[] | BatchUserSelection) {
     return Array.isArray(selection) ? { uids: selection } : selection;
   }

@@ -150,5 +150,13 @@ func doJSONRequestWithTimeout(req *http.Request, dst any, timeout time.Duration)
 	if dst == nil {
 		return nil
 	}
+	// 成功状态 + 空 body（典型：Emby 的 /Users/{id}/Policy、/Sessions/{id}/Logout 等
+	// 写操作返回 204 No Content；部分 Telegram setX 也只回空体）此时 dst 保持零值、
+	// 按成功处理。否则 json.Unmarshal 一个空串会抛 "unexpected end of JSON input"，
+	// 把本已成功的远端写操作误判为失败——这正是「禁用 Emby 提示 unexpected end of
+	// JSON input」的根因。
+	if len(bytes.TrimSpace(data)) == 0 {
+		return nil
+	}
 	return json.Unmarshal(data, dst)
 }

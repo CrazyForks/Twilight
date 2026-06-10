@@ -22,6 +22,9 @@ import {
   LockKeyhole,
   Eraser,
   FlipHorizontal2,
+  MonitorCheck,
+  MonitorX,
+  RefreshCcw,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -1003,6 +1006,32 @@ export default function AdminUsersPage() {
     }
   };
 
+  // 单独启停某用户的 Emby 账号（不动 Web 账号）。启用方向后端会再校验 Web 未禁用/未过期。
+  const handleEmbyToggle = async (user: UserInfo, enable: boolean) => {
+    const confirmed = await confirmAction({
+      title: enable ? t("adminUsers.embyToggleEnableTitle") : t("adminUsers.embyToggleDisableTitle"),
+      description: enable ? t("adminUsers.embyToggleEnableDesc") : t("adminUsers.embyToggleDisableDesc"),
+      tone: "warning",
+      confirmLabel: enable ? t("adminUsers.menuEmbyEnable") : t("adminUsers.menuEmbyDisable"),
+    });
+    if (!confirmed) return;
+    try {
+      const res = await api.setUserEmbyEnabled(user.uid, enable);
+      if (res.success) {
+        toast({
+          title: enable ? t("adminUsers.embyToggleEnabled") : t("adminUsers.embyToggleDisabled"),
+          variant: "success",
+        });
+        invalidateUsersCache();
+        await loadUsers();
+      } else {
+        toast({ title: t("adminUsers.embyToggleFail"), description: res.message, variant: "destructive" });
+      }
+    } catch (err: any) {
+      toast({ title: t("adminUsers.embyToggleFail"), description: err.message || "网络异常", variant: "destructive" });
+    }
+  };
+
   const handleToggleActive = (user: UserInfo) => {
     setToggleTarget(user);
     setToggleCascadeDepth(1);
@@ -1211,6 +1240,67 @@ export default function AdminUsersPage() {
       }
     } catch (error: any) {
       toast({ title: "批量操作失败", description: error.message, variant: "destructive" });
+    } finally {
+      setBatchUserLoading(false);
+    }
+  };
+
+  // 批量单独启停 Emby（保留 Web）。与逐个操作同源，受保护/未绑定自动跳过。
+  const handleSelectedEmbyToggle = async (enable: boolean) => {
+    if (selectedCount === 0) return;
+    const confirmed = await confirmAction({
+      title: enable ? "批量启用 Emby 账号？" : "批量禁用 Emby 账号（保留 Web）？",
+      description: `将对 ${selectedCount} 个已选用户单独${enable ? "启用" : "禁用"} Emby 账号，不改动其网页账号。受保护账号与未绑定 Emby 的用户会自动跳过。`,
+      tone: "warning",
+      confirmLabel: enable ? "启用 Emby" : "禁用 Emby",
+    });
+    if (!confirmed) return;
+    setBatchUserLoading(true);
+    try {
+      const res = await api.batchToggleEmby(selectedBatchTarget(), enable);
+      if (res.success && res.data) {
+        const skippedNoEmby = res.data.skipped_no_emby || 0;
+        toast({
+          title: enable ? "批量启用 Emby 完成" : "批量禁用 Emby 完成",
+          description: `成功 ${res.data.success} 个，跳过未绑定 ${skippedNoEmby} 个，失败 ${res.data.failed} 个`,
+          variant: res.data.failed ? "default" : "success",
+        });
+        await refreshAfterBatch();
+      } else {
+        toast({ title: "批量操作失败", description: res.message, variant: "destructive" });
+      }
+    } catch (error: any) {
+      toast({ title: "批量操作失败", description: error.message, variant: "destructive" });
+    } finally {
+      setBatchUserLoading(false);
+    }
+  };
+
+  // 批量强制刷新外部状态（TG 用户名 + Emby 启停核对）。后端单次上限 200，避免外发放大。
+  const handleSelectedRefreshStatus = async () => {
+    if (selectedCount === 0) return;
+    const confirmed = await confirmAction({
+      title: "批量刷新外部状态？",
+      description: `将对 ${selectedCount} 个已选用户从 Telegram 拉取最新用户名、核对 Emby 启停（单次最多 200 个）。这会对外发起请求，请耐心等待。`,
+      tone: "warning",
+      confirmLabel: "开始刷新",
+    });
+    if (!confirmed) return;
+    setBatchUserLoading(true);
+    try {
+      const res = await api.batchRefreshStatus(selectedBatchTarget());
+      if (res.success && res.data) {
+        toast({
+          title: "批量刷新完成",
+          description: `处理 ${res.data.success} 个，TG 更新 ${res.data.telegram_updated ?? 0}，Emby 关停 ${res.data.emby_disabled ?? 0}，失败 ${res.data.failed} 个`,
+          variant: res.data.failed ? "default" : "success",
+        });
+        await refreshAfterBatch();
+      } else {
+        toast({ title: "批量刷新失败", description: res.message, variant: "destructive" });
+      }
+    } catch (error: any) {
+      toast({ title: "批量刷新失败", description: error.message, variant: "destructive" });
     } finally {
       setBatchUserLoading(false);
     }
@@ -1711,6 +1801,8 @@ export default function AdminUsersPage() {
         },
         onResetPassword: handleResetPassword,
         onBindEmby: handleOpenBindEmby,
+        onEmbyDisable: (u) => handleEmbyToggle(u, false),
+        onEmbyEnable: (u) => handleEmbyToggle(u, true),
         onBindEmail: (u) => {
           setEmailDialogUser(u);
           setEmailDialogOpen(true);
@@ -2134,6 +2226,21 @@ export default function AdminUsersPage() {
                   禁用
                 </Button>
               </div>
+              <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/20 p-1">
+                <span className="px-2 text-xs text-muted-foreground">Emby 账号</span>
+                <Button variant="outline" size="sm" onClick={() => void handleSelectedEmbyToggle(true)} disabled={batchUserLoading || selectedCount === 0}>
+                  <MonitorCheck className="mr-2 h-4 w-4" />
+                  启用
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => void handleSelectedEmbyToggle(false)} disabled={batchUserLoading || selectedCount === 0}>
+                  <MonitorX className="mr-2 h-4 w-4" />
+                  禁用
+                </Button>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => void handleSelectedRefreshStatus()} disabled={batchUserLoading || selectedCount === 0}>
+                <RefreshCcw className="mr-2 h-4 w-4" />
+                刷新状态
+              </Button>
               <Button variant="outline" size="sm" onClick={() => void handleSelectedLockEmbyUnbind()} disabled={batchUserLoading || selectedCount === 0}>
                 <LockKeyhole className="mr-2 h-4 w-4" />
                 禁止解绑 Emby

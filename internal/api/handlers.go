@@ -2001,6 +2001,40 @@ func (a *App) handleAdminToggleUser(w http.ResponseWriter, r *http.Request, para
 	ok(w, "用户状态已更新", resp)
 }
 
+// handleAdminToggleEmby 单独启停用户的 Emby 账号，不改动其 Web 账号状态。
+// 与「禁用 Web 账号顺带关停 Emby」相反：管理员有时只想停掉某人的 Emby 观看权限，
+// 但保留其网页端登录（看公告、改资料、续费）。守卫与 Telegram 面板的同名操作对齐：
+// 受保护账号不可操作；未绑定 Emby / 未配置 Emby 直接拒绝；启用方向必须满足
+// embyShouldEnableUser（Web 处于 active 且未过期），不得绕过有效期把 Emby 重新放开。
+func (a *App) handleAdminToggleEmby(w http.ResponseWriter, r *http.Request, params Params) {
+	enable := strings.HasSuffix(r.URL.Path, "/enable")
+	target, okUser := a.userFromPath(w, params, "uid")
+	if !okUser {
+		return
+	}
+	if a.userIsProtected(target) {
+		failWithCode(w, http.StatusForbidden, ErrUserProtected, "受保护账号禁止单独修改 Emby 状态")
+		return
+	}
+	if target.EmbyID == "" {
+		failWithCode(w, http.StatusBadRequest, ErrEmbyAccountUnlinked, "目标用户未绑定 Emby 账号")
+		return
+	}
+	if !a.embyConfigured() {
+		failWithCode(w, http.StatusBadGateway, ErrEmbyNotConfigured, "Emby URL 或 API Token 未配置")
+		return
+	}
+	if enable && !a.embyShouldEnableUser(target) {
+		failWithCode(w, http.StatusConflict, ErrConflict, "Web 账号已禁用或已过期，禁止绕过有效期直接启用 Emby")
+		return
+	}
+	if err := a.embySetUserEnabled(r.Context(), target.EmbyID, enable); err != nil {
+		failWithCode(w, http.StatusBadGateway, ErrEmbyDisableFailed, "Emby 状态更新失败")
+		return
+	}
+	ok(w, "Emby 状态已更新", map[string]any{"uid": target.UID, "emby_enabled": enable})
+}
+
 func (a *App) handleAdminUnbindEmby(w http.ResponseWriter, r *http.Request, params Params) {
 	uid, _ := int64Param(params, "uid")
 	target, okUser := a.store().User(uid)

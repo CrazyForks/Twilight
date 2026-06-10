@@ -241,6 +241,100 @@ func (a *App) handleBatchClearEmbyGrantUnbound(w http.ResponseWriter, r *http.Re
 	ok(w, "批量清理注册资格记录完成", result)
 }
 
+func (a *App) handleBatchEmbyEnable(w http.ResponseWriter, r *http.Request, _ Params) {
+	a.handleBatchToggleEmby(w, r, true)
+}
+
+func (a *App) handleBatchEmbyDisable(w http.ResponseWriter, r *http.Request, _ Params) {
+	a.handleBatchToggleEmby(w, r, false)
+}
+
+// handleBatchToggleEmby 批量单独启停 Emby 账号，不改动 Web 账号状态——与
+// handleAdminToggleEmby 的单用户版同源，守卫一致：受保护账号跳过；未绑定 Emby 跳过
+// （计入 skipped_no_emby）；启用方向必须满足 embyShouldEnableUser，不得绕过有效期。
+// select_all 时经 batchBoundEmbyUserUIDsFromPayload 强制收窄到「已绑定 Emby」。
+func (a *App) handleBatchToggleEmby(w http.ResponseWriter, r *http.Request, enable bool) {
+	confirmPhrase := confirmBatchEmbyDisable
+	if enable {
+		confirmPhrase = confirmBatchEmbyEnable
+	}
+	payload := decodeMap(r)
+	if stringValue(payload, "confirm") != confirmPhrase {
+		failWithCode(w, http.StatusBadRequest, ErrBatchConfirmRequired, "missing confirm "+confirmPhrase)
+		return
+	}
+	if !a.embyConfigured() {
+		failWithCode(w, http.StatusBadGateway, ErrEmbyNotConfigured, "Emby URL 或 API Token 未配置")
+		return
+	}
+	uids, okPayload := a.batchBoundEmbyUserUIDsFromPayload(w, payload, 200, 5000, "too many users in one batch")
+	if !okPayload {
+		return
+	}
+	result := batchResult(len(uids))
+	skippedNoEmby := 0
+	for _, uid := range uids {
+		target, okUser := a.store().User(uid)
+		if !okUser {
+			addBatchOutcomeWithCode(result, uid, ErrUserNotFound, fmt.Errorf("%s", userNotFoundMessage))
+			continue
+		}
+		if a.userIsProtected(target) {
+			addBatchOutcomeWithCode(result, uid, ErrUserProtected, fmt.Errorf("cannot batch toggle Emby for protected account: %s", a.protectedUserReason(target)))
+			continue
+		}
+		if strings.TrimSpace(target.EmbyID) == "" {
+			skippedNoEmby++
+			continue
+		}
+		if enable && !a.embyShouldEnableUser(target) {
+			addBatchOutcomeWithCode(result, uid, ErrConflict, fmt.Errorf("web account disabled or expired; refusing to enable Emby"))
+			continue
+		}
+		addBatchOutcome(result, uid, a.embySetUserEnabled(r.Context(), target.EmbyID, enable))
+	}
+	result["selected_all"] = boolValue(payload, "select_all", false)
+	result["emby_enabled"] = enable
+	result["skipped_no_emby"] = skippedNoEmby
+	ok(w, "批量 Emby 状态更新完成", result)
+}
+
+// handleBatchRefreshStatus 批量强制刷新外部状态（Telegram 用户名 + Emby 启停核对），
+// 是 handleAdminRefreshUserStatus 的批量版。属于非破坏性核对/收紧，不要求确认短语；
+// 但每个用户都会触发 getChat + Emby 读取（可能再加一次关停），为避免对 Telegram /
+// Emby 造成流量放大，目标上限收得比其它批量操作更紧（显式 200 / select_all 200），
+// 超出请缩小筛选范围分批执行。
+func (a *App) handleBatchRefreshStatus(w http.ResponseWriter, r *http.Request, _ Params) {
+	payload := decodeMap(r)
+	uids, okPayload := a.batchUserUIDsFromPayload(w, payload, 200, 200, "too many users in one batch; narrow the filter and refresh in smaller batches")
+	if !okPayload {
+		return
+	}
+	result := batchResult(len(uids))
+	tgUpdated, embyDisabled := 0, 0
+	for _, uid := range uids {
+		target, okUser := a.store().User(uid)
+		if !okUser {
+			addBatchOutcomeWithCode(result, uid, ErrUserNotFound, fmt.Errorf("%s", userNotFoundMessage))
+			continue
+		}
+		summary := a.refreshUserExternalStatus(r.Context(), target)
+		if boolish(summary["telegram_username_updated"]) {
+			tgUpdated++
+		}
+		if boolish(summary["emby_disabled_synced"]) {
+			embyDisabled++
+		}
+		// 刷新本身不因单侧外部错误判失败：外部错误已记录在 summary，整体仍算「已处理」，
+		// 避免一两个离线 TG / 失联 Emby 把整批标红误导管理员。
+		addBatchOutcome(result, uid, nil)
+	}
+	result["selected_all"] = boolValue(payload, "select_all", false)
+	result["telegram_updated"] = tgUpdated
+	result["emby_disabled"] = embyDisabled
+	ok(w, "批量刷新状态完成", result)
+}
+
 func (a *App) batchUserUIDsFromPayload(w http.ResponseWriter, payload map[string]any, maxExplicit, maxSelectedAll int, tooManyMessage string) ([]int64, bool) {
 	if boolValue(payload, "select_all", false) {
 		uids, matched := a.filteredBatchUserUIDs(payload, maxSelectedAll)

@@ -9,6 +9,8 @@ import {
   Key,
   Link2,
   Mail,
+  MonitorCheck,
+  MonitorX,
   MoreHorizontal,
   RefreshCcw,
   RefreshCw,
@@ -148,6 +150,8 @@ export interface UserActionsMenuHandlers {
   onSetExpiry: (user: UserInfo) => void;
   onResetPassword: (user: UserInfo) => void;
   onBindEmby: (user: UserInfo) => void;
+  onEmbyDisable: (user: UserInfo) => void;
+  onEmbyEnable: (user: UserInfo) => void;
   onBindEmail: (user: UserInfo) => void;
   onBindTelegram: (user: UserInfo) => void;
   onSyncBindings: (user: UserInfo) => void;
@@ -207,6 +211,18 @@ export function UserActionsMenu({
           <Link2 className="mr-2 h-4 w-4" />
           {t("adminUsers.menuBindEmby")}
         </DropdownMenuItem>
+        {user.emby_id && (
+          <>
+            <DropdownMenuItem onClick={() => handlers.onEmbyDisable(user)}>
+              <MonitorX className="mr-2 h-4 w-4" />
+              {t("adminUsers.menuEmbyDisable")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handlers.onEmbyEnable(user)} disabled={!user.active}>
+              <MonitorCheck className="mr-2 h-4 w-4" />
+              {t("adminUsers.menuEmbyEnable")}
+            </DropdownMenuItem>
+          </>
+        )}
         <DropdownMenuItem onClick={() => handlers.onBindEmail(user)}>
           <Mail className="mr-2 h-4 w-4" />
           {t("email.admin.bindTitle")}
