@@ -6,6 +6,10 @@ import type {
   ApiKeyItem,
   ApiResponse,
   AuditLog,
+  BangumiSyncLog,
+  BangumiSyncResult,
+  BangumiSyncStatus,
+  BangumiUserInfo,
   BatchUserSelection,
   BatchUserResult,
   CodeUsePreview,
@@ -49,6 +53,7 @@ import type {
   MediaItem,
   MediaRequest,
   MediaRequestData,
+  PlaybackRecordWithSync,
   Regcode,
   RegisterAvailability,
   RegisterData,
@@ -247,6 +252,42 @@ class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
+  }
+
+  async getBangumiSyncStatus() {
+    return this.request<BangumiSyncStatus>("/bangumi/sync/status");
+  }
+
+  async triggerBangumiSync() {
+    return this.request<BangumiSyncResult>("/bangumi/sync/trigger", { method: "POST" });
+  }
+
+  async getBangumiSyncHistory(limit = 50) {
+    return this.request<{ logs: BangumiSyncLog[]; total: number }>(`/bangumi/sync/history?limit=${limit}`);
+  }
+
+  async clearBangumiSyncHistory() {
+    return this.request("/bangumi/sync/history", { method: "DELETE" });
+  }
+
+  async adminBangumiUsers() {
+    return this.request<{ users: BangumiUserInfo[]; total: number }>("/admin/bangumi/users");
+  }
+
+  async adminBangumiRecords(uid: number, limit = 100) {
+    return this.request<{ records: PlaybackRecordWithSync[]; total: number }>(`/admin/bangumi/records/${uid}?limit=${limit}`);
+  }
+
+  async adminBangumiSyncUser(uid: number) {
+    return this.request<BangumiSyncResult>(`/admin/bangumi/sync/${uid}`, { method: "POST" });
+  }
+
+  async adminBangumiSyncLogs(uid: number, limit = 100) {
+    return this.request<{ logs: BangumiSyncLog[]; total: number }>(`/admin/bangumi/logs/${uid}?limit=${limit}`);
+  }
+
+  async adminBangumiClearLogs(uid: number) {
+    return this.request(`/admin/bangumi/logs/${uid}`, { method: "DELETE" });
   }
 
   async getTelegramStatus() {

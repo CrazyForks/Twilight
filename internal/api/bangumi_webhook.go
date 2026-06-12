@@ -115,12 +115,14 @@ func (a *App) handleBangumiWebhook(w http.ResponseWriter, r *http.Request, _ Par
 			// 合法请求，store 层的 (uid, item_id, played_at) 三元组检查会让第二
 			// 次以后的写入直接静默丢弃，不会让 PlaybackRecords 无限堆积。
 			inserted, err := a.store().AddPlaybackRecordIdempotent(store.PlaybackRecord{
-				UID:       local.UID,
-				ItemID:    firstNonEmpty(asString(item["Id"]), asString(item["ID"])),
-				Title:     firstNonEmpty(asString(item["Name"]), asString(item["SeriesName"])),
-				MediaType: asString(item["Type"]),
-				Duration:  duration,
-				PlayedAt:  playedAt,
+				UID:         local.UID,
+				ItemID:      firstNonEmpty(asString(item["Id"]), asString(item["ID"])),
+				Title:       firstNonEmpty(asString(item["Name"]), asString(item["SeriesName"])),
+				SeriesName:  asString(item["SeriesName"]),
+				MediaType:   asString(item["Type"]),
+				IndexNumber: int(intValue(item, "IndexNumber", 0)),
+				Duration:    duration,
+				PlayedAt:    playedAt,
 			})
 			if err != nil {
 				zap.L().Warn("failed to record Bangumi playback webhook", zap.Int64("uid", local.UID), zap.Error(err))

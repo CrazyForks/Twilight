@@ -59,6 +59,10 @@ func (a *App) registerRoutes() {
 	a.add(http.MethodGet, "/api/v1/users/me/telegram/bind-code/ws", AuthUser, a.handleUserBindCodeStatusWS)
 	a.add(http.MethodPost, "/api/v1/users/me/telegram/rebind-complete", AuthUser, a.handleRebindComplete)
 	a.add(http.MethodGet, "/api/v1/users/me/settings", AuthUser, a.handleUserSettings)
+	a.add(http.MethodGet, "/api/v1/bangumi/sync/status", AuthUser, a.handleBangumiSyncStatus)
+	a.add(http.MethodPost, "/api/v1/bangumi/sync/trigger", AuthUser, a.handleBangumiSyncTrigger)
+	a.add(http.MethodGet, "/api/v1/bangumi/sync/history", AuthUser, a.handleBangumiSyncHistory)
+	a.add(http.MethodDelete, "/api/v1/bangumi/sync/history", AuthUser, a.handleBangumiClearHistory)
 	a.add(http.MethodGet, "/api/v1/users/:uid/background", AuthUser, a.handleGetBackground)
 	a.add(http.MethodPut, "/api/v1/users/me/background", AuthUser, a.handleUpdateBackground)
 	a.add(http.MethodDelete, "/api/v1/users/me/background", AuthUser, a.handleDeleteBackground)
@@ -240,6 +244,11 @@ func (a *App) registerAdminRoutes() {
 	a.add(http.MethodGet, "/api/v1/admin/audit-logs", AuthAdmin, a.handleListAuditLogs)
 	a.add(http.MethodDelete, "/api/v1/admin/audit-logs/:log_id", AuthAdmin, a.handleDeleteAuditLog)
 	a.add(http.MethodPost, "/api/v1/admin/audit-logs/clear", AuthAdmin, a.handleClearAuditLogs)
+	a.add(http.MethodGet, "/api/v1/admin/bangumi/users", AuthAdmin, a.handleAdminBangumiUsers)
+	a.add(http.MethodGet, "/api/v1/admin/bangumi/records/:uid", AuthAdmin, a.handleAdminBangumiRecords)
+	a.add(http.MethodPost, "/api/v1/admin/bangumi/sync/:uid", AuthAdmin, a.handleAdminBangumiSyncUser)
+	a.add(http.MethodGet, "/api/v1/admin/bangumi/logs/:uid", AuthAdmin, a.handleAdminBangumiSyncLogs)
+	a.add(http.MethodDelete, "/api/v1/admin/bangumi/logs/:uid", AuthAdmin, a.handleAdminBangumiClearLogs)
 }
 
 func (a *App) registerAPIKeyRoutes() {

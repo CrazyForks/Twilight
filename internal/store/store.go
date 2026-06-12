@@ -65,37 +65,39 @@ type PostgresTargetStatus struct {
 }
 
 type State struct {
-	NextUserID          int64                          `json:"next_user_id"`
-	NextAPIKeyID        int64                          `json:"next_api_key_id"`
-	NextRequestID       int64                          `json:"next_request_id"`
-	NextAnnouncementID  int64                          `json:"next_announcement_id"`
-	NextLoginLogID      int64                          `json:"next_login_log_id"`
-	NextRuntimeLogID    int64                          `json:"next_runtime_log_id"`
-	NextSchedulerRunID  int64                          `json:"next_scheduler_run_id"`
-	NextRebindRequestID int64                          `json:"next_rebind_request_id"`
-	NextViolationLogID  int64                          `json:"next_violation_log_id"`
-	NextAuditLogID      int64                          `json:"next_audit_log_id"`
-	Users               map[int64]User                 `json:"users"`
-	APIKeys             map[int64]APIKey               `json:"api_keys"`
-	MediaRequests       map[int64]MediaRequest         `json:"media_requests"`
-	Announcements       map[int64]Announcement         `json:"announcements"`
-	InviteCodes         map[string]InviteCode          `json:"invite_codes"`
-	InviteRelations     map[int64]InviteRelation       `json:"invite_relations"`
-	RegCodes            map[string]RegCode             `json:"regcodes"`
-	BindCodes           map[string]BindCode            `json:"bind_codes"`
-	EmailVerifications  map[string]EmailVerification   `json:"email_verifications"`
-	Signin              map[int64]Signin               `json:"signin"`
-	SchedulerRuns       []SchedulerRun                 `json:"scheduler_runs"`
-	SchedulerSchedules  map[string]SchedulerSchedule   `json:"scheduler_schedules"`
-	Devices             map[string]Device              `json:"devices"`
-	LoginLogs           []LoginLog                     `json:"login_logs"`
-	RuntimeLogs         []RuntimeLogEntry              `json:"runtime_logs"`
-	IPBlacklist         map[string]IPBlacklistEntry    `json:"ip_blacklist"`
-	PlaybackRecords     []PlaybackRecord               `json:"playback_records"`
-	RebindRequests      map[int64]RebindRequest        `json:"rebind_requests"`
-	TelegramRoster      map[string]TelegramRosterEntry `json:"telegram_roster"`
-	ViolationLogs       []ViolationLog                 `json:"violation_logs"`
-	AuditLogs           []AuditLog                     `json:"audit_logs"`
+	NextUserID           int64                          `json:"next_user_id"`
+	NextAPIKeyID         int64                          `json:"next_api_key_id"`
+	NextRequestID        int64                          `json:"next_request_id"`
+	NextAnnouncementID   int64                          `json:"next_announcement_id"`
+	NextLoginLogID       int64                          `json:"next_login_log_id"`
+	NextRuntimeLogID     int64                          `json:"next_runtime_log_id"`
+	NextSchedulerRunID   int64                          `json:"next_scheduler_run_id"`
+	NextRebindRequestID  int64                          `json:"next_rebind_request_id"`
+	NextViolationLogID   int64                          `json:"next_violation_log_id"`
+	NextAuditLogID       int64                          `json:"next_audit_log_id"`
+	NextBangumiSyncLogID int64                          `json:"next_bangumi_sync_log_id"`
+	Users                map[int64]User                 `json:"users"`
+	APIKeys              map[int64]APIKey               `json:"api_keys"`
+	MediaRequests        map[int64]MediaRequest         `json:"media_requests"`
+	Announcements        map[int64]Announcement         `json:"announcements"`
+	InviteCodes          map[string]InviteCode          `json:"invite_codes"`
+	InviteRelations      map[int64]InviteRelation       `json:"invite_relations"`
+	RegCodes             map[string]RegCode             `json:"regcodes"`
+	BindCodes            map[string]BindCode            `json:"bind_codes"`
+	EmailVerifications   map[string]EmailVerification   `json:"email_verifications"`
+	Signin               map[int64]Signin               `json:"signin"`
+	SchedulerRuns        []SchedulerRun                 `json:"scheduler_runs"`
+	SchedulerSchedules   map[string]SchedulerSchedule   `json:"scheduler_schedules"`
+	Devices              map[string]Device              `json:"devices"`
+	LoginLogs            []LoginLog                     `json:"login_logs"`
+	RuntimeLogs          []RuntimeLogEntry              `json:"runtime_logs"`
+	IPBlacklist          map[string]IPBlacklistEntry    `json:"ip_blacklist"`
+	PlaybackRecords      []PlaybackRecord               `json:"playback_records"`
+	RebindRequests       map[int64]RebindRequest        `json:"rebind_requests"`
+	TelegramRoster       map[string]TelegramRosterEntry `json:"telegram_roster"`
+	ViolationLogs        []ViolationLog                 `json:"violation_logs"`
+	AuditLogs            []AuditLog                     `json:"audit_logs"`
+	BangumiSyncLogs      []BangumiSyncLog               `json:"bangumi_sync_logs"`
 	// TelegramBotOffset 持久化最近一次成功 ack 的 update_id+1。
 	// 重启 / token 切换时直接从这个值恢复，避免对 24h backlog 重新分发。
 	// 0 表示未设置 / 历史 state，按"从 0 开始"处理（getUpdates 会拿到队列里
@@ -368,12 +370,26 @@ type IPBlacklistEntry struct {
 }
 
 type PlaybackRecord struct {
-	UID       int64  `json:"uid"`
-	ItemID    string `json:"item_id"`
-	Title     string `json:"title"`
-	MediaType string `json:"media_type"`
-	Duration  int64  `json:"duration"`
-	PlayedAt  int64  `json:"played_at"`
+	UID         int64  `json:"uid"`
+	ItemID      string `json:"item_id"`
+	Title       string `json:"title"`
+	SeriesName  string `json:"series_name,omitempty"`
+	MediaType   string `json:"media_type"`
+	IndexNumber int    `json:"index_number,omitempty"`
+	Duration    int64  `json:"duration"`
+	PlayedAt    int64  `json:"played_at"`
+}
+
+type BangumiSyncLog struct {
+	ID           int64  `json:"id"`
+	UID          int64  `json:"uid"`
+	RecordItemID string `json:"record_item_id"`
+	SubjectID    string `json:"subject_id,omitempty"`
+	SubjectName  string `json:"subject_name,omitempty"`
+	Episode      int    `json:"episode,omitempty"`
+	Status       string `json:"status"`
+	Message      string `json:"message,omitempty"`
+	CreatedAt    int64  `json:"created_at"`
 }
 
 type RebindRequest struct {
@@ -927,6 +943,18 @@ func (s *State) ensure() {
 	}
 	if s.AuditLogs == nil {
 		s.AuditLogs = []AuditLog{}
+	}
+	if s.NextBangumiSyncLogID <= 0 {
+		max := int64(0)
+		for _, log := range s.BangumiSyncLogs {
+			if log.ID > max {
+				max = log.ID
+			}
+		}
+		s.NextBangumiSyncLogID = max + 1
+	}
+	if s.BangumiSyncLogs == nil {
+		s.BangumiSyncLogs = []BangumiSyncLog{}
 	}
 }
 
@@ -3564,6 +3592,78 @@ func (s *Store) PruneAuditLogs(keep int) error {
 		if len(s.state.AuditLogs) > keep {
 			s.state.AuditLogs = s.state.AuditLogs[len(s.state.AuditLogs)-keep:]
 		}
+		return nil
+	})
+}
+
+const maxStoredBangumiSyncLogs = 5000
+
+func (s *Store) AddBangumiSyncLog(entry BangumiSyncLog) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mutateAndSaveLocked(func() error {
+		entry.ID = s.state.NextBangumiSyncLogID
+		s.state.NextBangumiSyncLogID++
+		if entry.CreatedAt == 0 {
+			entry.CreatedAt = time.Now().Unix()
+		}
+		s.state.BangumiSyncLogs = append(s.state.BangumiSyncLogs, entry)
+		if len(s.state.BangumiSyncLogs) > maxStoredBangumiSyncLogs {
+			s.state.BangumiSyncLogs = s.state.BangumiSyncLogs[len(s.state.BangumiSyncLogs)-maxStoredBangumiSyncLogs:]
+		}
+		return nil
+	})
+}
+
+func (s *Store) ListBangumiSyncLogs(uid int64, limit int) []BangumiSyncLog {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if limit <= 0 || limit > maxStoredBangumiSyncLogs {
+		limit = maxStoredBangumiSyncLogs
+	}
+	out := make([]BangumiSyncLog, 0, limit)
+	for i := len(s.state.BangumiSyncLogs) - 1; i >= 0; i-- {
+		entry := s.state.BangumiSyncLogs[i]
+		if uid != 0 && entry.UID != uid {
+			continue
+		}
+		out = append(out, entry)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func (s *Store) DeleteBangumiSyncLog(id int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mutateAndSaveLocked(func() error {
+		for i, log := range s.state.BangumiSyncLogs {
+			if log.ID == id {
+				s.state.BangumiSyncLogs = append(s.state.BangumiSyncLogs[:i], s.state.BangumiSyncLogs[i+1:]...)
+				return nil
+			}
+		}
+		return ErrNotFound
+	})
+}
+
+func (s *Store) ClearBangumiSyncLogs(uid int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mutateAndSaveLocked(func() error {
+		if uid == 0 {
+			s.state.BangumiSyncLogs = nil
+			return nil
+		}
+		filtered := make([]BangumiSyncLog, 0, len(s.state.BangumiSyncLogs))
+		for _, log := range s.state.BangumiSyncLogs {
+			if log.UID != uid {
+				filtered = append(filtered, log)
+			}
+		}
+		s.state.BangumiSyncLogs = filtered
 		return nil
 	})
 }

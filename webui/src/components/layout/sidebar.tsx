@@ -33,6 +33,7 @@ import {
   MonitorSmartphone,
   Mail,
   ClipboardList,
+  BookOpen,
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { Button } from "@/components/ui/button";
@@ -65,6 +66,7 @@ export const userNavItems: SidebarNavItem[] = [
   { href: "/dashboard", labelKey: "navigation.dashboard", icon: LayoutDashboard },
   { href: "/announcements", labelKey: "navigation.announcements", icon: Megaphone },
   { href: "/media", labelKey: "navigation.mediaRequest", icon: Film },
+  { href: "/bangumi", labelKey: "navigation.bangumi", icon: BookOpen },
   { href: "/score", labelKey: "navigation.signin", icon: Coins },
   { href: "/invite", labelKey: "navigation.inviteCenter", icon: GitBranch },
   { href: "/settings", labelKey: "navigation.settings", icon: Settings },
@@ -78,6 +80,7 @@ export const adminNavItems: SidebarNavItem[] = [
   { href: "/admin/requests", labelKey: "navigation.requestReview", icon: Film },
   { href: "/admin/violations", labelKey: "navigation.violations", icon: ShieldAlert },
   { href: "/admin/audit-logs", labelKey: "navigation.auditLogs", icon: ClipboardList },
+  { href: "/admin/bangumi", labelKey: "navigation.bangumiAdmin", icon: BookOpen },
   { href: "/admin/email", labelKey: "navigation.emailAdmin", icon: Mail },
   { href: "/admin/telegram-rebind-requests", labelKey: "navigation.telegramRebind", icon: MessageSquare },
   { href: "/admin/emby", labelKey: "navigation.embyAdmin", icon: Server },
@@ -98,6 +101,9 @@ export function filterNavItems(
       return false;
     }
     if (features?.signin === false && item.href === "/score") {
+      return false;
+    }
+    if (features?.bangumi_sync === false && item.href === "/bangumi") {
       return false;
     }
     return true;

@@ -1070,3 +1070,54 @@ export interface ViolationLog {
   telegram_id: number | null;
   created_at: number;
 }
+
+// ==================== Bangumi 同步 ====================
+export interface BangumiSyncStatus {
+  bgm_mode: boolean;
+  bgm_token_set: boolean;
+  sync_ready: boolean;
+  total_records: number;
+  synced_count: number;
+  recent_logs: BangumiSyncLog[];
+}
+
+export interface BangumiSyncLog {
+  id: number;
+  uid: number;
+  record_item_id: string;
+  subject_id?: string;
+  subject_name?: string;
+  episode?: number;
+  status: string;
+  message?: string;
+  created_at: number;
+}
+
+export interface BangumiSyncResult {
+  synced: number;
+  skipped: number;
+  failed: number;
+  logs: string[];
+}
+
+export interface BangumiUserInfo {
+  uid: number;
+  username: string;
+  bgm_mode: boolean;
+  token_set: boolean;
+  sync_ready: boolean;
+  sync_count: number;
+  record_count: number;
+}
+
+export interface PlaybackRecordWithSync {
+  uid: number;
+  item_id: string;
+  title: string;
+  series_name?: string;
+  media_type: string;
+  index_number?: number;
+  duration: number;
+  played_at: number;
+  synced_name?: string;
+}
