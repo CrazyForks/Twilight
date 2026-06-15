@@ -48,9 +48,9 @@ export default function AdminTicketsPage() {
   const { confirm } = useConfirm();
   const { t } = useI18n();
 
-  const [statusFilter, setStatusFilter] = useState("");
-  const [typeFilter, setTypeFilter] = useState("");
-  const [priorityFilter, setPriorityFilter] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
+  const [priorityFilter, setPriorityFilter] = useState("all");
 
   const [editOpen, setEditOpen] = useState(false);
   const [editingTicket, setEditingTicket] = useState<Ticket | null>(null);
@@ -61,7 +61,11 @@ export default function AdminTicketsPage() {
   const [saving, setSaving] = useState(false);
 
   const loadTickets = useCallback(async () => {
-    const res = await api.adminListTickets({ status: statusFilter || undefined, type: typeFilter || undefined, priority: priorityFilter || undefined });
+    const res = await api.adminListTickets({
+      status: statusFilter !== "all" ? statusFilter : undefined,
+      type: typeFilter !== "all" ? typeFilter : undefined,
+      priority: priorityFilter !== "all" ? priorityFilter : undefined,
+    });
     if (res.success && res.data) return { tickets: res.data.tickets, types: res.data.ticket_types || [] };
     throw new Error(res.message || t("common.networkError"));
   }, [statusFilter, typeFilter, priorityFilter, t]);
@@ -109,18 +113,18 @@ export default function AdminTicketsPage() {
       <div className="flex items-center gap-3 flex-wrap">
         <Select value={statusFilter} onValueChange={setStatusFilter}>
           <SelectTrigger className="w-28"><SelectValue placeholder={t("adminTickets.filterAll")} /></SelectTrigger>
-          <SelectContent>{Object.entries(STATUS_MAP).map(([v, s]) => <SelectItem key={v} value={v}>{t(s.labelKey as any)}</SelectItem>)}<SelectItem value="">{t("adminTickets.filterAll")}</SelectItem></SelectContent>
+          <SelectContent>{Object.entries(STATUS_MAP).map(([v, s]) => <SelectItem key={v} value={v}>{t(s.labelKey as any)}</SelectItem>)}<SelectItem value="all">{t("adminTickets.filterAll")}</SelectItem></SelectContent>
         </Select>
         <Select value={typeFilter} onValueChange={setTypeFilter}>
           <SelectTrigger className="w-28"><SelectValue placeholder={t("adminTickets.filterAllTypes")} /></SelectTrigger>
-          <SelectContent><SelectItem value="">{t("adminTickets.filterAllTypes")}</SelectItem>
+          <SelectContent><SelectItem value="all">{t("adminTickets.filterAllTypes")}</SelectItem>
             {DEFAULT_TYPES.map((o) => <SelectItem key={o.value} value={o.value}>{t(o.labelKey as any)}</SelectItem>)}
             {types.filter((tp: string) => !DEFAULT_TYPES.find((d) => d.value === tp)).map((tp: string) => <SelectItem key={tp} value={tp}>{tp}</SelectItem>)}
           </SelectContent>
         </Select>
         <Select value={priorityFilter} onValueChange={setPriorityFilter}>
           <SelectTrigger className="w-28"><SelectValue placeholder={t("adminTickets.filterAllPriorities")} /></SelectTrigger>
-          <SelectContent><SelectItem value="">{t("adminTickets.filterAllPriorities")}</SelectItem>
+          <SelectContent><SelectItem value="all">{t("adminTickets.filterAllPriorities")}</SelectItem>
             {Object.entries(PRIORITY_MAP).map(([v, p]) => <SelectItem key={v} value={v}>{t(p.labelKey as any)}</SelectItem>)}
           </SelectContent>
         </Select>

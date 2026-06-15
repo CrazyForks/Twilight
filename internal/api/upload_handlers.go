@@ -494,7 +494,7 @@ func (a *App) handleUploadAuthBackground(w http.ResponseWriter, r *http.Request,
 		failWithCode(w, http.StatusBadRequest, ErrUploadTypeNotAllowed, "only jpg, png, gif, webp and bmp uploads are allowed")
 		return
 	}
-	filename := "auth-bg-" + randomCode(16) + ext
+	filename := randomCode(16) + ext
 	uploadRoot := firstNonEmpty(a.cfg().UploadDir, "uploads")
 	filePath, err := ResolveWithinRoot(uploadRoot, filepath.Join("auth-background", filename))
 	if err != nil {
