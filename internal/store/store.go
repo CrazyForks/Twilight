@@ -992,7 +992,7 @@ func (s *State) ensure() {
 		s.Tickets = map[int64]Ticket{}
 	}
 	if s.TicketTypes == nil || len(s.TicketTypes) == 0 {
-		s.TicketTypes = []string{"bug", "feature", "question", "account", "other"}
+		s.TicketTypes = []string{"all"}
 	}
 }
 
@@ -2827,7 +2827,7 @@ func (s *Store) UpsertTicket(t Ticket) (Ticket, error) {
 		}
 		t.UpdatedAt = now
 		if t.Type == "" {
-			t.Type = "general"
+			t.Type = "all"
 		}
 		if t.Status == "" {
 			t.Status = "open"
@@ -3103,7 +3103,7 @@ func (s *Store) ConsumeInviteCode(code string, childUID int64) (InviteCode, erro
 	return consumed, nil
 }
 
-func (s *Store) ConsumeInviteCodeAndUpdateUser(code string, childUID int64, fn func(*User, InviteCode) error) (User, InviteCode, error) {
+func (s *Store) ConsumeInviteCodeAndUpdateUser(code string, childUID int64, maxDepth int, maxRootUsers int, fn func(*User, InviteCode) error) (User, InviteCode, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	var updated User
@@ -3129,6 +3129,19 @@ func (s *Store) ConsumeInviteCodeAndUpdateUser(code string, childUID int64, fn f
 		}
 		if _, exists := s.state.InviteRelations[childUID]; exists {
 			return ErrConflict
+		}
+		// 锁内重检邀请树深度与根用户上限，防止并发绕过
+		if maxDepth > 0 && c.InviterUID != 0 {
+			depth := s.inviteDepthLocked(c.InviterUID, maxDepth)
+			if depth >= maxDepth {
+				return ErrConflict
+			}
+		}
+		if maxRootUsers > 0 && c.InviterUID != 0 {
+			root := s.inviteRootLocked(c.InviterUID)
+			if desc := s.inviteDescendantCountLocked(root); desc >= maxRootUsers {
+				return ErrConflict
+			}
 		}
 		c.UseCount++
 		c.Used = true
@@ -3186,6 +3199,58 @@ func (s *Store) ChildrenOf(uid int64) []InviteRelation {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ChildUID < out[j].ChildUID })
 	return out
+}
+
+// locked helpers — caller must hold s.mu (Lock or RLock).
+
+func (s *Store) inviteDepthLocked(uid int64, maxDepth int) int {
+	depth := 0
+	current := uid
+	for depth < maxDepth {
+		rel, ok := s.state.InviteRelations[current]
+		if !ok {
+			break
+		}
+		current = rel.ParentUID
+		depth++
+	}
+	return depth
+}
+
+func (s *Store) inviteRootLocked(uid int64) int64 {
+	current := uid
+	for {
+		rel, ok := s.state.InviteRelations[current]
+		if !ok {
+			break
+		}
+		current = rel.ParentUID
+	}
+	return current
+}
+
+func (s *Store) inviteDescendantCountLocked(rootUID int64) int {
+	count := 0
+	for _, rel := range s.state.InviteRelations {
+		if rel.ParentUID == rootUID || s.isDescendantLocked(rel.ParentUID, rootUID) {
+			count++
+		}
+	}
+	return count
+}
+
+func (s *Store) isDescendantLocked(uid, ancestor int64) bool {
+	current := uid
+	for {
+		rel, ok := s.state.InviteRelations[current]
+		if !ok {
+			return false
+		}
+		if rel.ParentUID == ancestor {
+			return true
+		}
+		current = rel.ParentUID
+	}
 }
 
 func (s *Store) DetachInvite(uid int64) error {

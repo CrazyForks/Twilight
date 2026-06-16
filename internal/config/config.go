@@ -628,7 +628,7 @@ func defaults() Config {
 		ForgotPasswordEmbyEnabled:         true,
 		ForgotPasswordEmailEnabled:        true,
 		TicketSystemEnabled:               false,
-		TicketTypes:                       []string{"bug", "feature", "question", "account", "other"},
+		TicketTypes:                       []string{"all"},
 		AuditLogEnabled:                   true,
 		AuditLogAutoCleanupEnabled:        false,
 		AuditLogRetentionDays:             90,

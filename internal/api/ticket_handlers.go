@@ -35,7 +35,7 @@ func (a *App) handleCreateTicket(w http.ResponseWriter, r *http.Request, _ Param
 	payload := decodeMap(r)
 	title := strings.TrimSpace(stringValue(payload, "title"))
 	content := strings.TrimSpace(stringValue(payload, "content"))
-	ticketType := strings.ToLower(strings.TrimSpace(firstNonEmpty(stringValue(payload, "type"), "general")))
+	ticketType := strings.ToLower(strings.TrimSpace(firstNonEmpty(stringValue(payload, "type"), "all")))
 	priority := strings.ToLower(strings.TrimSpace(firstNonEmpty(stringValue(payload, "priority"), "medium")))
 
 	if title == "" {
@@ -55,7 +55,7 @@ func (a *App) handleCreateTicket(w http.ResponseWriter, r *http.Request, _ Param
 		return
 	}
 	if !validTicketType(a.store().TicketTypes(), ticketType) {
-		ticketType = "other"
+		ticketType = "all"
 	}
 	if !validTicketPriority(priority) {
 		priority = "medium"

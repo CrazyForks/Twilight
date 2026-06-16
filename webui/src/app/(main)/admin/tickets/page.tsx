@@ -37,11 +37,7 @@ const PRIORITY_MAP: Record<string, { labelKey: string; className: string }> = {
 };
 
 const DEFAULT_TYPES = [
-  { value: "bug", labelKey: "tickets.typeBug" },
-  { value: "feature", labelKey: "tickets.typeFeature" },
-  { value: "question", labelKey: "tickets.typeQuestion" },
-  { value: "account", labelKey: "tickets.typeAccount" },
-  { value: "other", labelKey: "tickets.typeOther" },
+  { value: "all", labelKey: "tickets.typeAll" },
 ];
 
 export default function AdminTicketsPage() {

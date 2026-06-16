@@ -480,7 +480,7 @@ func ensureTicketDefaults(values map[string]map[string]any) {
 	}
 	// 确保至少保留一个类型，防止管理员清空所有类型导致 fallback 失效
 	if len(seen) == 0 {
-		ticketSection["types"] = []any{"other"}
+		ticketSection["types"] = []any{"all"}
 	} else {
 		ticketSection["types"] = items
 	}
@@ -980,7 +980,7 @@ func configSectionDefs() []configSectionDef {
 		}},
 		{Key: "Ticket", Title: "工单系统", Description: "用户提交工单与管理员处理", Category: "policy", Fields: []configFieldDef{
 			{Key: "enabled", Label: "启用工单系统", Type: "bool", Description: "开启后用户可提交工单，管理员可在后台管理"},
-			{Key: "types", Label: "工单类型", Type: "list", Description: "自定义工单类型列表，默认：bug, feature, question, account, other"},
+			{Key: "types", Label: "工单类型", Type: "list", Description: "自定义工单类型列表，默认仅含 all；管理员可在工单管理页随时增删改"},
 		}},
 		{Key: "AuditLog", Title: "操作审计", Description: "审计日志记录与自动清理策略", Category: "security", Fields: []configFieldDef{
 			{Key: "enabled", Label: "启用审计日志", Type: "bool", Description: "关闭后不再记录新的审计日志；已有日志不受影响"},

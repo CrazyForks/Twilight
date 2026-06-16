@@ -411,7 +411,7 @@ func (a *App) handleInviteUse(w http.ResponseWriter, r *http.Request, _ Params) 
 		failWithCode(w, http.StatusConflict, ErrEmbyCapacityReached, fmt.Sprintf("Emby 用户数量已达上限 %d/%d", current, limit))
 		return
 	}
-	u, _, err := a.store().ConsumeInviteCodeAndUpdateUser(code, user.UID, func(u *store.User, _ store.InviteCode) error {
+	u, _, err := a.store().ConsumeInviteCodeAndUpdateUser(code, user.UID, a.cfg().InviteMaxDepth, a.cfg().InviteRootUserLimit, func(u *store.User, _ store.InviteCode) error {
 		if u.EmbyID == "" && u.EmbyGrantLocked && !user.PendingEmby {
 			return store.ErrGrantLocked
 		}

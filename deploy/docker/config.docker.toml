@@ -196,7 +196,7 @@ webhook_secret = ""
 # ───────── 工单系统 ─────────
 [Ticket]
 enabled = false
-types = ["bug", "feature", "question", "account", "other"]
+types = ["all"]
 
 # ───────── 操作审计 ─────────
 [AuditLog]

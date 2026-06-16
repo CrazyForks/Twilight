@@ -172,7 +172,7 @@ func (a *App) handleUseCode(w http.ResponseWriter, r *http.Request, _ Params) {
 	var u store.User
 	var err error
 	if source == "invite" {
-		u, inviteForUse, err = a.store().ConsumeInviteCodeAndUpdateUser(code, p.User.UID, func(u *store.User, _ store.InviteCode) error {
+		u, inviteForUse, err = a.store().ConsumeInviteCodeAndUpdateUser(code, p.User.UID, a.cfg().InviteMaxDepth, a.cfg().InviteRootUserLimit, func(u *store.User, _ store.InviteCode) error {
 			return updateUser(u, store.RegCode{})
 		})
 	} else {

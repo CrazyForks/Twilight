@@ -331,6 +331,10 @@ func (a *App) handleRegister(w http.ResponseWriter, r *http.Request, _ Params) {
 			failWithCode(w, http.StatusBadRequest, ErrEmailInvalid, "该邮箱域名不在允许范围内")
 			return
 		}
+		if a.store().EmailAlreadyUsed(email) {
+			failWithCode(w, http.StatusConflict, ErrEmailConflict, "该邮箱已被其他账号使用")
+			return
+		}
 	}
 	if reached, current, limit := a.systemUserLimitReached(); reached {
 		failWithCode(w, http.StatusConflict, ErrUserLimitReached, fmt.Sprintf("系统用户数量已达上限 %d/%d", current, limit))

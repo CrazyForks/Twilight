@@ -229,6 +229,23 @@ func (s *Store) EmailVerifiedOwner(email string, excludeUID int64) (User, bool) 
 	return User{}, false
 }
 
+// EmailAlreadyUsed 检查邮箱是否已被任何账号使用（已验证或未验证均算占用）。
+// 用于注册时防止两个用户填写同一个邮箱。
+func (s *Store) EmailAlreadyUsed(email string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	target := normalizeEmailKey(email)
+	if target == "" {
+		return false
+	}
+	for _, u := range s.state.Users {
+		if u.Email != "" && normalizeEmailKey(u.Email) == target {
+			return true
+		}
+	}
+	return false
+}
+
 // FindUserByEmailVerified 按"已验证邮箱"精确命中账号（登出态找回用）。
 // 只认 EmailVerified=true 的账号：未验证邮箱不足以证明归属，否则把别人邮箱
 // 写成自己的未验证邮箱即可劫持对方账号的找回入口。
