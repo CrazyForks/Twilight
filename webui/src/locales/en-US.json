@@ -795,7 +795,10 @@
       "glassBlurLabel": "Glass blur intensity",
       "compactLabel": "Compact mode",
       "compactDesc": "Reduces spacing and padding for higher information density",
-      "reset": "Reset to defaults"
+      "save": "Save theme",
+      "saved": "Theme saved",
+      "reset": "Reset to defaults",
+      "resetDone": "Theme reset to defaults"
     }
   },
   "announcements": {

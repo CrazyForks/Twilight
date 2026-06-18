@@ -1474,7 +1474,10 @@
       "glassBlurLabel": "玻璃模糊强度",
       "compactLabel": "紧凑模式",
       "compactDesc": "减小间距和内边距，适合需要更多信息密度的场景",
-      "reset": "恢复默认主题"
+      "save": "保存主题",
+      "saved": "主题已保存",
+      "reset": "恢复默认主题",
+      "resetDone": "已恢复默认主题"
     }
   },
   "announcements": {
