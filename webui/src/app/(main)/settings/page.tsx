@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   User,
@@ -83,6 +84,10 @@ export default function SettingsPage() {
   const [bgmToken, setBgmToken] = useState("");
   const [isBgmLoading, setIsBgmLoading] = useState(false);
   const [embyStatus, setEmbyStatus] = useState<EmbyStatus | null>(null);
+
+  // 仅首次挂载播放进场动画；切语言不再重播
+  const [hasAppeared, setHasAppeared] = useState(false);
+  useEffect(() => { setHasAppeared(true); }, []);
 
   // Telegram bind code
   const [bindCode, setBindCode] = useState<string | null>(null);
@@ -703,7 +708,7 @@ export default function SettingsPage() {
   return (
     <motion.div
       variants={container}
-      initial="hidden"
+      initial={hasAppeared ? false : "hidden"}
       animate="show"
       className="space-y-6"
     >
@@ -715,7 +720,7 @@ export default function SettingsPage() {
       {/* 快速导航 */}
       <motion.div variants={item}>
         <div className="grid gap-4 sm:grid-cols-3">
-          <a href="/settings/appearance" className="group">
+          <Link href="/settings/appearance" className="group">
             <Card className="glass-card cursor-pointer hover:shadow-lg transition-all h-full">
               <CardContent className="p-6 flex flex-col items-center justify-center text-center gap-3 h-full">
                 <div className="p-3 rounded-lg bg-primary/10 group-hover:bg-primary/20 transition-colors">
@@ -727,7 +732,7 @@ export default function SettingsPage() {
                 </div>
               </CardContent>
             </Card>
-          </a>
+          </Link>
         </div>
       </motion.div>
 

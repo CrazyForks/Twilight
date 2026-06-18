@@ -75,6 +75,7 @@ export default function RegisterPage() {
     systemInfo?.features?.force_bind_telegram || systemInfo?.features?.telegram,
   );
   const forceBindTelegram = Boolean(systemInfo?.features?.force_bind_telegram);
+  const emailEnabled = Boolean(systemInfo?.features?.email_enabled);
   const TOTAL_STEPS = hasTelegramStep ? 2 : 1;
   const [step, setStep] = useState(0);
 
@@ -371,7 +372,7 @@ export default function RegisterPage() {
 
   const step0 = (
     <>
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div className={`grid grid-cols-1 gap-4 ${emailEnabled ? "sm:grid-cols-2" : ""}`}>
         <div className="space-y-2">
           <Label htmlFor="username" className="ml-1">
             {t("auth.register.requiredUsername")}
@@ -386,21 +387,23 @@ export default function RegisterPage() {
             className="h-11"
           />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="email" className="ml-1">
-            {t("common.email")}
-          </Label>
-          <Input
-            id="email"
-            name="email"
-            type="email"
-            placeholder="Email (Optional)"
-            value={formData.email}
-            onChange={handleChange}
-            autoComplete="email"
-            className="h-11"
-          />
-        </div>
+        {emailEnabled && (
+          <div className="space-y-2">
+            <Label htmlFor="email" className="ml-1">
+              {t("common.email")}
+            </Label>
+            <Input
+              id="email"
+              name="email"
+              type="email"
+              placeholder="Email (Optional)"
+              value={formData.email}
+              onChange={handleChange}
+              autoComplete="email"
+              className="h-11"
+            />
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">

@@ -787,7 +787,16 @@
     "chooseAvatar": "點擊選擇頭像圖片",
     "avatarFormatHint": "支援 JPG、PNG、GIF、WebP，上傳成功後立即生效。",
     "currentAvatarUrl": "目前頭像地址",
-    "avatarUsageHint": "頭像會在全站展示。為避免裁切失真，建議使用主體置中的正方形圖片。"
+    "avatarUsageHint": "頭像會在全站展示。為避免裁切失真，建議使用主體置中的正方形圖片。",
+    "themeTab": "全域主題",
+    "theme": {
+      "hueLabel": "強調色 / 主色",
+      "radiusLabel": "圓角大小",
+      "glassBlurLabel": "玻璃模糊強度",
+      "compactLabel": "緊湊模式",
+      "compactDesc": "減小間距和內邊距，適合需要更多資訊密度的場景",
+      "reset": "恢復預設主題"
+    }
   },
   "announcements": {
     "levelInfo": "通知",

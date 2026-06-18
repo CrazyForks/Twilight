@@ -265,7 +265,7 @@ export function Sidebar() {
               >
                 <item.icon className="h-4 w-4" />
                 <span>{t(item.labelKey)}</span>
-                {active && <motion.div layoutId="sidebar-active" className="sidebar-dot" />}
+                {active && <span className="sidebar-dot" />}
               </Link>
             );
           })}
@@ -282,7 +282,7 @@ export function Sidebar() {
                   >
                     <item.icon className="h-4 w-4" />
                     <span>{t(item.labelKey)}</span>
-                    {active && <motion.div layoutId="sidebar-active-admin" className="sidebar-dot" />}
+                    {active && <span className="sidebar-dot" />}
                   </Link>
                 );
               })}

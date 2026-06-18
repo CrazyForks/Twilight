@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import { motion } from "framer-motion";
 import {
@@ -29,6 +29,7 @@ import { api } from "@/lib/api";
 import { useI18n, type MessageKey } from "@/lib/i18n";
 import { emitRegionRefresh, RegionRefreshKeys } from "@/lib/region-refresh";
 import { normalizeBackgroundImageValue } from "@/lib/safe-url";
+import ThemeCustomizer from "@/components/theme-customizer";
 
 const container = {
   hidden: { opacity: 0 },
@@ -118,7 +119,11 @@ export default function AppearanceSettingsPage() {
   const [darkPreview, setDarkPreview] = useState("");
 
   // 分发标签页
-  const [activeTab, setActiveTab] = useState<"background" | "avatar">("background");
+  const [activeTab, setActiveTab] = useState<"background" | "avatar" | "theme">("background");
+
+  // 仅首次挂载播放进场动画；切 Tab / 切换语言不再重播，避免闪动
+  const [hasAppeared, setHasAppeared] = useState(false);
+  useEffect(() => { setHasAppeared(true); }, []);
 
   const updatePreview = useCallback((css: string, img: string, type: "light" | "dark") => {
     const combined = normalizeBackgroundImageValue(img) || normalizeBackgroundImageValue(css);
@@ -691,17 +696,17 @@ export default function AppearanceSettingsPage() {
   return (
     <motion.div
       variants={container}
-      initial="hidden"
+      initial={hasAppeared ? false : "hidden"}
       animate="show"
       className="space-y-6"
     >
-      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "background" | "avatar")} className="space-y-5">
+      <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as "background" | "avatar" | "theme")} className="space-y-5">
         <motion.div variants={item} className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
           <div className="min-w-0 space-y-1">
             <h1 className="text-2xl font-bold sm:text-3xl">{t("appearance.title")}</h1>
             <p className="text-sm text-muted-foreground">{t("appearance.description")}</p>
           </div>
-          <TabsList className="grid h-auto w-full grid-cols-2 sm:w-auto">
+          <TabsList className="grid h-auto w-full grid-cols-3 sm:w-auto">
             <TabsTrigger value="background" className="gap-2">
               <Palette className="h-4 w-4" />
               {t("appearance.backgroundTab")}
@@ -709,6 +714,10 @@ export default function AppearanceSettingsPage() {
             <TabsTrigger value="avatar" className="gap-2">
               <Upload className="h-4 w-4" />
               {t("appearance.avatarTab")}
+            </TabsTrigger>
+            <TabsTrigger value="theme" className="gap-2">
+              <Eye className="h-4 w-4" />
+              {t("appearance.themeTab")}
             </TabsTrigger>
           </TabsList>
         </motion.div>
@@ -822,6 +831,16 @@ export default function AppearanceSettingsPage() {
                     {t("appearance.avatarUsageHint")}
                   </AlertDescription>
                 </Alert>
+              </CardContent>
+            </Card>
+          </motion.div>
+        </TabsContent>
+
+        <TabsContent value="theme" className="mt-0">
+          <motion.div variants={item}>
+            <Card>
+              <CardContent className="pt-6">
+                <ThemeCustomizer />
               </CardContent>
             </Card>
           </motion.div>

@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { GeistSans } from "geist/font/sans";
 import { GeistMono } from "geist/font/mono";
 import { ThemeProvider } from "@/components/theme-provider";
+import { ThemeInit } from "@/components/theme-init";
 import { Toaster } from "@/components/ui/toaster";
 import { ConfirmDialogProvider } from "@/components/ui/confirm-dialog";
 import { LocaleProvider } from "@/lib/i18n";
@@ -68,6 +69,7 @@ export default function RootLayout({
         >
           <LocaleProvider>
             <ConfirmDialogProvider>
+              <ThemeInit />
               {children}
               <Toaster />
             </ConfirmDialogProvider>

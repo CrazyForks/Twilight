@@ -787,7 +787,16 @@
     "chooseAvatar": "Click to choose an avatar image",
     "avatarFormatHint": "Supports JPG, PNG, GIF, WebP; applies immediately after upload.",
     "currentAvatarUrl": "Current avatar URL",
-    "avatarUsageHint": "The avatar is shown across the site. To avoid cropping distortion, use a centered square image."
+    "avatarUsageHint": "The avatar is shown across the site. To avoid cropping distortion, use a centered square image.",
+    "themeTab": "Theme",
+    "theme": {
+      "hueLabel": "Accent / primary color",
+      "radiusLabel": "Border radius",
+      "glassBlurLabel": "Glass blur intensity",
+      "compactLabel": "Compact mode",
+      "compactDesc": "Reduces spacing and padding for higher information density",
+      "reset": "Reset to defaults"
+    }
   },
   "announcements": {
     "levelInfo": "Info",
