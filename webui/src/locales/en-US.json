@@ -16,7 +16,7 @@
       "password": "Password",
       "telegramCommunity": "Telegram Community",
       "submit": "Log In",
-      "forgotPassword": "Forgot password? Recover via Emby",
+      "forgotPassword": "Forgot password?",
       "noAccount": "Don't have an account?",
       "createAccount": "Create account"
     },
@@ -27,7 +27,7 @@
       "failed": "Recovery failed",
       "copied": "New password copied",
       "title": "Recover web password",
-      "description": "Verify your bound Emby account to generate a new web login password.",
+      "description": "Reset your password via email verification code or your bound Emby account.",
       "embyUsername": "Emby username",
       "embyPassword": "Emby password",
       "submit": "Verify and reset",

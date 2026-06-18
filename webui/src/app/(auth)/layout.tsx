@@ -13,6 +13,22 @@ const authTextColor = rawAuthTextColor && CSS_COLOR_RE.test(rawAuthTextColor.tri
   ? rawAuthTextColor.trim()
   : undefined;
 
+// 背景图叠加层不透明度，默认 0.4（范围 0-1），通过 NEXT_PUBLIC_AUTH_BG_OVERLAY_OPACITY 控制。
+const rawOverlay = process.env.NEXT_PUBLIC_AUTH_BG_OVERLAY_OPACITY;
+const overlayOpacity = (() => {
+  if (!rawOverlay) return 0.4;
+  const n = Number(rawOverlay);
+  return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.4;
+})();
+
+// 右侧面板背景不透明度，默认 0.82（范围 0-1），通过 NEXT_PUBLIC_AUTH_PANEL_OPACITY 控制。
+const rawPanel = process.env.NEXT_PUBLIC_AUTH_PANEL_OPACITY;
+const panelOpacity = (() => {
+  if (!rawPanel) return 0.82;
+  const n = Number(rawPanel);
+  return Number.isFinite(n) ? Math.max(0, Math.min(1, n)) : 0.82;
+})();
+
 export default function AuthLayout({
   children,
 }: {
@@ -54,6 +70,13 @@ export default function AuthLayout({
           }
         `}</style>
       )}
+      {/* 注入面板 / 叠加层透明度 CSS 变量 */}
+      <style>{`
+        :root {
+          --auth-panel-opacity: ${panelOpacity};
+          --auth-panel-opacity-has-bg: ${Math.min(1, panelOpacity + 0.08).toFixed(2)};
+        }
+      `}</style>
       <div
         className={`relative min-h-screen overflow-hidden bg-background ${safeBg ? "auth-has-bg" : ""}`}
         style={backgroundStyle}
@@ -66,11 +89,16 @@ export default function AuthLayout({
           </>
         )}
         {safeBg && (
-          <div className="pointer-events-none absolute inset-0 z-[1] bg-background/40 backdrop-blur-[2px]" />
+          <div
+            className="pointer-events-none absolute inset-0 z-[1] bg-background backdrop-blur-[2px]"
+            style={{ opacity: overlayOpacity }}
+          />
         )}
-        <div className={`relative z-10 flex min-h-dvh auth-card-text ${authTextColor ? "auth-custom-color" : ""}`}>
-          {children}
-        </div>
+        <main className={`auth-panel auth-card-text ${authTextColor ? "auth-custom-color" : ""}`}>
+          <div className="auth-panel-inner space-y-7">
+            {children}
+          </div>
+        </main>
       </div>
     </>
   );

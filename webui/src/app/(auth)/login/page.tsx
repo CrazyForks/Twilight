@@ -14,7 +14,7 @@ import { sanitizeExternalUrl } from "@/lib/safe-url";
 import { friendlyError } from "@/lib/validators";
 import { safeProtectedRedirectTarget } from "@/lib/auth-routes";
 import { useI18n } from "@/lib/i18n";
-import { AuthBrand, AuthPanel, AUTH_PRIMARY_BTN, AUTH_GHOST_LINK } from "../auth-ui";
+import { AuthBrand, AUTH_PRIMARY_BTN, AUTH_GHOST_LINK } from "../auth-ui";
 
 function loginRedirectTarget(): string {
   if (typeof window === "undefined") return "/dashboard";
@@ -103,7 +103,7 @@ export default function LoginPage() {
   };
 
   return (
-    <AuthPanel>
+    <>
       <AuthBrand subtitle={t("auth.login.description")} />
 
       {telegramLinks.length > 0 && (
@@ -130,10 +130,10 @@ export default function LoginPage() {
 
       <form onSubmit={handleSubmit} className="space-y-5">
         <div className="space-y-2">
-          <Label htmlFor="username" className="ml-1">{t("common.username")}</Label>
+          <Label htmlFor="username" className="ml-1">{t("common.username")} / {t("common.email")}</Label>
           <Input
             id="username"
-            placeholder="Username"
+            placeholder="Username / Email"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
             autoComplete="username"
@@ -188,6 +188,6 @@ export default function LoginPage() {
           {t("auth.login.createAccount")}
         </Link>
       </div>
-    </AuthPanel>
+    </>
   );
 }

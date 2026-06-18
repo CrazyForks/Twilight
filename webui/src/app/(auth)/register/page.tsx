@@ -26,7 +26,7 @@ import { passwordStrengthLabel, validatePasswordStrength } from "@/lib/password"
 import { friendlyError, validateUsername } from "@/lib/validators";
 import { sanitizeExternalUrl, telegramBotUrl } from "@/lib/safe-url";
 import { useI18n } from "@/lib/i18n";
-import { AuthBrand, AuthPanel, AuthStepDots, AUTH_PRIMARY_BTN } from "../auth-ui";
+import { AuthBrand, AuthStepDots, AUTH_PRIMARY_BTN } from "../auth-ui";
 
 type RegisterBindCodeStatusMessage = {
   type?: string;
@@ -673,14 +673,10 @@ export default function RegisterPage() {
   // ---- Render ----
 
   return (
-    <AuthPanel>
+    <>
       {TOTAL_STEPS > 1 && <AuthStepDots total={TOTAL_STEPS} current={step} />}
       <AuthBrand
-        subtitle={
-          registerRequiresCode
-            ? t("auth.register.introWithCode")
-            : t("auth.register.introWithoutCode")
-        }
+        subtitle={registerRequiresCode ? t("auth.register.introWithCode") : undefined}
       />
 
       {telegramLinks.length > 0 && step === 0 && (
@@ -712,6 +708,6 @@ export default function RegisterPage() {
           {t("auth.register.backToLogin")}
         </Link>
       </div>
-    </AuthPanel>
+    </>
   );
 }

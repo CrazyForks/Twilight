@@ -247,7 +247,7 @@
     min-height: 100dvh;
     margin-left: auto;
     overflow-y: auto;
-    background: hsl(var(--card) / 0.82);
+    background: hsl(var(--card) / var(--auth-panel-opacity, 0.82));
     -webkit-backdrop-filter: blur(28px);
     backdrop-filter: blur(28px);
     border-left: 1px solid hsl(var(--border) / 0.6);
@@ -255,18 +255,18 @@
   }
 
   .dark .auth-panel {
-    background: hsl(var(--card) / 0.8);
+    background: hsl(var(--card) / var(--auth-panel-opacity, 0.8));
     box-shadow: -16px 0 48px rgba(0, 0, 0, 0.35);
   }
 
   /* No custom background: keep the panel flush with the page background so
      the decorative glow shows through the rest of the viewport. */
   .auth-has-bg .auth-panel {
-    background: hsl(var(--card) / 0.9);
+    background: hsl(var(--card) / var(--auth-panel-opacity-has-bg, 0.9));
   }
 
   .dark .auth-has-bg .auth-panel {
-    background: hsl(var(--card) / 0.88);
+    background: hsl(var(--card) / var(--auth-panel-opacity-has-bg, 0.88));
   }
 
   @media (min-width: 1024px) {

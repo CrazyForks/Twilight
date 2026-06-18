@@ -185,9 +185,14 @@ class ApiClient {
 
   // Auth
   async login(username: string, password: string) {
+    const isEmail = username.includes("@");
     const res = await this.request<{ user: Partial<UserInfo> }>("/auth/login", {
       method: "POST",
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify(
+        isEmail
+          ? { email: username.trim(), username: "", password }
+          : { username, password },
+      ),
     });
     if (res.success && res.data?.user?.avatar) {
       res.data.user.avatar = this.toAbsoluteAssetUrl(res.data.user.avatar) || undefined;

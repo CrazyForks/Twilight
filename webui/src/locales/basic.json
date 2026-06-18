@@ -169,7 +169,7 @@
       "description": "访问你的媒体控制台",
       "telegramCommunity": "Telegram 社群",
       "submit": "立即登入",
-      "forgotPassword": "忘记密码？使用 Emby 账号验证找回",
+      "forgotPassword": "忘记密码？",
       "noAccount": "还没有账号？",
       "createAccount": "创建新账户"
     },
@@ -180,7 +180,7 @@
       "failed": "找回失败",
       "copied": "已复制新密码",
       "title": "找回 Web 登录密码",
-      "description": "验证你已绑定的 Emby 账号后，系统会生成一个新的 Web 登录密码。",
+      "description": "通过邮箱验证码或已绑定的 Emby 账号重置登录密码。",
       "embyUsername": "Emby 用户名",
       "embyPassword": "Emby 密码",
       "submit": "验证并重置密码",

@@ -16,7 +16,7 @@
       "password": "密碼",
       "telegramCommunity": "Telegram 社群",
       "submit": "立即登入",
-      "forgotPassword": "忘記密碼？使用 Emby 帳號驗證找回",
+      "forgotPassword": "忘記密碼？",
       "noAccount": "還沒有帳號？",
       "createAccount": "建立新帳戶"
     },
@@ -27,7 +27,7 @@
       "failed": "找回失敗",
       "copied": "已複製新密碼",
       "title": "找回 Web 登入密碼",
-      "description": "驗證你已綁定的 Emby 帳號後，系統會產生一個新的 Web 登入密碼。",
+      "description": "透過郵箱驗證碼或已綁定的 Emby 帳號重設登入密碼。",
       "embyUsername": "Emby 使用者名稱",
       "embyPassword": "Emby 密碼",
       "submit": "驗證並重設密碼",

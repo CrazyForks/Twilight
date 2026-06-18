@@ -1780,6 +1780,20 @@ func (s *Store) FindUserByUsername(username string) (User, bool) {
 	return User{}, false
 }
 
+func (s *Store) FindUserByEmail(email string) (User, bool) {
+	if email == "" {
+		return User{}, false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, u := range s.state.Users {
+		if strings.EqualFold(strings.TrimSpace(u.Email), email) {
+			return u, true
+		}
+	}
+	return User{}, false
+}
+
 func (s *Store) FindUserByEmbyID(embyID string) (User, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

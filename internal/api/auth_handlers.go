@@ -45,12 +45,25 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request, _ Params) {
 	}
 	payload := decodeMap(r)
 	username := stringValue(payload, "username")
+	email := stringValue(payload, "email")
 	password := stringValue(payload, "password")
-	if username == "" || password == "" {
-		failWithCode(w, http.StatusBadRequest, ErrAuthCredentialsEmpty, "用户名和密码不能为空")
+	if (username == "" && email == "") || password == "" {
+		failWithCode(w, http.StatusBadRequest, ErrAuthCredentialsEmpty, "用户名/邮箱和密码不能为空")
 		return
 	}
-	u, okUser := a.store().FindUserByUsername(username)
+	// 支持邮箱登录：email 字段优先于 username，或 username 本身常 @ 时视为邮箱
+	loginByEmail := email != "" || strings.Contains(username, "@")
+	var u store.User
+	var okUser bool
+	if loginByEmail {
+		lookupEmail := email
+		if lookupEmail == "" {
+			lookupEmail = username
+		}
+		u, okUser = a.store().FindUserByEmail(lookupEmail)
+	} else {
+		u, okUser = a.store().FindUserByUsername(username)
+	}
 	// 常量代价校验：用户名不存在时也对占位哈希跑一次等代价 PBKDF2，抹平
 	// "不存在(快) vs 存在但密码错(慢 ~150ms)"的时序差，避免用户名枚举旁路。
 	// verifyPasswordThrottled 还把并发哈希数压到 GOMAXPROCS-1，防 CPU 饿死。
@@ -69,6 +82,9 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request, _ Params) {
 		// 计数在常量代价校验之后进行，不影响上面的时序均一性。
 		if a.cfg().RateLimitLoginUserPer5m > 0 {
 			userKey := strings.ToLower(strings.TrimSpace(username))
+			if loginByEmail && userKey == "" {
+				userKey = strings.ToLower(strings.TrimSpace(email))
+			}
 			if userKey != "" && !a.allowRate(r.Context(), rateKey("login:user:", userKey), a.cfg().RateLimitLoginUserPer5m, 5*time.Minute) {
 				failWithCode(w, http.StatusTooManyRequests, ErrLoginRateLimited, "登录过于频繁，请稍后再试")
 				return

@@ -13,7 +13,10 @@ export const AUTH_PRIMARY_BTN =
   "h-11 w-full bg-foreground text-background hover:bg-foreground/90 disabled:opacity-50";
 
 export const AUTH_GHOST_LINK =
-  "font-medium text-foreground/80 underline-offset-4 hover:text-foreground hover:underline";
+  "font-medium text-foreground/80 underline underline-offset-4 hover:text-foreground";
+
+// 通过 NEXT_PUBLIC_AUTH_ICON_URL 可覆盖默认的站点图标（优先于后端返回的 server_icon）。
+const envIcon = process.env.NEXT_PUBLIC_AUTH_ICON_URL;
 
 function serverIconUrl(icon?: string | null): string | undefined {
   if (!icon) return undefined;
@@ -26,7 +29,8 @@ function serverIconUrl(icon?: string | null): string | undefined {
 export function AuthBrand({ subtitle }: { subtitle?: string }) {
   const { info } = useSystemStore();
   const name = info?.name || SITE_NAME;
-  const icon = serverIconUrl(info?.server_icon);
+  // envIcon 优先级高于后端 server_icon
+  const icon = serverIconUrl(envIcon) || serverIconUrl(info?.server_icon);
 
   return (
     <div className="flex flex-col items-center gap-3 text-center">

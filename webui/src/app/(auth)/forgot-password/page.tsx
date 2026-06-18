@@ -19,7 +19,7 @@ import {
 import { validatePasswordStrength } from "@/lib/password";
 import { useI18n } from "@/lib/i18n";
 import { useSystemStore } from "@/store/system";
-import { AuthBrand, AuthPanel, AUTH_PRIMARY_BTN, AUTH_GHOST_LINK } from "../auth-ui";
+import { AuthBrand, AUTH_PRIMARY_BTN, AUTH_GHOST_LINK } from "../auth-ui";
 
 export default function ForgotPasswordPage() {
   const { toast } = useToast();
@@ -300,7 +300,7 @@ export default function ForgotPasswordPage() {
   const showEmailOnly = !embyAvailable && emailAvailable;
 
   return (
-    <AuthPanel>
+    <>
       <AuthBrand subtitle={t("auth.forgotPassword.description")} />
 
       {!forgotPasswordEnabled || nothingAvailable ? (
@@ -334,6 +334,6 @@ export default function ForgotPasswordPage() {
           {t("auth.forgotPassword.backToLogin")}
         </Link>
       </div>
-    </AuthPanel>
+    </>
   );
 }
