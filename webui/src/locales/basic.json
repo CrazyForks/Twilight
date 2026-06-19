@@ -296,7 +296,17 @@
     "bangumi": "Bangumi 同步",
     "bangumiAdmin": "Bangumi 管理",
     "tickets": "我的工单",
-    "adminTickets": "工单处理"
+    "adminTickets": "工单处理",
+    "adminHome": "管理首页"
+  },
+  "adminNav": {
+    "title": "管理首页",
+    "description": "浏览所有管理功能",
+    "categoryUser": "用户管理",
+    "categoryContent": "内容管理",
+    "categorySecurity": "安全审计",
+    "categoryOps": "运维管理",
+    "categoryIntegration": "集成服务"
   },
   "signinRenewal": {
     "successTitle": "续期成功",

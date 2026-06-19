@@ -991,7 +991,7 @@ func configSectionDefs() []configSectionDef {
 			{Key: "enabled", Label: "启用同步", Type: "bool", Description: "启用 Bangumi 同步"},
 			{Key: "webhook_secret", Label: "Webhook 密钥", Type: "secret", Description: "Bangumi webhook 校验密钥"},
 		}},
-		{Key: "Ticket", Title: "工单系统", Description: "用户提交工单与管理员处理", Category: "policy", Fields: []configFieldDef{
+		{Key: "Ticket", Title: "工单系统", Description: "用户提交工单与管理员处理；工单类型请在「工单处理」页面管理", Category: "policy", Fields: []configFieldDef{
 			{Key: "enabled", Label: "启用工单系统", Type: "bool", Description: "开启后用户可提交工单，管理员可在后台管理"},
 			{Key: "types", Label: "工单类型", Type: "list", Description: "自定义工单类型列表，默认仅含 all；管理员可在工单管理页随时增删改"},
 		}},
@@ -1003,7 +1003,7 @@ func configSectionDefs() []configSectionDef {
 			{Key: "preserve_admin", Label: "保留管理员操作", Type: "bool", Description: "按天数清理时跳过管理员 (category=admin) 的操作日志"},
 			{Key: "cleanup_check_time", Label: "清理检查时间", Type: "string", Description: "每日执行清理检查的时间 HH:MM"},
 		}},
-		{Key: "Email", Title: "邮箱验证", Description: "SMTP 发信、验证码与强制绑定策略", Category: "integration", Fields: []configFieldDef{
+		{Key: "Email", Title: "邮箱验证", Description: "SMTP 发信、验证码与强制绑定策略\n推荐在「邮箱管理」页面操作基础发信配置，高级参数在此调整", Category: "integration", Fields: []configFieldDef{
 			{Key: "enabled", Label: "启用邮箱验证", Type: "bool", Description: "总开关：关闭后所有发码 / 邮箱找回 / 强制绑定均降级，前端隐藏入口"},
 			{Key: "smtp_host", Label: "SMTP 主机", Type: "string", Description: "发信服务器地址，如 smtp.gmail.com"},
 			{Key: "smtp_port", Label: "SMTP 端口", Type: "int", Description: "常见：465（SSL）、587（STARTTLS）、25（明文）"},

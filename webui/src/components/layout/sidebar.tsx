@@ -75,6 +75,7 @@ export const userNavItems: SidebarNavItem[] = [
 ];
 
 export const adminNavItems: SidebarNavItem[] = [
+  { href: "/admin", labelKey: "navigation.adminHome", icon: LayoutDashboard },
   { href: "/admin/users", labelKey: "navigation.users", icon: Users },
   { href: "/admin/announcements", labelKey: "navigation.adminAnnouncements", icon: Megaphone },
   { href: "/admin/tickets", labelKey: "navigation.adminTickets", icon: MessageSquareMore },
