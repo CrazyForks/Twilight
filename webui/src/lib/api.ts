@@ -253,7 +253,7 @@ class ApiClient {
     return this.request<UserSettings>("/users/me/settings");
   }
 
-  async updateMySettings(data: { bgm_mode?: boolean; bgm_token?: string; email?: string }) {
+  async updateMySettings(data: { bgm_mode?: boolean; bgm_token?: string; email?: string; notify_on_login_telegram?: boolean; notify_on_login_email?: boolean }) {
     return this.request<UserInfo>("/users/me", {
       method: "PUT",
       body: JSON.stringify(data),

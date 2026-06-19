@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"net/http"
 	"sort"
@@ -752,10 +753,18 @@ func randomFromAlphabet(alphabet string, length int) string {
 	if length <= 0 || alphabet == "" {
 		return ""
 	}
+	// 批量读取随机字节，每次 crypto/rand.Read 取 512 字节，避免逐字符调用。
+	alphabetLen := len(alphabet)
 	var b strings.Builder
+	b.Grow(length)
+	buf := make([]byte, 512)
 	for b.Len() < length {
-		n, _ := strconv.ParseInt(randomCode(2), 16, 64)
-		b.WriteByte(alphabet[int(n)%len(alphabet)])
+		if _, err := rand.Read(buf); err != nil {
+			panic(fmt.Sprintf("crypto/rand failure: %v", err))
+		}
+		for i := 0; i < len(buf) && b.Len() < length; i++ {
+			b.WriteByte(alphabet[int(buf[i])%alphabetLen])
+		}
 	}
 	return b.String()
 }

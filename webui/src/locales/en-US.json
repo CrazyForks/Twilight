@@ -1756,6 +1756,7 @@
     "algoDesc_uuid": "Standard UUID v4, long and highly unique, good for import/export between systems.",
     "algoDesc_legacy-sha1": "Legacy truncated SHA1 format, for compatibility with historical code styles.",
     "deselectAll": "Deselect All",
+    "selectAll": "Select All",
     "jumpToPage": "Go to:"
   },
   "validators": {

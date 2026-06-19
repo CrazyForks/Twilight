@@ -58,6 +58,23 @@ const DefaultEmailBodyTemplate = `您正在 {site} 进行邮箱验证。
 
 验证码 {ttl} 分钟内有效，请勿向任何人泄露。如非本人操作，请忽略本邮件。`
 
+// DefaultLoginNotifyTelegramTemplate 登录通知 Telegram 模板。占位符：{username}、{time}、{ip}、{device}。
+const DefaultLoginNotifyTelegramTemplate = `新登录通知
+
+账号：{username}
+时间：{time}
+IP：{ip}
+设备：{device}`
+
+// DefaultLoginNotifyEmailSubjectTemplate 登录通知邮件标题模板。
+const DefaultLoginNotifyEmailSubjectTemplate = "{server_name} 登录通知"
+
+// DefaultLoginNotifyEmailBodyTemplate 登录通知邮件正文模板。
+const DefaultLoginNotifyEmailBodyTemplate = `你的账号 {username} 于 {time} 从 IP {ip} 登录。
+
+设备：{device}
+如果这不是你的操作，请立即修改密码。`
+
 type Config struct {
 	AppName                       string
 	Version                       string
@@ -159,25 +176,28 @@ type Config struct {
 	BangumiAPIURL                  string
 	BangumiAppID                   string
 
-	RegisterEnabled              bool
-	RegisterCodeLimit            bool
-	AllowPendingRegister         bool
-	EmbyDirectRegisterEnabled    bool
-	EmbyDirectRegisterDays       int
-	EmbyUserLimit                int
-	DecoyAction                  string
-	RegCodeFormat                string
-	RegisterCodeFormat           string
-	RenewCodeFormat              string
-	InviteCodeFormat             string
-	RegCodeRandomAlgorithm       string
-	InviteCodeRandomAlgorithm    string
-	NotificationEnabled          bool
-	NotificationExpiryRemindDays int
-	AutoCleanupNoEmby            bool
-	AutoCleanupNoEmbyDays        int
-	AutoCleanupPendingEmby       bool
-	AutoCleanupPendingEmbyDays   int
+	RegisterEnabled                 bool
+	RegisterCodeLimit               bool
+	AllowPendingRegister            bool
+	EmbyDirectRegisterEnabled       bool
+	EmbyDirectRegisterDays          int
+	EmbyUserLimit                   int
+	DecoyAction                     string
+	RegCodeFormat                   string
+	RegisterCodeFormat              string
+	RenewCodeFormat                 string
+	InviteCodeFormat                string
+	RegCodeRandomAlgorithm          string
+	InviteCodeRandomAlgorithm       string
+	NotificationEnabled             bool
+	NotificationExpiryRemindDays    int
+	LoginNotifyTelegramTemplate     string
+	LoginNotifyEmailSubjectTemplate string
+	LoginNotifyEmailBodyTemplate    string
+	AutoCleanupNoEmby               bool
+	AutoCleanupNoEmbyDays           int
+	AutoCleanupPendingEmby          bool
+	AutoCleanupPendingEmbyDays      int
 
 	EmailValidationMode string
 	EmailBlacklist      []string
@@ -451,6 +471,9 @@ func Load(path string) (Config, error) {
 	cfg.EmailBodyTemplate = reader.stringValue(cfg.EmailBodyTemplate, "Email.body_template", "email_body_template")
 	cfg.NotificationEnabled = reader.boolValue(cfg.NotificationEnabled, "Notification.enabled", "notification_enabled")
 	cfg.NotificationExpiryRemindDays = reader.intValue(cfg.NotificationExpiryRemindDays, "Notification.expiry_remind_days", "expiry_remind_days")
+	cfg.LoginNotifyTelegramTemplate = reader.stringValue(cfg.LoginNotifyTelegramTemplate, "Notification.login_notify_telegram_template", "login_notify_telegram_template")
+	cfg.LoginNotifyEmailSubjectTemplate = reader.stringValue(cfg.LoginNotifyEmailSubjectTemplate, "Notification.login_notify_email_subject_template", "login_notify_email_subject_template")
+	cfg.LoginNotifyEmailBodyTemplate = reader.stringValue(cfg.LoginNotifyEmailBodyTemplate, "Notification.login_notify_email_body_template", "login_notify_email_body_template")
 	cfg.RateLimitEnabled = reader.boolValue(cfg.RateLimitEnabled, "RateLimit.enabled", "rate_limit_enabled")
 	cfg.RateLimitGlobalPerMinute = reader.intValue(cfg.RateLimitGlobalPerMinute, "RateLimit.global_per_minute", "rate_limit_global_per_minute")
 	cfg.RateLimitLoginPerMinute = reader.intValue(cfg.RateLimitLoginPerMinute, "RateLimit.login_per_minute", "rate_limit_login_per_minute")
@@ -566,6 +589,9 @@ func defaults() Config {
 		InviteCodeRandomAlgorithm:         "hex10",
 		NotificationEnabled:               true,
 		NotificationExpiryRemindDays:      3,
+		LoginNotifyTelegramTemplate:       DefaultLoginNotifyTelegramTemplate,
+		LoginNotifyEmailSubjectTemplate:   DefaultLoginNotifyEmailSubjectTemplate,
+		LoginNotifyEmailBodyTemplate:      DefaultLoginNotifyEmailBodyTemplate,
 		AutoCleanupNoEmbyDays:             7,
 		AutoCleanupPendingEmbyDays:        7,
 		RateLimitEnabled:                  true,
@@ -819,6 +845,15 @@ func applyEnv(cfg *Config) {
 	}
 	if v := os.Getenv("TWILIGHT_NOTIFICATION_EXPIRY_REMIND_DAYS"); v != "" {
 		cfg.NotificationExpiryRemindDays = intValue(v, cfg.NotificationExpiryRemindDays)
+	}
+	if v := os.Getenv("TWILIGHT_LOGIN_NOTIFY_TELEGRAM_TEMPLATE"); v != "" {
+		cfg.LoginNotifyTelegramTemplate = strings.ReplaceAll(v, `\n`, "\n")
+	}
+	if v := os.Getenv("TWILIGHT_LOGIN_NOTIFY_EMAIL_SUBJECT_TEMPLATE"); v != "" {
+		cfg.LoginNotifyEmailSubjectTemplate = v
+	}
+	if v := os.Getenv("TWILIGHT_LOGIN_NOTIFY_EMAIL_BODY_TEMPLATE"); v != "" {
+		cfg.LoginNotifyEmailBodyTemplate = strings.ReplaceAll(v, `\n`, "\n")
 	}
 	if v := os.Getenv("TWILIGHT_USER_LIMIT"); v != "" {
 		cfg.UserLimit = intValue(v, cfg.UserLimit)

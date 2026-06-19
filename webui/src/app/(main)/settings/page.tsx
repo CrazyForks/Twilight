@@ -23,6 +23,7 @@ import {
   Star,
   Bot,
   AlertCircle,
+  Bell,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -84,6 +85,8 @@ export default function SettingsPage() {
   const [bgmToken, setBgmToken] = useState("");
   const [isBgmLoading, setIsBgmLoading] = useState(false);
   const [embyStatus, setEmbyStatus] = useState<EmbyStatus | null>(null);
+  const [notifyLoginTelegram, setNotifyLoginTelegram] = useState(false);
+  const [notifyLoginEmail, setNotifyLoginEmail] = useState(false);
 
   // 仅首次挂载播放进场动画；切语言不再重播
   const [hasAppeared, setHasAppeared] = useState(false);
@@ -141,6 +144,8 @@ export default function SettingsPage() {
   const emailEnabled = Boolean(systemInfo?.features?.email_enabled);
   const forceBindEmail = Boolean(systemInfo?.features?.force_bind_email);
   const emailVerified = Boolean(user?.email_verified);
+  const hasTelegramBinding = Boolean(telegramStatus?.bound);
+  const hasVerifiedEmail = emailVerified;
   // 普通/白名单且开启强制绑定时，改密需要邮箱验证码（管理员不强制）。
   const passwordEmailGate = emailEnabled && forceBindEmail && user?.role !== 0;
   const [emailBindStage, setEmailBindStage] = useState<"email" | "code">("email");
@@ -316,6 +321,8 @@ export default function SettingsPage() {
       setBgmTokenSet(settingsRes.data.bgm_token_set ?? false);
       setEmbyStatus(settingsRes.data.emby_status ?? null);
       setTelegramStatus(settingsRes.data.telegram as TelegramStatus);
+      setNotifyLoginTelegram(Boolean(settingsRes.data.notify_on_login_telegram));
+      setNotifyLoginEmail(Boolean(settingsRes.data.notify_on_login_email));
     }
     return true;
   }, []);
@@ -1356,6 +1363,58 @@ export default function SettingsPage() {
         </Card>
       </motion.div>
       )}
+
+      {/* 登录通知 */}
+      <motion.div variants={item}>
+        <Card className="glass-card">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Bell className="h-5 w-5" />
+              {t("settings.loginNotifyTitle")}
+            </CardTitle>
+            <CardDescription>
+              {t("settings.loginNotifyDescription")}
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label>{t("settings.loginNotifyTelegram")}</Label>
+                <p className="text-sm text-muted-foreground">
+                  {t("settings.loginNotifyTelegramDesc")}
+                </p>
+              </div>
+              <Switch
+                checked={notifyLoginTelegram}
+                onCheckedChange={(v) => {
+                  setNotifyLoginTelegram(v);
+                  api.updateMySettings({ notify_on_login_telegram: v });
+                }}
+                disabled={!hasTelegramBinding}
+                aria-readonly={!hasTelegramBinding}
+              />
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label>{t("settings.loginNotifyEmail")}</Label>
+                <p className="text-sm text-muted-foreground">
+                  {t("settings.loginNotifyEmailDesc")}
+                </p>
+              </div>
+              <Switch
+                checked={notifyLoginEmail}
+                onCheckedChange={(v) => {
+                  setNotifyLoginEmail(v);
+                  api.updateMySettings({ notify_on_login_email: v });
+                }}
+                disabled={!hasVerifiedEmail}
+                aria-readonly={!hasVerifiedEmail}
+              />
+            </div>
+          </CardContent>
+        </Card>
+      </motion.div>
 
       {/* Bind Emby Dialog */}
       <Dialog open={bindEmbyOpen} onOpenChange={(open) => {

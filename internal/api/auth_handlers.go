@@ -24,6 +24,7 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/prejudice-studio/twilight/internal/config"
 	"github.com/prejudice-studio/twilight/internal/security"
 	"github.com/prejudice-studio/twilight/internal/store"
 	"github.com/prejudice-studio/twilight/internal/validate"
@@ -136,6 +137,36 @@ func (a *App) handleLogin(w http.ResponseWriter, r *http.Request, _ Params) {
 	// 登录是 AuthPublic 接口，此时请求上下文尚无 principal（会话 Cookie 在响应里下发），
 	// 因此必须用 auditWithUser 显式传入已认证的用户身份，避免审计日志 uid=0/username=""。
 	a.auditWithUser(r, u.UID, u.Username, "login", "user", 0, map[string]any{"ip": ip, "device": deviceID})
+	// 登录通知：如果用户启用了 Telegram/邮箱登录通知，发送通知。
+	loginTime := time.Now().Format("2006-01-02 15:04:05")
+	notifValues := map[string]string{
+		"{username}":    u.Username,
+		"{time}":        loginTime,
+		"{ip}":          ip,
+		"{device}":      ua,
+		"{server_name}": a.cfg().AppName,
+	}
+	if a.telegramAvailable() && u.TelegramID != 0 && u.NotifyOnLoginTelegram {
+		tmpl := a.cfg().LoginNotifyTelegramTemplate
+		if tmpl == "" {
+			tmpl = config.DefaultLoginNotifyTelegramTemplate
+		}
+		text := replaceNotifPlaceholders(tmpl, notifValues)
+		a.telegramSendMessage(r.Context(), u.TelegramID, text)
+	}
+	if emailConfigured(a.cfg()) && u.Email != "" && u.EmailVerified && u.NotifyOnLoginEmail {
+		subjectTmpl := a.cfg().LoginNotifyEmailSubjectTemplate
+		if subjectTmpl == "" {
+			subjectTmpl = config.DefaultLoginNotifyEmailSubjectTemplate
+		}
+		bodyTmpl := a.cfg().LoginNotifyEmailBodyTemplate
+		if bodyTmpl == "" {
+			bodyTmpl = config.DefaultLoginNotifyEmailBodyTemplate
+		}
+		subject := replaceNotifPlaceholders(subjectTmpl, notifValues)
+		body := replaceNotifPlaceholders(bodyTmpl, notifValues)
+		smtpDeliver(r.Context(), *a.cfg(), u.Email, subject, body)
+	}
 	// 设备数限制为可选（默认关闭）：开启后淘汰超额的未受信任旧设备，绝不踢掉本次
 	// 登录设备或受信任设备，避免把用户锁在门外。
 	if cfg := a.cfg(); cfg.DeviceLimitEnabled && cfg.MaxDevices > 0 {
@@ -547,4 +578,13 @@ func (a *App) handleRegisterAvailability(w http.ResponseWriter, r *http.Request,
 		"emby_user_limit":              a.cfg().EmbyUserLimit,
 		"emby_bound_users":             embyBoundUsers,
 	})
+}
+
+// replaceNotifPlaceholders 替换通知模板中的占位符。
+func replaceNotifPlaceholders(tmpl string, values map[string]string) string {
+	pairs := make([]string, 0, len(values)*2)
+	for k, v := range values {
+		pairs = append(pairs, k, v)
+	}
+	return strings.NewReplacer(pairs...).Replace(tmpl)
 }

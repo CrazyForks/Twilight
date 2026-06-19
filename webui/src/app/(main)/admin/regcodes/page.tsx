@@ -1141,11 +1141,25 @@ export default function AdminRegcodesPage() {
               )}
             </span>
             <div className="flex w-full flex-wrap gap-2 sm:w-auto">
-              {selectedCodes.size > 0 && (
-                <Button className="flex-1 sm:flex-none" variant="ghost" size="sm" onClick={() => setSelectedCodes(new Set())}>
-                  {t("adminRegcodes.deselectAll")}
-                </Button>
-              )}
+              <Button className="flex-1 sm:flex-none" variant="ghost" size="sm"
+                disabled={regcodes.length === 0}
+                onClick={() => {
+                  const regcodesOnPage = new Set(regcodes.map((item) => item.code));
+                  const allSelected = regcodesOnPage.size > 0 && regcodes.every((item) => selectedCodes.has(item.code));
+                  if (allSelected) {
+                    setSelectedCodes(new Set());
+                  } else {
+                    setSelectedCodes((prev) => {
+                      const next = new Set(prev);
+                      regcodes.forEach((item) => next.add(item.code));
+                      return next;
+                    });
+                  }
+                }}>
+                {regcodes.length > 0 && regcodes.every((item) => selectedCodes.has(item.code))
+                  ? t("adminRegcodes.deselectAll")
+                  : t("adminRegcodes.selectAll")}
+              </Button>
               <Button className="flex-1 sm:flex-none" variant="outline" size="sm" onClick={invertSelection} disabled={regcodes.length === 0}>
                 <FlipHorizontal2 className="mr-2 h-4 w-4" /> {t("adminRegcodes.invertSelection")}
               </Button>

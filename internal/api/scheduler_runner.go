@@ -197,10 +197,12 @@ func (a *App) runSchedulerJob(r *http.Request, jobID string) (map[string]any, []
 		// 顺带回收过期邮箱验证码：短 TTL，借会话清理槽周期回收，避免 state 里
 		// 堆积已失效记录。失败不阻断主流程（下一轮再清）。
 		expiredEmailCodes, _ := a.store().CleanupExpiredEmailVerifications(time.Now().Unix())
-		// 同时清理未验证的邮箱，释放占用的邮箱地址供其他用户使用。
-		_, clearedUnverifiedEmails, _ := a.store().ClearUnverifiedEmails()
+		// 定期清理 24 小时前注册但仍未验证的邮箱，释放邮箱地址供其他用户使用。
+		// 使用基于 CreatedAt 的年龄门限而非 ClearUnverifiedEmails 的全量清理，
+		// 避免刚注册几分钟的用户还没查收验证码就被清掉邮箱。
+		_, staleCleared, _ := a.store().CleanupUnverifiedEmailsByAge(time.Now().Add(-24 * time.Hour).Unix())
 		if !a.embyConfigured() {
-			return map[string]any{"success": true, "configured": false, "active": 0, "total": 0, "expired_sessions": expiredSessions, "expired_email_codes": expiredEmailCodes, "cleared_unverified_emails": clearedUnverifiedEmails}, []string{"Emby not configured", fmt.Sprintf("cleaned up %d expired sessions", expiredSessions), fmt.Sprintf("cleaned up %d expired email codes", expiredEmailCodes), fmt.Sprintf("cleared %d unverified emails", clearedUnverifiedEmails)}, nil
+			return map[string]any{"success": true, "configured": false, "active": 0, "total": 0, "expired_sessions": expiredSessions, "expired_email_codes": expiredEmailCodes, "cleared_unverified_emails": staleCleared}, []string{"Emby not configured", fmt.Sprintf("cleaned up %d expired sessions", expiredSessions), fmt.Sprintf("cleaned up %d expired email codes", expiredEmailCodes), fmt.Sprintf("cleared %d stale unverified emails", staleCleared)}, nil
 		}
 		var sessions []map[string]any
 		if err := a.embyGet(r.Context(), "/Sessions", &sessions); err != nil {
@@ -212,7 +214,7 @@ func (a *App) runSchedulerJob(r *http.Request, jobID string) (map[string]any, []
 				active++
 			}
 		}
-		return map[string]any{"success": true, "active": active, "total": len(sessions), "expired_sessions": expiredSessions, "expired_email_codes": expiredEmailCodes, "cleared_unverified_emails": clearedUnverifiedEmails}, []string{fmt.Sprintf("read %d Emby sessions", len(sessions)), fmt.Sprintf("cleaned up %d expired sessions", expiredSessions), fmt.Sprintf("cleaned up %d expired email codes", expiredEmailCodes), fmt.Sprintf("cleared %d unverified emails", clearedUnverifiedEmails)}, nil
+		return map[string]any{"success": true, "active": active, "total": len(sessions), "expired_sessions": expiredSessions, "expired_email_codes": expiredEmailCodes, "cleared_unverified_emails": staleCleared}, []string{fmt.Sprintf("read %d Emby sessions", len(sessions)), fmt.Sprintf("cleaned up %d expired sessions", expiredSessions), fmt.Sprintf("cleaned up %d expired email codes", expiredEmailCodes), fmt.Sprintf("cleared %d stale unverified emails", staleCleared)}, nil
 	case "emby_sync":
 		if !a.embyConfigured() {
 			return map[string]any{"success": true, "configured": false}, []string{"Emby not configured"}, nil

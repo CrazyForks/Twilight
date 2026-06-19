@@ -145,6 +145,12 @@ var telegramCommandRegistry = map[string]telegramCommandSpec{
 			a.telegramHandleBanEmby(ctx, c.ChatID, c.FromID, c.Args)
 		},
 	},
+	"/delAccount": {
+		private: true,
+		handler: func(a *App, ctx context.Context, c telegramCommandCtx) {
+			a.telegramHandleDelAccount(ctx, c.ChatID, c.FromID, c.Args)
+		},
+	},
 }
 
 // telegramDispatchRegistry 在 dispatcher 中统一执行注册表里命令的 gating，

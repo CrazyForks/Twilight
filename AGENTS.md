@@ -33,8 +33,8 @@
 | 功能域 | 后端（handler / 业务 / client） | store | 路由前缀 | 前端页面 / 组件 | 配置段 · 专题文档 |
 | ---- | ---- | ---- | ---- | ---- | ---- |
 | 登录 / 会话 / 找回密码 | `auth_handlers.go`、`password_verify.go`、`session.go` | `login_log.go`、sessions() | `/auth/*` | `(auth)/login`、`(auth)/forgot-password` | `[Security]` |
-| 用户自助（资料/改密/头像/背景） | `handlers.go`、`upload_handlers.go`、`safepath.go` | `store.go`(User) | `/users/me/*` | `(main)/settings`、`settings/background`、`settings/appearance` | [背景与头像](docs/features/background.md) |
-| 邮箱验证 / 找回 / 强制绑定 / 验证记录审查 | `email_handlers.go`(含 `handleAdminEmailVerifications`/`handleAdminDeleteEmailVerification`/`handleAdminCleanupEmailVerifications`)、`email_verify_service.go`、`email_client.go` | `email_verification.go`(`ListEmailVerifications`) | `/users/me/email/*`、`/auth/password/email/*`、`/admin/email/*` | `components/email-*.tsx`、`admin/users/admin-email-dialog.tsx`、`(main)/admin/email` | `[Email]`/`[SAR]`名单/`[RateLimit]` · [邮箱](docs/features/email.md) |
+| 用户自助（资料/改密/头像/背景/登录通知） | `handlers.go`、`upload_handlers.go`、`safepath.go` | `store.go`(User) | `/users/me/*` | `(main)/settings`、`settings/background`、`settings/appearance` | [背景与头像](docs/features/background.md) |
+| 邮箱验证 / 找回 / 强制绑定 / 验证记录审查 / 自动清理 | `email_handlers.go`、`email_verify_service.go`、`email_client.go` | `email_verification.go` | `/users/me/email/*`、`/auth/password/email/*`、`/admin/email/*` | `components/email-*.tsx`、`admin/users/admin-email-dialog.tsx`、`(main)/admin/email` | `[Email]`/`[SAR]`名单/`[RateLimit]` · [邮箱](docs/features/email.md) |
 | Emby 绑定/注册/同步/设备·IP 审查 | `emby.go`、`emby_client.go`、`emby_inventory.go`、`emby_url_probe.go`、`emby_device_audit.go`(`handleAdminEmbyDeviceAudit`/`buildEmbyDeviceAudit`/`parseRemoteIP`)、`handlers.go`(`handleSessions`) | `store.go`(User.EmbyID) | `/emby/*`、`/admin/emby/*` | `(main)/admin/emby`、`(main)/admin/device-audit`、`(main)/dashboard` | `[Emby]` |
 | Telegram Bot / 绑定 / 花名册 / 换绑 | `telegram_bot.go`、`telegram.go`、`telegram_commands.go`、`telegram_inline.go`、`telegram_bind_*.go`、`bind_status_hub.go` | `store.go`(roster/rebind) | `/users/me/telegram/*`、`/admin/telegram/*` | `admin/telegram-rebind-requests` | `[Telegram]` · [Bot](docs/features/telegram-bot.md) |
 | 注册码 / 续期码 / 白名单码 | `regcode_handlers.go`、`code_use_handlers.go`、`business.go`(生成/消费) | `store.go`(RegCode) | `/admin/regcodes/*`、`/users/me/use-code` | `(main)/admin/regcodes` | `[SAR]` · [卡码](docs/features/regcodes.md) |
@@ -45,9 +45,12 @@
 | 设备 / 登录历史 / IP 黑名单 | `handlers.go`(`handleDevices`/`handleLoginHistory`)、`auth_handlers.go`(登录写设备) | `device.go`、`login_log.go`、`ip_blacklist.go` | `/security/*`、`/users/me/devices` | （并入 settings/admin） | `[DeviceLimit]` |
 | Bangumi 同步 | `bangumi_webhook.go`、`bangumi_client.go`、`bangumi_sync_service.go`、`bangumi_sync_handlers.go` | `store.go`(User.BgmToken, BangumiSyncLog)、`playback.go` | `/bangumi/sync/*`、`/admin/bangumi/*`、`/emby/bangumi/webhook` | `(main)/bangumi`、`(main)/admin/bangumi` | `[BangumiSync]` · [Bangumi](docs/features/bangumi.md) |
 | API Key | `apikey_handlers.go` | `store.go`(APIKey) | `/apikey/*`、`/users/me/apikeys` | `settings/apikey` | [API Key](docs/reference/api-key.md) |
+| 登录通知 | `auth_handlers.go`(登录发通知)、`email_client.go`、`telegram.go` | `store.go`(User.NotifyOnLoginTelegram/Email) | — | `(main)/settings` | `[Notification]` · config 模板字段 |
 | 批量用户操作 | `batch_user_handlers.go`、`batch_helpers.go`、`handlers.go`(`filteredBatchUserUIDs`) | `store.go`(Users) | `/batch/*`、`/admin/users/bulk-*` | `(main)/admin/users` | — |
 | 调度任务 | `scheduler_handlers.go`、`scheduler_daemon.go`、`scheduler_runner.go`、`admin_jobs.go` | `scheduler.go` | `/admin/scheduler/*` | `(main)/admin/scheduler` | `[Scheduler]` |
 | 配置管理（可视化/TOML/备份） | `config_admin.go`、`internal/config` | — | `/system/admin/config/*` | `(main)/admin/config` | `config.production.toml` |
+| 实时日志 / 运行状态 | `runtime_logs.go`、`app.go`(状态) | `runtime_log.go` | `/system/admin/runtime/*` | `(main)/admin/logs` | `[Global]` log_* |
+| 违规审计（诱饵码等） | `violation_handlers.go` | `store.go`(ViolationLog) | `/admin/violations/*` | `(main)/admin/violations` | `[SAR]` decoy_action |
 | 数据库 / 备份 / 迁移 | `database_admin.go`、`storage_guard.go` | `internal/store`(postgres/json) | `/system/admin/database/*` | `(main)/admin/database` | `[Database]` |
 | 实时日志 / 运行状态 | `runtime_logs.go`、`app.go`(状态) | `runtime_log.go` | `/system/admin/runtime/*` | `(main)/admin/logs` | `[Global]` log_* |
 | 违规审计（诱饵码等） | `violation_handlers.go` | `store.go`(ViolationLog) | `/admin/violations/*` | `(main)/admin/violations` | `[SAR]` decoy_action |
@@ -68,9 +71,9 @@
 | `invite_handlers.go` | `handleInviteConfig`、`handleInviteMe`、`handleCreateInviteCode`、`handleCreateInviteRenewCode`、`handleInviteCodes`、`handleDeleteInviteCode`、`handleDetachExpiredInviteChild`、`handleInviteCheck`、`handleInviteUse` |
 | `media_request_handlers.go` | `handleMediaSearch`、`handleMediaDetail`、`handleCreateMediaRequest`、`handleMyMediaRequests`、`handleAdminMediaRequests`、`handleUpdateMediaRequestStatus`、`handleExternalMediaUpdate` |
 | `signin_handlers.go` | `handleSigninConfig`、`handleSigninSummary`、`handleSignin`、`handleSigninRenew`、`handleSigninHistory` |
-| `email_handlers.go` | `handleSendEmailCode`、`handleVerifyEmailCode`、`handleForgotPasswordEmailRequest`、`handleForgotPasswordEmailReset`、`handleAdminBindUserEmail`、`handleAdminSetUserEmailVerified`、`handleAdminEmailTest`、`handleAdminEmailVerifications` |
+| `email_handlers.go` | `handleSendEmailCode`、`handleVerifyEmailCode`、`handleForgotPasswordEmailRequest`、`handleForgotPasswordEmailReset`、`handleAdminBindUserEmail`、`handleAdminSetUserEmailVerified`、`handleAdminEmailTest`、`handleAdminEmailVerifications`、`handleAdminCleanupEmailVerifications`、`handleAdminClearUnverifiedEmails` |
 | `announcement_handlers.go` | `handleListAnnouncements`、`handleAdminAnnouncements`、`handleCreateAnnouncement`、`handleUpdateAnnouncement`、`handleDeleteAnnouncement` |
-| `audit_handlers.go` | `audit(r, action, category, targetUID, detail)`(行12)、`handleListAuditLogs`、`handleDeleteAuditLog`、`handleClearAuditLogs` |
+| `audit_handlers.go` | `audit(r, action, category, targetUID, detail)`(行12)、`auditEntryIP`(行30)、`handleListAuditLogs`、`handleDeleteAuditLog`、`handleClearAuditLogs`、`handlePruneAuditLogs`(行112) |
 | `bangumi_webhook.go` | `handleBangumiWebhook`、`constantTimeStringEqual` |
 | `bangumi_sync_handlers.go` | `handleBangumiSyncStatus`、`handleBangumiSyncTrigger`、`handleBangumiSyncHistory`、`handleBangumiClearHistory`、`handleAdminBangumiUsers`、`handleAdminBangumiRecords`、`handleAdminBangumiSyncUser`、`handleAdminBangumiSyncLogs`、`handleAdminBangumiClearLogs` |
 | `batch_user_handlers.go` | `handleBatchToggleUsers`、`handleBatchRenewUsers`、`handleBatchDeleteUsers`、`handleBatchLockEmbyUnbind`、`handleBatchClearEmbyGrant`、`filteredBatchUserUIDs`(行418) |
@@ -110,10 +113,11 @@
 | `FindUserByUsername` / `FindUserByTelegramID` | — | 按用户名/TG ID 查找 |
 | `CreateUser` / `UpdateUser` / `DeleteUser` | — | 用户 CRUD |
 | `SetUserActiveAtomic` / `SetUserRoleAtomic` | 行2015/1982 | 原子启停/角色（含 last-admin 保护） |
-| `UpsertRegCode` / `RegCode` / `DeleteRegCode` / `ConsumeRegCodeAndUpdateUser` | 行2944/2937/3063/2988 | 注册码管理 |
+| `CleanupExpiredEmailVerifications` | 行2944/2937 | 清除过期邮箱验证码记录 |
+| `ClearUnverifiedEmails` / `CleanupUnverifiedEmailsByAge` | 行3063/2988 | 清理未验证邮箱（后者有 24h 年龄门限） |
 | `UpsertInviteCode` / `InviteCode` / `ConsumeInviteCodeAndUpdateUser` | 行2726/2750/2843 | 邀请码管理 |
 | `ParentOf` / `ChildrenOf` / `DetachInvite` | 行2908/2915/2928 | 邀请关系 |
-| `AddAuditLog` / `ListAuditLogs` / `ClearAuditLogs` | 行3502/3520/3547 | 审计日志 |
+| `AddAuditLog` / `ListAuditLogs` / `ClearAuditLogs` / `PruneAuditLogs` / `PruneAuditLogsByAge` | 行3502/3520/3547/3909/3924 | 审计日志（含条件裁剪） |
 | `AddViolationLog` / `ListViolationLogs` | 行3445/3460 | 违规日志 |
 | `AddLoginLog` / `LoginHistory` | —/— | 登录历史 |
 | `ListDevices` / `UpdateDevice` / `DeleteDevice` | —/—/— | 设备管理 |

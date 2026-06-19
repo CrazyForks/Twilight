@@ -1218,7 +1218,13 @@
     "telegramRebindDialogDescription": "管理员批准后会解绑当前 Telegram，你可以重新绑定新的 Telegram 账号。",
     "rebindReasonLabel": "备注给管理员（可选）",
     "rebindReasonPlaceholder": "例如：原 Telegram 账号无法登录，需要换绑到新账号",
-    "submitApplication": "提交申请"
+    "submitApplication": "提交申请",
+    "loginNotifyTitle": "登录通知",
+    "loginNotifyDescription": "有新登录时通过 Telegram 或邮件通知你",
+    "loginNotifyTelegram": "Telegram 通知",
+    "loginNotifyTelegramDesc": "登录时通过已绑定的 Telegram Bot 发送通知",
+    "loginNotifyEmail": "邮件通知",
+    "loginNotifyEmailDesc": "登录时通过绑定的邮箱发送通知"
   },
   "tickets": {
     "pageTitle": "我的工单",
@@ -2448,6 +2454,7 @@
     "algoDesc_uuid": "标准 UUID v4，长度较长，唯一性强，适合系统间导入导出。",
     "algoDesc_legacy-sha1": "旧版 SHA1 截断格式，用于兼容历史卡码风格。",
     "deselectAll": "取消全选",
+    "selectAll": "全选",
     "jumpToPage": "跳转："
   },
   "validators": {

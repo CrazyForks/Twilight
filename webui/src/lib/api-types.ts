@@ -90,6 +90,8 @@ export interface UserInfo {
   pending_emby_days?: number | null;  // 注册码授予的开通天数（待 Emby 补建）
   emby_disabled_by_expiry?: boolean;  // 到期后仅禁用 Emby，系统账号仍可登录
   emby_disabled?: boolean;  // 远端 Emby 启停的镜像：Web 正常但 Emby 被单独禁用时为 true
+  notify_on_login_telegram?: boolean;  // 登录时发送 Telegram 通知
+  notify_on_login_email?: boolean;  // 登录时发送邮件通知
   rebinding_in_progress?: boolean;  // 是否处于强制换绑流程中
 }
 
@@ -228,6 +230,8 @@ export interface UserSettings {
   bgm_mode: boolean;
   bgm_token_set: boolean;
   api_key_enabled: boolean;
+  notify_on_login_telegram?: boolean;
+  notify_on_login_email?: boolean;
   telegram: {
     bound: boolean;
     telegram_id?: string;

@@ -121,17 +121,27 @@ func (a *App) handleCreateRegcodes(w http.ResponseWriter, r *http.Request, _ Par
 		return
 	}
 	seen := map[string]bool{}
+	// 预加载已存在的卡码到集合，避免逐次 RegCode()/InviteCode() 查 store。
+	existingCodes := map[string]bool{}
+	for _, c := range a.store().ListRegCodes() {
+		existingCodes[c.Code] = true
+	}
+	for _, c := range a.store().ListAllInviteCodes() {
+		existingCodes[c.Code] = true
+	}
+	// 短随机码(<=16 位)碰撞概率稍高，允许更多尝试；长码已足够唯一。
+	maxAttempts := 10
+	if len(algorithm) > 0 && strings.Contains(algorithm, "16") {
+		maxAttempts = 20
+	}
+	if algorithm == "digits-12" || algorithm == "hex10" {
+		maxAttempts = 30
+	}
 	for i := 0; i < count; i++ {
 		code := ""
-		for attempt := 0; attempt < 20; attempt++ {
+		for attempt := 0; attempt < maxAttempts; attempt++ {
 			candidate := generateRegCode(format, codeType, algorithm, days, i+1, validity, useLimit)
-			if seen[candidate] {
-				continue
-			}
-			if _, exists := a.store().RegCode(candidate); exists {
-				continue
-			}
-			if _, exists := a.store().InviteCode(candidate); exists {
+			if seen[candidate] || existingCodes[candidate] {
 				continue
 			}
 			code = candidate

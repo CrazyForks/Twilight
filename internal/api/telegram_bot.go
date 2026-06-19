@@ -452,6 +452,145 @@ func (a *App) telegramHandleResetPassword(ctx context.Context, chatID, telegramI
 	_ = a.telegramSendMessage(ctx, chatID, "请在 Web 端的账号安全页面修改密码。Bot 不接收、不生成也不发送密码。")
 }
 
+// telegramHandleDelAccount 用户通过 Telegram 删除自己的账号，支持多因素验证。
+// 禁止群聊使用（已在 dispatch 层通过 private=true 强制私聊）。
+// 验证优先级：已绑定邮箱 → 已绑定 Emby → 直接确认。
+//
+// 用法：
+//
+//	/delAccount                查看可用的验证方式和操作指引
+//	/delAccount email          向绑定邮箱发送验证码
+//	/delAccount email <code>   验证邮箱验证码并删除账号
+//	/delAccount emby <密码>    验证 Emby 密码并删除账号
+//	/delAccount confirm        直接确认删除（无邮箱/Emby 时）
+func (a *App) telegramHandleDelAccount(ctx context.Context, chatID, telegramID int64, args []string) {
+	u, okUser := a.store().FindUserByTelegramID(telegramID)
+	if !okUser {
+		_ = a.telegramSendMessage(ctx, chatID, "当前 Telegram 尚未绑定 Twilight 账号。")
+		return
+	}
+	if a.userIsProtected(u) {
+		_ = a.telegramSendMessage(ctx, chatID, "管理员/白名单账号不支持通过 Telegram 删除，请联系其他管理员。")
+		return
+	}
+	// 被禁用的账号不允许自删，防止通过删号绕过封禁。
+	if !u.Active {
+		_ = a.telegramSendMessage(ctx, chatID, "你的 Web 账号已被禁用，不允许通过 Telegram 删除。请联系管理员。")
+		return
+	}
+	if u.EmbyDisabled {
+		_ = a.telegramSendMessage(ctx, chatID, "你的 Emby 账号已被禁用，不允许通过 Telegram 删除。请联系管理员。")
+		return
+	}
+
+	hasEmail := u.Email != "" && u.EmailVerified
+	hasEmby := u.EmbyID != ""
+	emailConfigured := emailConfigured(a.cfg())
+
+	// 无参数：显示可用验证方式
+	if len(args) == 0 {
+		msg := "⚠️ 账号删除确认\n\n此操作将永久删除你的账号，不可恢复！请选择验证方式：\n"
+		if hasEmail && emailConfigured {
+			msg += "\n📧 发送 /delAccount email 将验证码发送到你的绑定邮箱"
+		}
+		if hasEmby {
+			msg += "\n🎬 发送 /delAccount emby <密码> 通过 Emby 密码验证"
+		}
+		if !hasEmail && !hasEmby {
+			msg += "\n\n由于未绑定邮箱或 Emby，发送 /delAccount confirm 即可直接删除。"
+		}
+		_ = a.telegramSendMessage(ctx, chatID, msg)
+		return
+	}
+
+	switch args[0] {
+	case "email":
+		if !hasEmail || !emailConfigured {
+			_ = a.telegramSendMessage(ctx, chatID, "你未绑定已验证的邮箱，或邮件服务未配置。")
+			return
+		}
+		if len(args) == 1 {
+			// 发送验证码
+			_, _, errCode, errMsg := a.issueEmailCode(ctx, "telegram", emailPurposeDelAccount, u.Email, u.UID)
+			if errCode != "" {
+				_ = a.telegramSendMessage(ctx, chatID, "发送验证码失败："+errMsg)
+				return
+			}
+			_ = a.telegramSendMessage(ctx, chatID, "验证码已发送到你的绑定邮箱，请查收后发送 /delAccount email <验证码>")
+			return
+		}
+		if len(args) == 2 {
+			// 验证验证码
+			code := args[1]
+			rec, found := a.store().FindActiveEmailVerification(emailPurposeDelAccount, u.Email, time.Now().Unix())
+			if !found {
+				_ = a.telegramSendMessage(ctx, chatID, "未找到有效的验证码，请重新发送 /delAccount email 获取新验证码。")
+				return
+			}
+			candidateHash := a.hashEmailCode(rec.ID, code)
+			_, result, err := a.store().ConsumeEmailVerificationAtomic(rec.ID, candidateHash, time.Now().Unix())
+			if err != nil {
+				_ = a.telegramSendMessage(ctx, chatID, "验证失败："+err.Error())
+				return
+			}
+			if result == store.EmailVerificationOK {
+				a.telegramExecuteDelAccount(ctx, chatID, u)
+				return
+			}
+			_ = a.telegramSendMessage(ctx, chatID, "验证码无效或已过期，请重新发送 /delAccount email 获取新验证码。")
+			return
+		}
+		_ = a.telegramSendMessage(ctx, chatID, "用法：/delAccount email 或 /delAccount email <验证码>")
+
+	case "emby":
+		if !hasEmby {
+			_ = a.telegramSendMessage(ctx, chatID, "你未绑定 Emby 账号。")
+			return
+		}
+		if len(args) < 2 {
+			_ = a.telegramSendMessage(ctx, chatID, "请发送 /delAccount emby <密码> 以验证 Emby 账号身份。")
+			return
+		}
+		password := strings.Join(args[1:], " ")
+		if _, authOK, err := a.embyAuthenticateByName(ctx, u.EmbyUsername, password); err != nil {
+			_ = a.telegramSendMessage(ctx, chatID, "Emby 验证服务异常，请稍后重试。")
+			return
+		} else if !authOK {
+			_ = a.telegramSendMessage(ctx, chatID, "Emby 密码验证失败。")
+			return
+		}
+		a.telegramExecuteDelAccount(ctx, chatID, u)
+
+	case "confirm", "force":
+		if hasEmail || hasEmby {
+			_ = a.telegramSendMessage(ctx, chatID, "你绑定了邮箱或 Emby，请使用对应的验证方式删除。")
+			return
+		}
+		a.telegramExecuteDelAccount(ctx, chatID, u)
+
+	default:
+		_ = a.telegramSendMessage(ctx, chatID, "未知参数。请发送 /delAccount 查看可用的验证方式。")
+	}
+}
+
+// telegramExecuteDelAccount 执行账号删除操作（从本地删除 + 远端 Emby 解绑）。
+func (a *App) telegramExecuteDelAccount(ctx context.Context, chatID int64, u store.User) {
+	if a.userIsProtected(u) {
+		_ = a.telegramSendMessage(ctx, chatID, "受保护账号不允许通过 Telegram 删除。")
+		return
+	}
+	// 先删除远端 Emby（如果已绑定且 Emby 已配置）
+	if u.EmbyID != "" && a.embyConfigured() {
+		_ = a.embyDelete(ctx, "/Users/"+urlPathEscape(u.EmbyID))
+	}
+	if err := a.store().DeleteUser(u.UID); err != nil {
+		_ = a.telegramSendMessage(ctx, chatID, "删除账号失败："+err.Error())
+		return
+	}
+	a.auditEntryIP("telegram", u.UID, u.Username, "self_delete_via_telegram", "user", u.UID, map[string]any{"source": "telegram"})
+	_ = a.telegramSendMessage(ctx, chatID, "你的账号已永久删除。感谢你的使用，再见。")
+}
+
 func (a *App) telegramHandleStats(ctx context.Context, chatID, telegramID int64) {
 	if !a.telegramAdminID(telegramID) {
 		_ = a.telegramSendMessage(ctx, chatID, "没有管理员权限。")

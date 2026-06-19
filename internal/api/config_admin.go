@@ -980,9 +980,12 @@ func configSectionDefs() []configSectionDef {
 			{Key: "auto_update_interval_hours", Label: "更新间隔", Type: "int", Description: "小时"},
 			{Key: "auto_update_time", Label: "更新时间", Type: "string", Description: "每日 HH:MM"},
 		}},
-		{Key: "Notification", Title: "通知", Description: "用户通知策略", Category: "policy", Fields: []configFieldDef{
+		{Key: "Notification", Title: "通知", Description: "用户通知策略与登录通知模板", Category: "policy", Fields: []configFieldDef{
 			{Key: "enabled", Label: "启用通知", Type: "bool", Description: "允许系统通知"},
 			{Key: "expiry_remind_days", Label: "到期提醒天数", Type: "int", Description: "提前多少天提醒"},
+			{Key: "login_notify_telegram_template", Label: "登录通知 TG 模板", Type: "textarea", Description: "Telegram 通知模板。占位符：{username}、{time}、{ip}、{device}；留空使用内置默认；支持换行"},
+			{Key: "login_notify_email_subject_template", Label: "登录通知邮件标题", Type: "string", Description: "邮件通知标题。占位符：{server_name}、{username}、{time}、{ip}、{device}"},
+			{Key: "login_notify_email_body_template", Label: "登录通知邮件正文", Type: "textarea", Description: "邮件通知正文。占位符：{username}、{time}、{ip}、{device}；留空使用内置默认；支持换行"},
 		}},
 		{Key: "BangumiSync", Title: "Bangumi 同步", Description: "Bangumi webhook 和收藏策略", Category: "integration", Fields: []configFieldDef{
 			{Key: "enabled", Label: "启用同步", Type: "bool", Description: "启用 Bangumi 同步"},
@@ -1088,7 +1091,7 @@ func configValues(cfg config.Config) map[string]map[string]any {
 		"Security":     {"forgot_password_enabled": cfg.ForgotPasswordEnabled, "forgot_password_emby_enabled": cfg.ForgotPasswordEmbyEnabled, "forgot_password_email_enabled": cfg.ForgotPasswordEmailEnabled, "bot_internal_secret": cfg.BotInternalSecret},
 		"Scheduler":    {"enabled": cfg.SchedulerEnabled, "tick_interval_seconds": cfg.SchedulerTickIntervalSeconds, "expired_check_time": cfg.SchedulerExpiredCheckTime, "expiring_check_time": cfg.SchedulerExpiringCheckTime, "daily_stats_time": cfg.SchedulerDailyStatsTime, "session_cleanup_interval": cfg.SchedulerSessionCleanupInterval, "cleanup_no_emby_time": cfg.SchedulerCleanupNoEmbyTime, "cleanup_pending_emby_time": cfg.SchedulerCleanupPendingEmbyTime, "cleanup_unused_uploads_time": cfg.SchedulerCleanupUnusedUploadsTime, "cleanup_audit_logs_time": cfg.SchedulerCleanupAuditLogsTime},
 		"SystemUpdate": {"auto_update_enabled": cfg.SystemUpdateEnabled, "repo_url": cfg.SystemUpdateRepoURL, "branch": cfg.SystemUpdateBranch, "restart_services": cfg.SystemUpdateRestartServices, "auto_update_trigger_type": cfg.SystemUpdateTriggerType, "auto_update_interval_hours": cfg.SystemUpdateIntervalHours, "auto_update_time": cfg.SystemUpdateTime},
-		"Notification": {"enabled": cfg.NotificationEnabled, "expiry_remind_days": cfg.NotificationExpiryRemindDays},
+		"Notification": {"enabled": cfg.NotificationEnabled, "expiry_remind_days": cfg.NotificationExpiryRemindDays, "login_notify_telegram_template": cfg.LoginNotifyTelegramTemplate, "login_notify_email_subject_template": cfg.LoginNotifyEmailSubjectTemplate, "login_notify_email_body_template": cfg.LoginNotifyEmailBodyTemplate},
 		"BangumiSync":  {"enabled": cfg.BangumiEnabled, "webhook_secret": cfg.BangumiWebhookSecret},
 		"Ticket":       {"enabled": cfg.TicketSystemEnabled, "types": cfg.TicketTypes},
 		"AuditLog": {

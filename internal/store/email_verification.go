@@ -209,6 +209,26 @@ func (s *Store) ClearUnverifiedEmails() (total int, cleared int, err error) {
 	return
 }
 
+// CleanupUnverifiedEmailsByAge 清除所有未验证邮箱中，用户账号创建时间早于 cutoff 的记录。
+// 避免 ClearUnverifiedEmails 那种"注册不到 5 分钟就清掉邮箱"的激进行为，
+// 给用户留足验证时间（默认 cutoff=24h）。
+func (s *Store) CleanupUnverifiedEmailsByAge(cutoffUnix int64) (total int, cleared int, err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err = s.mutateAndSaveLocked(func() error {
+		for uid, u := range s.state.Users {
+			if u.Email != "" && !u.EmailVerified && u.CreatedAt > 0 && u.CreatedAt < cutoffUnix {
+				total++
+				u.Email = ""
+				s.state.Users[uid] = u
+				cleared++
+			}
+		}
+		return nil
+	})
+	return
+}
+
 // EmailVerifiedOwner 返回已把 email 标记为"已验证"的其它账号（excludeUID 之外），
 // 用于绑定 / 管理员强制绑定时的占用冲突判定。
 func (s *Store) EmailVerifiedOwner(email string, excludeUID int64) (User, bool) {

@@ -166,6 +166,16 @@
     transition: background-color 320ms ease, color 240ms ease;
   }
 
+  :lang(zh-Hans), :lang(zh-Hant) {
+    word-break: keep-all;
+    line-height: 1.6;
+  }
+
+  :lang(en-US) {
+    word-break: break-word;
+    line-height: 1.5;
+  }
+
   .dark body { color-scheme: dark; }
 }
 

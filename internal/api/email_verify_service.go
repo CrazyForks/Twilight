@@ -26,11 +26,12 @@ const (
 	emailPurposeResetPassword = "reset_password"
 	emailPurposeChangePass    = "change_password"
 	emailPurposeChangeEmby    = "change_emby_password"
+	emailPurposeDelAccount    = "del_account"
 )
 
 func validEmailPurpose(p string) bool {
 	switch p {
-	case emailPurposeBind, emailPurposeResetPassword, emailPurposeChangePass, emailPurposeChangeEmby:
+	case emailPurposeBind, emailPurposeResetPassword, emailPurposeChangePass, emailPurposeChangeEmby, emailPurposeDelAccount:
 		return true
 	}
 	return false
