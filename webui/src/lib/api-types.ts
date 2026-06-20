@@ -787,6 +787,42 @@ export interface DeveloperJSPreset {
   updated_at: number;
 }
 
+export interface DeveloperJSDocEntry {
+  name: string;
+  category: string;
+  type?: string;
+  description: string;
+  example?: string;
+  mutates?: boolean;
+  scope?: string;
+  fields?: string[];
+}
+
+export interface DeveloperJSDocs {
+  engine: {
+    name: string;
+    module: string;
+    version: string;
+    description: string;
+    language: string;
+    timeout_ms: number;
+    sandbox: string[];
+  };
+  bindings: DeveloperJSDocEntry[];
+  functions: DeveloperJSDocEntry[];
+  namespaces: DeveloperJSDocEntry[];
+  native_objects: DeveloperJSDocEntry[];
+  config_keys: string[];
+  env_keys: string[];
+  examples: Array<{
+    id: string;
+    title: string;
+    description: string;
+    code: string;
+  }>;
+  blocked_tokens: string[];
+}
+
 
 export interface DatabaseBackup {
   name: string;

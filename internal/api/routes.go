@@ -115,6 +115,7 @@ func (a *App) registerRoutes() {
 	a.add(http.MethodPost, "/api/v1/system/admin/bot/test", AuthAdmin, a.handleBotTest)
 	a.add(http.MethodPost, "/api/v1/admin/developer-mode/activate", AuthAdmin, a.handleDeveloperModeActivate)
 	a.add(http.MethodPost, "/api/v1/admin/developer/js-sandbox", AuthAdmin, a.handleDeveloperJSSandbox)
+	a.add(http.MethodGet, "/api/v1/admin/developer/js-docs", AuthAdmin, a.handleDeveloperJSDocs)
 	a.add(http.MethodGet, "/api/v1/admin/developer/js-presets", AuthAdmin, a.handleDeveloperJSPresets)
 	a.add(http.MethodPost, "/api/v1/admin/developer/js-presets", AuthAdmin, a.handleCreateDeveloperJSPreset)
 	a.add(http.MethodPut, "/api/v1/admin/developer/js-presets/:preset_id", AuthAdmin, a.handleUpdateDeveloperJSPreset)

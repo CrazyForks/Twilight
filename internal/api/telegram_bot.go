@@ -129,6 +129,9 @@ func (a *App) telegramGetUpdates(ctx context.Context, offset int64) ([]map[strin
 func (a *App) handleTelegramUpdate(ctx context.Context, update map[string]any) {
 	a.observeTelegramRoster(update)
 	if callback, _ := update["callback_query"].(map[string]any); callback != nil {
+		if a.telegramHandleDeveloperJSCallback(ctx, callback) {
+			return
+		}
 		a.telegramHandleCallback(ctx, callback)
 		return
 	}
@@ -149,6 +152,9 @@ func (a *App) handleTelegramUpdate(ctx context.Context, update map[string]any) {
 	}
 	username := strings.TrimPrefix(asString(from["username"]), "@")
 	privateChat := chatID == fromID || strings.EqualFold(asString(chat["type"]), "private")
+	if a.telegramConsumeDeveloperJSWaiter(ctx, chatID, fromID, text) {
+		return
+	}
 	fields := strings.Fields(text)
 	command := telegramCommand(fields[0])
 

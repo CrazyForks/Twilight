@@ -33,6 +33,7 @@ import type {
   DatabaseOperationResult,
   DatabaseRestoreResult,
   DatabaseStatus,
+  DeveloperJSDocs,
   DeveloperJSPreset,
   EmbyDevice,
   EmbyDeviceAuditData,
@@ -1787,6 +1788,10 @@ class ApiClient {
       method: "POST",
       body: JSON.stringify({ code }),
     });
+  }
+
+  async getDeveloperJSDocs() {
+    return this.request<DeveloperJSDocs>("/admin/developer/js-docs");
   }
 
   async listDeveloperJSPresets() {

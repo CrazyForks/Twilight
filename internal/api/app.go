@@ -71,6 +71,9 @@ type App struct {
 	telegramPolling       bool
 	telegramPanelMu       sync.Mutex
 	telegramPanels        map[string]telegramPanelContext
+	developerJSMu         sync.Mutex
+	developerJSCallbacks  map[string]developerJSCallbackContext
+	developerJSWaiters    map[string]developerJSMessageWaiter
 	embyAdminMu           sync.Mutex
 	embyAdminCache        map[string]embyAdminCacheEntry
 	embyDeviceAuditMu     sync.Mutex
@@ -219,9 +222,11 @@ func New(cfg config.Config, st *store.Store) (*App, error) {
 		return nil, err
 	}
 	app := &App{
-		telegramPanels: map[string]telegramPanelContext{},
-		embyAdminCache: map[string]embyAdminCacheEntry{},
-		bindStatus:     newBindStatusHub(),
+		telegramPanels:       map[string]telegramPanelContext{},
+		developerJSCallbacks: map[string]developerJSCallbackContext{},
+		developerJSWaiters:   map[string]developerJSMessageWaiter{},
+		embyAdminCache:       map[string]embyAdminCacheEntry{},
+		bindStatus:           newBindStatusHub(),
 	}
 	app.runtime.Store(&runtimeState{
 		cfg:      cfg,

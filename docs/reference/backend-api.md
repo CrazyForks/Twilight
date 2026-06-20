@@ -1736,7 +1736,8 @@ curl -N "http://localhost:5000/api/v1/system/admin/runtime/logs/stream?limit=100
 
 `POST /admin/developer/js-sandbox`
 
-- 说明：在受控 Goja 沙箱中预检/执行 Telegram JS 自定义指令片段。沙箱仅暴露 `ctx`、`args`、`user`、`constants`、`reply(text)`、`log(text)`、`auth(role)`、`config(key)`、`env(key)`；配置与环境变量读取为只读白名单，敏感值不会返回，不提供网络、文件或进程能力。
+- 说明：在受控 Goja（`github.com/dop251/goja`）沙箱中预检/执行 Telegram JS 自定义指令片段。脚本同步执行，单次运行 200ms 超时。沙箱仅暴露文档列出的 `ctx`、`args`、`user`、`constants`、`users`、`text`、`arrays`、`time`、`interactions`、`reply(text)`、`log(text)`、`auth(role)`、`config(key)`、`env(key)`；配置与环境变量读取为只读白名单，敏感值不会返回，不提供网络、文件、进程、模块加载器或浏览器全局对象。
+- 预览：`ctx.preview=true`；状态变更类辅助函数仅 dry-run，例如 `users.setLoginNotify(...)` 会返回 `dry_run=true`，不会写入用户数据。
 - 认证：管理员（`AuthAdmin`）
 - 审计：每次预检写入 `developer_js_sandbox_preview`；Bot 命中 `js:` 自定义命令时写入 `telegram_js_command_execute`。
 
@@ -1745,6 +1746,16 @@ curl -N "http://localhost:5000/api/v1/system/admin/runtime/logs/stream?limit=100
 ```json
 { "code": "reply('hello ' + (user.username || 'user'));" }
 ```
+
+`GET /admin/developer/js-docs`
+
+- 说明：返回开发者模式编辑器使用的结构化接口文档，包含 JS 引擎、内置对象、受控函数、命名空间、配置键、环境变量、示例脚本和静态阻止 token，前端以类似 Swagger 的方式展示。
+- 认证：管理员（`AuthAdmin`）
+- 响应：`{ engine, bindings, functions, namespaces, native_objects, config_keys, env_keys, examples, blocked_tokens }`
+- 用户数据接口：仅允许操作当前 Telegram 绑定的 Twilight 用户。当前提供 `users.current()` / `users.describe()` 脱敏读取、`users.hasRole(role)` / `users.requireActive()` 判断，以及 `users.setLoginNotify({ telegram?, email? })` 修改当前用户登录通知偏好；不提供任意用户搜索、邮箱明文、Telegram ID、Emby ID、Token、密码或管理员批量操作。
+- 指令上下文：示例 `command-context` 展示用户输入指令时可读取的全部非敏感字段，包括 `ctx.private_chat`、`ctx.preview`、`ctx.command_time`、`args`、当前绑定用户的 `uid`、`username`、`role`、`active`、`has_emby`、`email_verified`、`telegram_bound`、登录通知开关；不返回 Telegram ID、chat ID、message ID、群组 ID、邮箱、Emby ID、Token 或密码。
+- Telegram 交互：`interactions.inline(text, actions)` 支持最多 8 个静态按钮，callback 仅限创建消息的同一 Telegram 用户、同一 chat、同一 message，并在 2 分钟后过期；`interactions.waitText(options)` 只消费同一用户在 1-60 秒内发送的下一条非命令文本，支持 `prompt`、`reply_prefix`、`timeout_reply`、`max_chars`、`numbered`。
+- 审计：文档接口为只读；通过 Bot 实际执行 `users.setLoginNotify` 成功写入时额外记录 `telegram_js_user_notify_update`；callback 与等待文本消费分别记录 `telegram_js_interaction_callback` / `telegram_js_interaction_wait_text`，拒绝的 callback 记录 `telegram_js_interaction_callback_denied`。
 
 `GET /admin/developer/js-presets`
 

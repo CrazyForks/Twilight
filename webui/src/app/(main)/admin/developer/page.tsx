@@ -23,7 +23,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
-import type { DeveloperJSPreset } from "@/lib/api-types";
+import type { DeveloperJSDocEntry, DeveloperJSDocs, DeveloperJSPreset } from "@/lib/api-types";
 import { useI18n, type MessageKey } from "@/lib/i18n";
 
 type DeveloperTemplate = {
@@ -39,8 +39,13 @@ type DeveloperTemplate = {
 
 type DocRow = {
   name: string;
-  descriptionKey: MessageKey;
+  descriptionKey?: MessageKey;
+  description?: string;
   example?: string;
+  type?: string;
+  mutates?: boolean;
+  scope?: string;
+  fields?: string[];
 };
 
 const helloTemplate = `// Greeting command
@@ -171,6 +176,58 @@ const snippetRows = [
     labelKey: "adminDeveloper.snippetArgs",
     code: `const firstArg = args[0] || "";`,
   },
+  {
+    labelKey: "adminDeveloper.snippetCommandContext",
+    code: `const me = users.current();
+const lines = [
+  "private_chat=" + ctx.private_chat,
+  "preview=" + ctx.preview,
+  "command_time=" + time.formatUnix(ctx.command_time),
+  "args=" + JSON.stringify(args),
+  "uid=" + me.uid,
+  "username=" + (me.username || "unbound"),
+  "role=" + me.role,
+  "active=" + me.active,
+  "has_emby=" + me.has_emby,
+  "email_verified=" + me.email_verified,
+  "telegram_bound=" + me.telegram_bound,
+  "notify_tg=" + me.notify_on_login_telegram,
+  "notify_email=" + me.notify_on_login_email
+];
+reply(text.truncate(text.joinLines(lines), 1200));`,
+  },
+  {
+    labelKey: "adminDeveloper.snippetCurrentUser",
+    code: `const me = users.current();`,
+  },
+  {
+    labelKey: "adminDeveloper.snippetNotify",
+    code: `const result = users.setLoginNotify({ telegram: true });`,
+  },
+  {
+    labelKey: "adminDeveloper.snippetText",
+    code: `reply(text.truncate(args.join(" "), 120));`,
+  },
+  {
+    labelKey: "adminDeveloper.snippetArray",
+    code: `const uniqueArgs = arrays.unique(arrays.compact(args));`,
+  },
+  {
+    labelKey: "adminDeveloper.snippetInline",
+    code: `interactions.inline("Choose an action", [
+  { text: "Status", answer: "OK", edit: "Status acknowledged" },
+  { text: "Help", reply: "Use /help for commands" }
+]);`,
+  },
+  {
+    labelKey: "adminDeveloper.snippetWaitText",
+    code: `interactions.waitText({
+  seconds: 30,
+  prompt: "Send one line in 30 seconds",
+  reply_prefix: "Received:",
+  max_chars: 120
+});`,
+  },
 ] as const;
 
 const bindingRows: DocRow[] = [
@@ -244,19 +301,35 @@ function presetToTemplate(preset: DeveloperJSPreset): DeveloperTemplate {
   };
 }
 
-function DocRows({ rows }: { rows: DocRow[] }) {
+function docRowsFromKeys(keys: string[], category: string): DocRow[] {
+  return keys.map((key) => ({ name: key, category, description: "" }) as DocRow);
+}
+
+function DocRows({ rows }: { rows: Array<DocRow | DeveloperJSDocEntry> }) {
   const { t } = useI18n();
   return (
     <div className="space-y-2">
-      {rows.map((row) => (
-        <div key={row.name} className="rounded-md border bg-muted/20 p-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <code className="font-mono text-xs">{row.name}</code>
-            {row.example ? <Badge variant="outline" className="text-[10px]">{row.example}</Badge> : null}
+      {rows.map((row) => {
+        const descriptionKey = "descriptionKey" in row ? row.descriptionKey : undefined;
+        const description = descriptionKey ? t(descriptionKey) : row.description;
+        return (
+          <div key={row.name} className="rounded-md border bg-muted/20 p-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <code className="font-mono text-xs">{row.name}</code>
+              {row.type ? <Badge variant="secondary" className="text-[10px]">{row.type}</Badge> : null}
+              {row.mutates ? <Badge variant="warning" className="text-[10px]">{t("adminDeveloper.mutatesBadge")}</Badge> : null}
+              {row.scope ? <Badge variant="outline" className="text-[10px]">{row.scope}</Badge> : null}
+              {row.example ? <Badge variant="outline" className="text-[10px]">{row.example}</Badge> : null}
+            </div>
+            {description ? <p className="mt-1 text-xs text-muted-foreground">{description}</p> : null}
+            {row.fields && row.fields.length > 0 ? (
+              <p className="mt-1 break-words text-[11px] text-muted-foreground">
+                {t("adminDeveloper.fieldsLabel")}: {row.fields.join(", ")}
+              </p>
+            ) : null}
           </div>
-          <p className="mt-1 text-xs text-muted-foreground">{t(row.descriptionKey)}</p>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -272,6 +345,8 @@ export default function AdminDeveloperPage() {
   const [templateName, setTemplateName] = useState("");
   const [templateDescription, setTemplateDescription] = useState("");
   const [serverPresets, setServerPresets] = useState<DeveloperJSPreset[]>([]);
+  const [docs, setDocs] = useState<DeveloperJSDocs | null>(null);
+  const [docsLoading, setDocsLoading] = useState(false);
   const [activeTemplateId, setActiveTemplateId] = useState("hello");
   const [result, setResult] = useState<Awaited<ReturnType<typeof api.previewDeveloperJSCommand>>["data"] | null>(null);
 
@@ -286,14 +361,31 @@ export default function AdminDeveloperPage() {
     }
   }, [t, toast]);
 
+  const loadDocs = useCallback(async () => {
+    setDocsLoading(true);
+    try {
+      const res = await api.getDeveloperJSDocs();
+      if (res.success && res.data) {
+        setDocs(res.data);
+      }
+    } catch (err) {
+      toast({ title: t("adminDeveloper.docsLoadFailed"), description: err instanceof Error ? err.message : undefined, variant: "destructive" });
+    } finally {
+      setDocsLoading(false);
+    }
+  }, [t, toast]);
+
   useEffect(() => {
     void loadPresets();
-  }, [loadPresets]);
+    void loadDocs();
+  }, [loadDocs, loadPresets]);
 
   const customTemplates = useMemo(() => serverPresets.map(presetToTemplate), [serverPresets]);
   const allTemplates = useMemo(() => [...builtInTemplates, ...customTemplates], [customTemplates]);
   const activeTemplate = allTemplates.find((item) => item.id === activeTemplateId);
   const commandPreview = useMemo(() => commandReply(command, code), [code, command]);
+  const configDocRows = useMemo(() => docRowsFromKeys(docs?.config_keys || configRows.map((row) => row.name), "config"), [docs]);
+  const envDocRows = useMemo(() => docRowsFromKeys(docs?.env_keys || envRows.map((row) => row.name), "env"), [docs]);
 
   const applyTemplate = useCallback((template: DeveloperTemplate) => {
     setActiveTemplateId(template.id);
@@ -548,23 +640,74 @@ export default function AdminDeveloperPage() {
               <CardDescription>{t("adminDeveloper.docsDescription")}</CardDescription>
             </CardHeader>
             <CardContent>
-              <Tabs defaultValue="bindings" className="space-y-3">
-                <TabsList className="i18n-stable-tabs grid h-auto w-full grid-cols-3">
+              <Tabs defaultValue="engine" className="space-y-3">
+                <TabsList className="i18n-stable-tabs grid h-auto w-full grid-cols-4">
+                  <TabsTrigger value="engine">{t("adminDeveloper.engineTitle")}</TabsTrigger>
                   <TabsTrigger value="bindings">{t("adminDeveloper.bindingsTitle")}</TabsTrigger>
                   <TabsTrigger value="functions">{t("adminDeveloper.functionsTitle")}</TabsTrigger>
                   <TabsTrigger value="config">{t("adminDeveloper.configEnvTitle")}</TabsTrigger>
                 </TabsList>
-                <TabsContent value="bindings" className="space-y-3">
-                  <DocRows rows={bindingRows} />
-                  <DocRows rows={constantRows} />
+                <TabsContent value="engine" className="space-y-3">
+                  {docsLoading && !docs ? (
+                    <p className="text-xs text-muted-foreground">{t("adminDeveloper.loadingDocs")}</p>
+                  ) : docs ? (
+                    <div className="space-y-3">
+                      <div className="rounded-md border bg-muted/20 p-3">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge variant="secondary">{docs.engine.name}</Badge>
+                          <Badge variant="outline">{docs.engine.timeout_ms}ms</Badge>
+                        </div>
+                        <p className="mt-2 text-xs text-muted-foreground">{docs.engine.description}</p>
+                        <code className="mt-2 block break-words text-[11px] text-muted-foreground">{docs.engine.module}@{docs.engine.version}</code>
+                        <p className="mt-2 text-xs text-muted-foreground">{docs.engine.language}</p>
+                      </div>
+                      <DocRows rows={docs.native_objects} />
+                      <div className="rounded-md border bg-muted/20 p-3">
+                        <p className="mb-2 text-xs font-medium">{t("adminDeveloper.blockedTokensTitle")}</p>
+                        <div className="flex flex-wrap gap-1">
+                          {docs.blocked_tokens.map((token) => <Badge key={token} variant="outline" className="text-[10px]">{token}</Badge>)}
+                        </div>
+                      </div>
+                      <div className="rounded-md border bg-muted/20 p-3">
+                        <p className="mb-2 text-xs font-medium">{t("adminDeveloper.examplesApiTitle")}</p>
+                        <div className="space-y-2">
+                          {docs.examples.map((example) => (
+                            <button
+                              key={example.id}
+                              type="button"
+                              className="w-full rounded-md border bg-background p-2 text-left hover:bg-muted/40"
+                              onClick={() => insertSnippet(`\n${example.code}\n`)}
+                            >
+                              <p className="text-xs font-medium">{example.title}</p>
+                              <p className="mt-1 text-[11px] text-muted-foreground">{example.description}</p>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">{t("adminDeveloper.docsDescription")}</p>
+                  )}
                 </TabsContent>
-                <TabsContent value="functions">
-                  <DocRows rows={functionRows} />
+                <TabsContent value="bindings" className="space-y-3">
+                  <DocRows rows={docs?.bindings || bindingRows} />
+                  {!docs && <DocRows rows={constantRows} />}
+                </TabsContent>
+                <TabsContent value="functions" className="space-y-3">
+                  <DocRows rows={docs?.functions || functionRows} />
+                  {docs?.namespaces ? (
+                    <>
+                      <p className="text-xs font-medium text-muted-foreground">{t("adminDeveloper.namespacesTitle")}</p>
+                      <DocRows rows={docs.namespaces} />
+                    </>
+                  ) : null}
                 </TabsContent>
                 <TabsContent value="config" className="space-y-3">
                   <p className="text-xs text-muted-foreground">{t("adminDeveloper.configEnvNotice")}</p>
-                  <DocRows rows={configRows} />
-                  <DocRows rows={envRows} />
+                  <p className="text-xs font-medium text-muted-foreground">{t("adminDeveloper.configKeysTitle")}</p>
+                  <DocRows rows={docs ? configDocRows : configRows} />
+                  <p className="text-xs font-medium text-muted-foreground">{t("adminDeveloper.envKeysTitle")}</p>
+                  <DocRows rows={docs ? envDocRows : envRows} />
                 </TabsContent>
               </Tabs>
             </CardContent>

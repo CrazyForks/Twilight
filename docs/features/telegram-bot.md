@@ -158,7 +158,7 @@ Web 后台的入口是「Telegram 管理 → Bot 指令管理」（`/admin/teleg
 
 `bot_custom_commands` 允许配置一组"命令 → 固定回复"的映射，命中后直接返回对应文本（`telegramCustomCommandReply`）。每条形如 `命令 = 回复`，命令会被规范化：转小写、补 `/` 前缀、仅允许字母数字与下划线、长度不超过 32 字符（`normalizeTelegramCommand`），重复命令以首次出现为准。自定义命令在内置命令之后匹配，不会覆盖内置命令。
 
-开发者模式启用后，可把某条回复写成 `js:` 前缀脚本，让 Bot 在受控 Goja 沙箱中执行：
+开发者模式启用后，可把某条回复写成 `js:` 前缀脚本，让 Bot 在受控 Goja（`github.com/dop251/goja`）沙箱中执行。脚本同步执行，单次运行 200ms 超时；开发者模式页面会通过 `GET /admin/developer/js-docs` 拉取完整接口文档，并以类似 Swagger 的方式展示内置对象、命名空间、函数、配置键、环境变量和示例。
 
 ```toml
 [Telegram]
@@ -171,10 +171,15 @@ bot_custom_commands = [
 
 | 绑定 | 说明 |
 | ---- | ---- |
-| `ctx` | 当前 Telegram 上下文摘要：`private_chat`、`command_time`。不向脚本暴露 Telegram ID 或群组 ID。 |
+| `ctx` | 当前 Telegram 上下文摘要：`private_chat`、`command_time`、`preview`。不向脚本暴露 Telegram ID 或群组 ID。 |
 | `args` | 命令参数数组。 |
-| `user` | 绑定的 Twilight 用户摘要：`uid`、`username`、`role`、`active`、`has_emby`，不含邮箱、Token、Emby ID、密码。 |
+| `user` | 绑定的 Twilight 用户摘要：`uid`、`username`、`role`、`active`、`has_emby`、`email_verified`、`telegram_bound`、登录通知开关，不含邮箱、Telegram ID、Token、Emby ID、密码。 |
 | `constants` | 受控常量：`roles.admin/user/whitelist`、`limits.max_replies/max_logs`。 |
+| `users` | 当前 Telegram 绑定用户的受控接口：`current()` / `describe()` 脱敏读取，`hasRole(role)` / `requireActive()` 判断，`setLoginNotify({ telegram?, email? })` 仅修改当前用户登录通知偏好。 |
+| `text` | 文本辅助函数：`truncate(value, max)`、`joinLines(values)`、`escape(value)`、`numberLines(values)`。 |
+| `arrays` | 数组辅助函数：`first(values)`、`compact(values)`、`unique(values)`、`take(values, count)`。 |
+| `time` | 时间辅助函数：`now()`、`formatUnix(ts)`。 |
+| `interactions` | Telegram 交互辅助函数：`inline(text, actions)` 发送静态 inline keyboard，`waitText(options)` 等待同一用户在限定时间内发送下一条普通文本。 |
 | `reply(text)` | 追加一段回复文本，最多 4 段，最终用换行合并发送。 |
 | `log(text)` | 写入本次执行的审计详情，最多 8 条。 |
 | `auth(role)` | 角色鉴权辅助函数。`admin` 仅管理员；`whitelist` 包含管理员和白名单；`user` 包含所有有效角色。 |
@@ -186,8 +191,73 @@ bot_custom_commands = [
 - 不提供 `fetch`、`require`、文件系统或进程能力；配置与环境变量只能通过白名单函数读取非敏感值。
 - Token、Secret、密码、API Key、数据库 URL、服务器线路等敏感信息不会注入沙箱，也不会通过 `config` / `env` 返回。
 - 后端会静态拒绝危险 token，并用 200ms 超时中断长循环。
+- `users.*` 不提供任意用户搜索或管理员批量操作；状态变更仅限当前 Telegram 绑定用户。开发者模式预览中 `ctx.preview=true`，`users.setLoginNotify` 只返回 `dry_run=true`，不会写入用户数据。
 - 每次执行都会写入 `telegram_js_command_execute` 审计日志；开发者页面的沙箱预检写入 `developer_js_sandbox_preview`。
+- Bot 实际执行 `users.setLoginNotify` 成功写入时，会额外记录 `telegram_js_user_notify_update`。
+- `interactions.inline` 的 callback 只接受创建该消息的同一 Telegram 用户、同一 chat、同一 message，默认 2 分钟过期；callback 动作只能使用预定义 `answer` / `edit` / `reply` 静态文本，不会再次执行 JS。
+- `interactions.waitText` 只消费同一 chat、同一 Telegram 用户的下一条非 `/` 命令文本；等待窗口限制为 1-60 秒，回复内容会截断、脱敏，并在消费后写入 `telegram_js_interaction_wait_text` 审计日志。
 - 纯文本自定义命令保持原行为；只有 `js:` 前缀会启用脚本执行，避免破坏历史配置。
+
+常用示例：
+
+```js
+// 查看用户输入指令时可读取的全部非敏感上下文。
+// 不提供 Telegram ID、chat ID、message ID、群组 ID、邮箱、Emby ID、Token 或密码。
+const me = users.current();
+const lines = [
+  "private_chat=" + ctx.private_chat,
+  "preview=" + ctx.preview,
+  "command_time=" + time.formatUnix(ctx.command_time),
+  "args=" + JSON.stringify(args),
+  "uid=" + me.uid,
+  "username=" + (me.username || "unbound"),
+  "role=" + me.role,
+  "active=" + me.active,
+  "has_emby=" + me.has_emby,
+  "email_verified=" + me.email_verified,
+  "telegram_bound=" + me.telegram_bound,
+  "notify_tg=" + me.notify_on_login_telegram,
+  "notify_email=" + me.notify_on_login_email
+];
+reply(text.truncate(text.joinLines(lines), 1200));
+```
+
+```js
+// 查看当前绑定用户摘要（不会返回邮箱、Telegram ID、Emby ID、Token 或密码）
+const me = users.current();
+reply("User: " + (me.username || "unbound") + "\nActive: " + me.active);
+```
+
+```js
+// 开启当前绑定用户的 Telegram 登录通知；预览模式只 dry-run
+const result = users.setLoginNotify({ telegram: true });
+reply(result.dry_run ? "Preview only" : "Telegram login notifications enabled");
+```
+
+```js
+// 清理参数并输出
+const values = arrays.unique(arrays.compact(args));
+reply(text.truncate(text.joinLines(values), 120));
+```
+
+```js
+// 发送静态 inline 操作。点击后只执行预设 answer/edit/reply，不会再次运行 JS。
+interactions.inline("Choose an action", [
+  { text: "Status", answer: "OK", edit: "Status acknowledged" },
+  { text: "Help", reply: "Use /help for commands" }
+]);
+```
+
+```js
+// 等待同一用户 30 秒内发送下一条普通文本，并以编号形式回复前 120 个字符
+interactions.waitText({
+  seconds: 30,
+  prompt: "Send one line in 30 seconds",
+  reply_prefix: "Received:",
+  max_chars: 120,
+  numbered: true
+});
+```
 
 ### 文案占位符
 

@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"runtime/debug"
 	"strings"
 
 	"github.com/prejudice-studio/twilight/internal/security"
@@ -45,12 +46,12 @@ func (a *App) handleDeveloperJSSandbox(w http.ResponseWriter, r *http.Request, _
 	code := stringValue(payload, "code")
 	result := validateDeveloperJSCommand(code)
 	if ok, _ := result["ok"].(bool); ok {
-		output, logs, err := a.telegramRunJSCustomCommand(code, telegramCommandCtx{
+		output, logs, err := a.telegramRunJSCustomCommandWithOptions(code, telegramCommandCtx{
 			ChatID:   0,
 			FromID:   current(r).User.TelegramID,
 			Username: current(r).User.Username,
 			Args:     []string{"preview"},
-		}, true)
+		}, true, developerJSRunOptions{Preview: true})
 		if err != nil {
 			result["ok"] = false
 			result["errors"] = appendStringAny(result["errors"], err.Error())
@@ -61,6 +62,10 @@ func (a *App) handleDeveloperJSSandbox(w http.ResponseWriter, r *http.Request, _
 	}
 	a.audit(r, "developer_js_sandbox_preview", "admin", 0, map[string]any{"ok": result["ok"], "bytes": len(code)})
 	ok(w, "sandbox preview completed", result)
+}
+
+func (a *App) handleDeveloperJSDocs(w http.ResponseWriter, r *http.Request, _ Params) {
+	ok(w, "OK", developerJSDocs())
 }
 
 func (a *App) handleDeveloperJSPresets(w http.ResponseWriter, r *http.Request, _ Params) {
@@ -171,7 +176,7 @@ func validateDeveloperJSCommand(code string) map[string]any {
 	trimmed := strings.TrimSpace(code)
 	warnings := []string{
 		"Preview only: saving to bot_custom_commands is required before production Bot runtime can use this script.",
-		"Allowed APIs are limited to ctx, args, user, constants, reply(text), log(text), auth(role), config(key), and env(key).",
+		"Allowed APIs are limited to the documented ctx, args, user, constants, users, text, arrays, time, interactions, reply(text), log(text), auth(role), config(key), and env(key) bindings.",
 		"config(key) and env(key) are read-only allowlists; sensitive values always return an empty string.",
 	}
 	if trimmed == "" {
@@ -185,6 +190,7 @@ func validateDeveloperJSCommand(code string) map[string]any {
 		"fetch(", "xmlhttprequest", "websocket", "eval(", "function(", "new function",
 		"import(", "require(", "process.", "globalthis", "window.", "document.",
 		"localstorage", "sessionstorage", "cookie", "constructor.constructor",
+		"settimeout", "setinterval",
 	}
 	errors := []string{}
 	for _, token := range blocked {
@@ -197,6 +203,160 @@ func validateDeveloperJSCommand(code string) map[string]any {
 		"errors":   errors,
 		"warnings": warnings,
 		"example":  "reply('Hello ' + (user.username || 'user'));",
-		"bindings": []string{"ctx", "args", "user", "constants", "reply(text)", "log(text)", "auth(role)", "config(key)", "env(key)"},
+		"bindings": developerJSBindingNames(),
 	}
+}
+
+type developerJSDocEntry struct {
+	Name        string   `json:"name"`
+	Category    string   `json:"category"`
+	Type        string   `json:"type,omitempty"`
+	Description string   `json:"description"`
+	Example     string   `json:"example,omitempty"`
+	Mutates     bool     `json:"mutates,omitempty"`
+	Scope       string   `json:"scope,omitempty"`
+	Fields      []string `json:"fields,omitempty"`
+}
+
+func developerJSBindingNames() []string {
+	return []string{
+		"ctx", "args", "user", "constants", "users", "text", "arrays", "time", "interactions",
+		"reply(text)", "log(text)", "auth(role)", "config(key)", "env(key)",
+	}
+}
+
+func developerJSDocs() map[string]any {
+	examples := []map[string]string{
+		{
+			"id":          "command-context",
+			"title":       "Command input context",
+			"description": "Show every non-sensitive value available when a Telegram user triggers this command.",
+			"code":        "const me = users.current();\nconst lines = [\n  'private_chat=' + ctx.private_chat,\n  'preview=' + ctx.preview,\n  'command_time=' + time.formatUnix(ctx.command_time),\n  'args=' + JSON.stringify(args),\n  'uid=' + me.uid,\n  'username=' + (me.username || 'unbound'),\n  'role=' + me.role,\n  'active=' + me.active,\n  'has_emby=' + me.has_emby,\n  'email_verified=' + me.email_verified,\n  'telegram_bound=' + me.telegram_bound,\n  'notify_tg=' + me.notify_on_login_telegram,\n  'notify_email=' + me.notify_on_login_email\n];\nreply(text.truncate(text.joinLines(lines), 1200));",
+		},
+		{
+			"id":          "current-user",
+			"title":       "Current user summary",
+			"description": "Return a sanitized summary for the Telegram-bound Twilight user.",
+			"code":        "const me = users.current();\nreply('User: ' + (me.username || 'unbound') + '\\nActive: ' + me.active);",
+		},
+		{
+			"id":          "login-notify",
+			"title":       "Toggle login notifications",
+			"description": "Enable Telegram login notifications for the current bound user. Sandbox preview returns dry_run and does not write state.",
+			"code":        "const result = users.setLoginNotify({ telegram: true });\nreply(result.dry_run ? 'Preview only' : 'Telegram login notifications enabled');",
+		},
+		{
+			"id":          "array-tools",
+			"title":       "Array and text helpers",
+			"description": "Normalize arguments before replying.",
+			"code":        "const values = arrays.unique(arrays.compact(args));\nreply(text.truncate(text.joinLines(values), 120));",
+		},
+		{
+			"id":          "inline-actions",
+			"title":       "Inline action message",
+			"description": "Send a short inline keyboard whose callbacks use predefined answer/edit/reply text.",
+			"code":        "interactions.inline('Choose an action', [\n  { text: 'Status', answer: 'OK', edit: 'Status acknowledged' },\n  { text: 'Help', reply: 'Use /help for commands' }\n]);",
+		},
+		{
+			"id":          "wait-text",
+			"title":       "Wait for next text",
+			"description": "Wait for the same Telegram user to send one plain text message within a bounded time window.",
+			"code":        "interactions.waitText({ seconds: 30, prompt: 'Send one line in 30 seconds', reply_prefix: 'Received:', max_chars: 120 });",
+		},
+	}
+	return map[string]any{
+		"engine": map[string]any{
+			"name":        "Goja",
+			"module":      "github.com/dop251/goja",
+			"version":     developerJSGojaVersion(),
+			"description": "In-process Go JavaScript engine used by Telegram js: custom commands.",
+			"language":    "ECMAScript 5.1-oriented JavaScript with Goja-supported extensions; prefer plain synchronous JavaScript.",
+			"timeout_ms":  200,
+			"sandbox": []string{
+				"No network, filesystem, process, timers, module loader, browser globals, or broad environment access is injected.",
+				"Config and environment access are explicit read-only allowlists; sensitive keys return an empty string.",
+				"Sandbox preview is dry-run for state-changing and Telegram interaction helper APIs.",
+			},
+		},
+		"bindings": []developerJSDocEntry{
+			{Name: "ctx.private_chat", Category: "context", Type: "boolean", Description: "Whether the command was received in a private chat.", Example: "if (!ctx.private_chat) reply('Please DM me');"},
+			{Name: "ctx.command_time", Category: "context", Type: "number", Description: "Unix timestamp in seconds when the command entered the sandbox."},
+			{Name: "ctx.preview", Category: "context", Type: "boolean", Description: "True when running from the admin sandbox preview endpoint."},
+			{Name: "args", Category: "context", Type: "string[]", Description: "Command arguments excluding the command name.", Example: "const action = (args[0] || 'help').toLowerCase();"},
+			{Name: "user", Category: "user", Type: "object", Description: "Sanitized snapshot of the Telegram-bound Twilight user.", Fields: []string{"uid", "username", "role", "active", "has_emby", "email_verified", "telegram_bound", "notify_on_login_telegram", "notify_on_login_email"}},
+			{Name: "constants.roles", Category: "constants", Type: "object", Description: "Role constants: admin=0, user=1, whitelist=2."},
+			{Name: "constants.limits", Category: "constants", Type: "object", Description: "Runtime collection limits for reply and log calls."},
+		},
+		"functions": []developerJSDocEntry{
+			{Name: "reply(text)", Category: "output", Type: "function", Description: "Append one reply segment. At most four segments are collected and joined with newlines.", Example: "reply('hello')"},
+			{Name: "log(text)", Category: "output", Type: "function", Description: "Append one audit/debug log line for this execution. At most eight lines are collected.", Example: "log('branch=help')"},
+			{Name: "auth(role)", Category: "auth", Type: "function", Description: "Check the current user role. Accepts admin, whitelist, user, or numeric role strings.", Example: "if (!auth('admin')) return;"},
+			{Name: "config(key)", Category: "config", Type: "function", Description: "Read one non-sensitive allowlisted config value. Denied keys return an empty string.", Example: "config('invite.enabled')"},
+			{Name: "env(key)", Category: "config", Type: "function", Description: "Read one non-sensitive allowlisted TWILIGHT_* environment value. Denied keys return an empty string.", Example: "env('TWILIGHT_HOST')"},
+		},
+		"namespaces": []developerJSDocEntry{
+			{Name: "users.current()", Category: "users", Type: "function", Description: "Return the sanitized current Telegram-bound user snapshot.", Example: "const me = users.current(); reply(me.username || 'unbound');"},
+			{Name: "users.describe()", Category: "users", Type: "function", Description: "Alias of users.current() for readable scripts.", Example: "JSON.stringify(users.describe())"},
+			{Name: "users.hasRole(role)", Category: "users", Type: "function", Description: "Role check under the users namespace; same role semantics as auth(role).", Example: "users.hasRole('whitelist')"},
+			{Name: "users.requireActive()", Category: "users", Type: "function", Description: "Return true only when the command is bound to an enabled local user.", Example: "if (!users.requireActive()) reply('Account inactive');"},
+			{Name: "users.setLoginNotify(options)", Category: "users", Type: "function", Description: "Update the current bound user's login notification preferences. Only telegram/email boolean fields are accepted.", Example: "users.setLoginNotify({ telegram: true, email: false })", Mutates: true, Scope: "current_user_only"},
+			{Name: "text.truncate(value, max)", Category: "text", Type: "function", Description: "Trim a string to max characters using the backend truncation helper.", Example: "text.truncate(args.join(' '), 80)"},
+			{Name: "text.joinLines(values)", Category: "text", Type: "function", Description: "Join an array into newline-separated text.", Example: "text.joinLines(['a', 'b'])"},
+			{Name: "text.escape(value)", Category: "text", Type: "function", Description: "Escape basic HTML-sensitive characters for plain text output.", Example: "text.escape('<tag>')"},
+			{Name: "text.numberLines(values)", Category: "text", Type: "function", Description: "Convert an array to numbered lines.", Example: "text.numberLines(['a', 'b'])"},
+			{Name: "arrays.first(values)", Category: "arrays", Type: "function", Description: "Return the first array item or undefined.", Example: "arrays.first(args)"},
+			{Name: "arrays.compact(values)", Category: "arrays", Type: "function", Description: "Remove null and empty-string values from an array.", Example: "arrays.compact(args)"},
+			{Name: "arrays.unique(values)", Category: "arrays", Type: "function", Description: "Return unique string values while preserving first-seen order.", Example: "arrays.unique(args)"},
+			{Name: "arrays.take(values, count)", Category: "arrays", Type: "function", Description: "Return the first count array items.", Example: "arrays.take(args, 3)"},
+			{Name: "time.now()", Category: "time", Type: "function", Description: "Return the current Unix timestamp in seconds.", Example: "time.now()"},
+			{Name: "time.formatUnix(ts)", Category: "time", Type: "function", Description: "Format a Unix timestamp as UTC RFC3339 text.", Example: "time.formatUnix(ctx.command_time)"},
+			{Name: "interactions.inline(text, actions)", Category: "interactions", Type: "function", Description: "Send a Telegram inline keyboard for the current command. Actions are static text objects with text plus optional answer/edit/reply fields.", Example: "interactions.inline('Choose', [{ text: 'OK', edit: 'Done' }])", Mutates: true, Scope: "current_chat_owner_only"},
+			{Name: "interactions.waitText(options)", Category: "interactions", Type: "function", Description: "Wait for the same Telegram user to send one non-command text message within 1-60 seconds, then reply with bounded text. Options: seconds, prompt, reply_prefix, timeout_reply, max_chars, numbered.", Example: "interactions.waitText({ seconds: 30, prompt: 'Send text', reply_prefix: 'Got:' })", Mutates: true, Scope: "current_chat_owner_only"},
+		},
+		"native_objects": []developerJSDocEntry{
+			{Name: "Object", Category: "native", Type: "constructor", Description: "Native JavaScript object support from Goja."},
+			{Name: "Array", Category: "native", Type: "constructor", Description: "Native JavaScript arrays. Prefer arrays.* helpers for common command output operations."},
+			{Name: "JSON", Category: "native", Type: "object", Description: "Native JSON parse/stringify support.", Example: "JSON.stringify(users.current())"},
+			{Name: "Math", Category: "native", Type: "object", Description: "Native Math helpers."},
+			{Name: "Date", Category: "native", Type: "constructor", Description: "Native Date object support. Prefer time.now/time.formatUnix for stable command output."},
+			{Name: "String / Number / Boolean", Category: "native", Type: "constructors", Description: "Native primitive wrappers and prototype methods supported by Goja."},
+		},
+		"config_keys": []string{
+			"app.name", "site.name", "global.server_name", "app.version",
+			"telegram.enabled", "global.telegram_mode", "telegram.force_bind", "global.force_bind_telegram", "telegram.require_membership", "telegram.panel_enabled", "telegram.ban_on_leave",
+			"invite.enabled", "invite.max_depth", "invite.limit", "invite.root_user_limit",
+			"email.enabled", "email.force_bind", "media_request.enabled", "signin.enabled", "ticket.enabled", "limits.user", "limits.emby_user",
+		},
+		"env_keys": []string{
+			"TWILIGHT_APP_NAME", "TWILIGHT_SERVER_NAME", "TWILIGHT_HOST", "TWILIGHT_PORT", "TWILIGHT_BASE_URL", "TWILIGHT_DATABASE_DRIVER",
+			"TWILIGHT_EMAIL_ENABLED", "TWILIGHT_TELEGRAM_REQUIRE_GROUP_MEMBERSHIP", "TWILIGHT_TELEGRAM_BAN_ON_LEAVE", "TWILIGHT_INVITE_ENABLED", "TWILIGHT_MEDIA_REQUEST_ENABLED",
+		},
+		"examples": examples,
+		"blocked_tokens": []string{
+			"fetch(", "xmlhttprequest", "websocket", "eval(", "function(", "new function",
+			"import(", "require(", "process.", "globalthis", "window.", "document.",
+			"localstorage", "sessionstorage", "cookie", "constructor.constructor",
+			"settimeout", "setinterval",
+		},
+	}
+}
+
+func developerJSGojaVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "bundled"
+	}
+	for _, dep := range info.Deps {
+		if dep.Path != "github.com/dop251/goja" {
+			continue
+		}
+		if dep.Replace != nil && dep.Replace.Version != "" {
+			return dep.Replace.Version
+		}
+		if dep.Version != "" {
+			return dep.Version
+		}
+		return "bundled"
+	}
+	return "bundled"
 }
