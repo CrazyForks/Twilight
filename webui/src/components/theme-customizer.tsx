@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { useI18n } from "@/lib/i18n";
@@ -15,7 +16,123 @@ import {
 } from "@/lib/theme-custom";
 import { Loader2, Save } from "lucide-react";
 
-// 滑条实时预览但不同步 localStorage；点击「保存」才持久化。
+const primaryPresets = ["#7c3aed", "#2563eb", "#0891b2", "#059669", "#dc2626", "#ea580c", "#db2777", "#111827"];
+const accentPresets = ["#ede9fe", "#dbeafe", "#cffafe", "#dcfce7", "#fee2e2", "#ffedd5", "#fce7f3", "#e5e7eb"];
+
+function normalizeHexColor(value: string): string {
+  const trimmed = value.trim();
+  const short = /^#([0-9a-fA-F]{3})$/.exec(trimmed);
+  if (short) {
+    const [r, g, b] = short[1].split("");
+    return `#${r}${r}${g}${g}${b}${b}`.toLowerCase();
+  }
+  if (/^#[0-9a-fA-F]{6}$/.test(trimmed)) return trimmed.toLowerCase();
+  return "#000000";
+}
+
+function hexToRgb(hex: string): { r: number; g: number; b: number } {
+  const normalized = normalizeHexColor(hex);
+  return {
+    r: Number.parseInt(normalized.slice(1, 3), 16),
+    g: Number.parseInt(normalized.slice(3, 5), 16),
+    b: Number.parseInt(normalized.slice(5, 7), 16),
+  };
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  const toHex = (value: number) => Math.min(255, Math.max(0, value)).toString(16).padStart(2, "0");
+  return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
+}
+
+function parseRgbInput(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (Number.isNaN(parsed)) return 0;
+  return Math.min(255, Math.max(0, parsed));
+}
+
+function ThemeColorControl({
+  label,
+  description,
+  value,
+  presets,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  value: string;
+  presets: string[];
+  onChange: (value: string) => void;
+}) {
+  const color = normalizeHexColor(value);
+  const rgb = hexToRgb(color);
+
+  const updateChannel = (channel: "r" | "g" | "b", nextValue: string) => {
+    const next = { ...rgb, [channel]: parseRgbInput(nextValue) };
+    onChange(rgbToHex(next.r, next.g, next.b));
+  };
+
+  return (
+    <div className="grid gap-4 rounded-xl border bg-muted/20 p-3 sm:grid-cols-[auto_minmax(0,1fr)]">
+      <div className="flex items-start gap-3">
+        <Input
+          type="color"
+          value={color}
+          onChange={(event) => onChange(normalizeHexColor(event.target.value))}
+          aria-label={label}
+          className="theme-color-input h-16 w-16 shrink-0 cursor-pointer rounded-none border border-border bg-transparent p-0"
+        />
+        <div className="min-w-0 sm:hidden">
+          <Label className="text-sm font-medium">{label}</Label>
+          <p className="text-xs text-muted-foreground">{description}</p>
+        </div>
+      </div>
+
+      <div className="min-w-0 space-y-3">
+        <div className="hidden sm:block">
+          <Label className="text-sm font-medium">{label}</Label>
+          <p className="text-xs text-muted-foreground">{description}</p>
+        </div>
+
+        <div className="grid grid-cols-3 gap-2">
+          {(["r", "g", "b"] as const).map((channel) => (
+            <div key={channel} className="space-y-1">
+              <Label className="text-[11px] font-semibold uppercase text-muted-foreground">{channel}</Label>
+              <Input
+                type="number"
+                min={0}
+                max={255}
+                value={rgb[channel]}
+                onChange={(event) => updateChannel(channel, event.target.value)}
+                inputSize="sm"
+                className="tabular-nums"
+              />
+            </div>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {presets.map((preset) => {
+            const selected = preset.toLowerCase() === color;
+            return (
+              <button
+                key={preset}
+                type="button"
+                className={`h-8 w-8 border transition-transform hover:scale-105 ${
+                  selected ? "border-foreground ring-2 ring-ring ring-offset-2 ring-offset-background" : "border-border"
+                }`}
+                style={{ backgroundColor: preset }}
+                onClick={() => onChange(preset)}
+                aria-label={preset}
+              />
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// 表单实时预览但不同步 localStorage；点击「保存」才持久化。
 export default function ThemeCustomizer() {
   const { t } = useI18n();
   const { toast } = useToast();
@@ -69,7 +186,8 @@ export default function ThemeCustomizer() {
   }, [t, toast]);
 
   const isDirty =
-    draft.primaryHueShift !== saved.primaryHueShift ||
+    draft.primaryColor !== saved.primaryColor ||
+    draft.accentColor !== saved.accentColor ||
     draft.radius !== saved.radius ||
     draft.glassBlur !== saved.glassBlur ||
     draft.compact !== saved.compact ||
@@ -78,34 +196,21 @@ export default function ThemeCustomizer() {
   return (
     <div className="space-y-8">
       {/* 强调色 / 主色 */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <Label className="text-sm font-medium">{t("appearance.theme.hueLabel")}</Label>
-          <span className="text-xs tabular-nums text-muted-foreground">
-            {257 + draft.primaryHueShift}°
-          </span>
-        </div>
-        <input
-          type="range"
-          min={-180}
-          max={180}
-          value={draft.primaryHueShift}
-          onChange={(e) => change({ primaryHueShift: Number(e.target.value) })}
-          className="hue-slider"
-          aria-label={t("appearance.theme.hueLabel")}
+      <div className="grid gap-3 xl:grid-cols-2">
+        <ThemeColorControl
+          label={t("appearance.theme.primaryLabel")}
+          description={t("appearance.theme.primaryDesc")}
+          value={draft.primaryColor}
+          presets={primaryPresets}
+          onChange={(value) => change({ primaryColor: value })}
         />
-        <div className="grid grid-cols-7 gap-2">
-          {[257, 200, 160, 120, 40, 0, 310].map((h) => (
-            <button
-              key={h}
-              type="button"
-              className="h-7 w-7 rounded-full border-2 border-border transition-shadow hover:shadow-md"
-              style={{ background: `hsl(${h}, 90%, 58%)` }}
-              onClick={() => change({ primaryHueShift: h - 257 })}
-              aria-label={`Hue ${h}`}
-            />
-          ))}
-        </div>
+        <ThemeColorControl
+          label={t("appearance.theme.accentLabel")}
+          description={t("appearance.theme.accentDesc")}
+          value={draft.accentColor}
+          presets={accentPresets}
+          onChange={(value) => change({ accentColor: value })}
+        />
       </div>
 
       {/* 圆角 */}

@@ -80,6 +80,7 @@ export default function MainLayout({
   const { resolvedTheme, theme } = useTheme();
   const activeTheme = resolvedTheme || theme;
   const isAdmin = user?.role === 0;
+  const isAdminPage = pathname.startsWith("/admin");
   const [bgConfig, setBgConfig] = useState<BackgroundConfig | null>(null);
   const [bgStyle, setBgStyle] = useState<Record<string, string>>({});
   const [nextBgStyle, setNextBgStyle] = useState<Record<string, string> | null>(null);
@@ -250,7 +251,7 @@ export default function MainLayout({
         <div className="flex min-h-screen min-w-0 flex-1 flex-col lg:pl-72">
           <Header />
           <main id="main-content" tabIndex={-1} className="mx-auto w-full min-w-0 max-w-[1680px] flex-1 px-2 py-3 sm:p-4 md:p-6 xl:p-8">
-            <div className="section-surface">
+            <div className={cn("section-surface", isAdminPage && "admin-section-surface")}>
               <ErrorBoundary>{children}</ErrorBoundary>
             </div>
           </main>

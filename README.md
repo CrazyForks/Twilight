@@ -18,11 +18,11 @@
 
 - 用户管理：注册、登录、续期、禁用、删除、白名单、设备与登录记录。
 - 卡码体系：注册码、续期码、白名单码、诱饵码、指名码、批量生成与审计。
-- 邀请系统：邀请码、续期邀请、邀请树和管理员邀请森林视图。
+- 邀请系统：邀请码、续期邀请、邀请关系和管理员邀请系统管理。
 - 媒体服务：Emby / Jellyfin 账号绑定、创建、解绑和播放统计。
 - 求片系统：TMDB / Bangumi 搜索、库存检查、管理员审核和外部回调。
 - Telegram Bot：账号绑定、个人查询、管理员只读查询、群组成员安全管理。
-- 运维后台：管理导航、安全中心、邮箱管理、Telegram 管理、邀请森林、实时日志、配置热重载、数据库备份/恢复/迁移、Git 更新。
+- 运维后台：管理导航、安全中心、邮箱管理、Telegram 管理、邀请系统管理、实时日志、配置热重载、数据库备份/恢复/迁移、Git 更新。
 - 开发者模式：管理员在仪表盘输入 `DEBUGMODE` 并二次验证后，可在受控沙箱内预检 Telegram JS 自定义指令。
 
 ## 快速开始 (Docker)
@@ -53,7 +53,7 @@ docker compose up -d --build
 | [后端 API 详参](docs/reference/backend-api.md) | REST API 规范、认证、错误码、示例 |
 | [API Key 外部接入](docs/reference/api-key.md) | 第三方集成与权限矩阵 |
 | [注册码与卡码](docs/features/regcodes.md) | 注册码/续期码/白名单码算法和使用规则 |
-| [邀请树](docs/features/invite.md) | 邀请森林、级联删除与启停语义 |
+| [邀请树](docs/features/invite.md) | 邀请关系管理、级联删除与启停语义 |
 | [Telegram Bot 命令](docs/features/telegram-bot.md) | Bot 命令、私聊边界、管理员命令 |
 | [Bangumi 同步](docs/features/bangumi.md) | Emby Webhook 与 Bangumi Token 配置 |
 

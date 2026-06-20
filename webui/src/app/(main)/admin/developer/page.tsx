@@ -16,6 +16,36 @@ const example = `// Custom Telegram command preview
 const name = user.username || "user";
 reply("Hello " + name + ". Args: " + args.join(", "));`;
 
+const statsExample = `// Reply with a compact user summary
+const name = user.username || "user";
+const uid = user.uid || "unknown";
+reply("User: " + name + "\\nUID: " + uid + "\\nArgs: " + args.join(", "));`;
+
+const guardExample = `// Guard an admin-only command
+if (!user || user.role !== 0) {
+  reply("Permission denied");
+  return;
+}
+log("admin command from " + user.username);
+reply("Admin command accepted");`;
+
+const bindingRows = [
+  ["ctx", "adminDeveloper.bindingCtx"],
+  ["args", "adminDeveloper.bindingArgs"],
+  ["user", "adminDeveloper.bindingUser"],
+] as const;
+
+const functionRows = [
+  ["reply(text)", "adminDeveloper.functionReply"],
+  ["log(text)", "adminDeveloper.functionLog"],
+] as const;
+
+const exampleRows = [
+  ["adminDeveloper.exampleHello", example],
+  ["adminDeveloper.exampleStats", statsExample],
+  ["adminDeveloper.exampleGuard", guardExample],
+] as const;
+
 export default function AdminDeveloperPage() {
   const { toast } = useToast();
   const { t } = useI18n();
@@ -84,9 +114,54 @@ export default function AdminDeveloperPage() {
               <CardTitle>{t("adminDeveloper.apiTitle")}</CardTitle>
               <CardDescription>{t("adminDeveloper.apiDescription")}</CardDescription>
             </CardHeader>
-            <CardContent className="flex flex-wrap gap-2">
-              {["ctx", "args", "user", "reply(text)", "log(text)"].map((item) => (
-                <Badge key={item} variant="outline">{item}</Badge>
+            <CardContent className="space-y-3">
+              <div className="flex flex-wrap gap-2">
+                {["ctx", "args", "user", "reply(text)", "log(text)", "js:"].map((item) => (
+                  <Badge key={item} variant="outline">{item}</Badge>
+                ))}
+              </div>
+              <div className="space-y-2 text-sm">
+                <p className="font-medium">{t("adminDeveloper.bindingsTitle")}</p>
+                {bindingRows.map(([name, key]) => (
+                  <div key={name} className="rounded-md border bg-muted/20 p-2">
+                    <code className="font-mono text-xs">{name}</code>
+                    <p className="mt-1 text-xs text-muted-foreground">{t(key)}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="space-y-2 text-sm">
+                <p className="font-medium">{t("adminDeveloper.functionsTitle")}</p>
+                {functionRows.map(([name, key]) => (
+                  <div key={name} className="rounded-md border bg-muted/20 p-2">
+                    <code className="font-mono text-xs">{name}</code>
+                    <p className="mt-1 text-xs text-muted-foreground">{t(key)}</p>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>{t("adminDeveloper.examplesTitle")}</CardTitle>
+              <CardDescription>{t("adminDeveloper.examplesDescription")}</CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-2">
+              {exampleRows.map(([key, sample]) => (
+                <Button
+                  key={key}
+                  variant="outline"
+                  className="h-auto justify-start whitespace-normal py-2 text-left"
+                  onClick={() => {
+                    setCode(sample);
+                    setResult(null);
+                  }}
+                >
+                  <span>
+                    <span className="block font-medium">{t(key)}</span>
+                    <span className="block text-xs text-muted-foreground">{t("adminDeveloper.exampleApply")}</span>
+                  </span>
+                </Button>
               ))}
             </CardContent>
           </Card>

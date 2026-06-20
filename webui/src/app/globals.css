@@ -532,6 +532,63 @@
     flex-shrink: 0;
   }
 
+  .admin-section-surface {
+    background: hsl(var(--card) / 0.78);
+  }
+
+  .admin-section-surface > * {
+    width: 100%;
+    max-width: 1560px;
+    margin-inline: auto;
+  }
+
+  .admin-section-surface :where(h1) {
+    line-height: 1.15;
+    letter-spacing: 0;
+  }
+
+  .admin-section-surface :where(h1 + p) {
+    max-width: 72rem;
+  }
+
+  .admin-section-surface :where(table) {
+    min-width: 100%;
+  }
+
+  .admin-section-surface :where(th, td) {
+    vertical-align: middle;
+  }
+
+  .admin-section-surface :where(.overflow-x-auto) {
+    border-radius: calc(var(--radius) * 0.85);
+  }
+
+  .admin-section-surface :where(.grid) {
+    min-width: 0;
+  }
+
+  .admin-section-surface :where(button, a) {
+    min-width: 0;
+  }
+
+  .admin-section-surface :where(.truncate) {
+    min-width: 0;
+  }
+
+  @media (max-width: 639px) {
+    .admin-section-surface :where(.space-y-6 > :not([hidden]) ~ :not([hidden])) {
+      margin-top: 1rem;
+    }
+
+    .admin-section-surface :where(.space-y-8 > :not([hidden]) ~ :not([hidden])) {
+      margin-top: 1.25rem;
+    }
+
+    .admin-section-surface :where(h1) {
+      font-size: 1.35rem;
+    }
+  }
+
   .tw-reduce-motion *,
   .tw-reduce-motion *::before,
   .tw-reduce-motion *::after {
@@ -552,37 +609,22 @@
     display: none !important;
   }
 
-  /* 色相滑条：彩虹渐变色轨 */
-  .hue-slider {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 100%;
-    height: 0.5rem;
-    border-radius: 9999px;
-    background: linear-gradient(
-      to right,
-      hsl(0, 90%, 58%),
-      hsl(60, 90%, 58%),
-      hsl(120, 90%, 58%),
-      hsl(180, 90%, 58%),
-      hsl(240, 90%, 58%),
-      hsl(300, 90%, 58%),
-      hsl(360, 90%, 58%)
-    );
-    outline: none;
-    cursor: pointer;
+  .theme-color-input {
+    overflow: hidden;
   }
 
-  .hue-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 1.25rem;
-    height: 1.25rem;
-    border-radius: 50%;
-    border: 2px solid hsl(var(--foreground));
-    background: hsl(var(--background));
-    cursor: pointer;
-    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15);
+  .theme-color-input::-webkit-color-swatch-wrapper {
+    padding: 0;
+  }
+
+  .theme-color-input::-webkit-color-swatch {
+    border: 0;
+    border-radius: 0;
+  }
+
+  .theme-color-input::-moz-color-swatch {
+    border: 0;
+    border-radius: 0;
   }
 
   /* Compact mode: reduce spacing when .tw-compact is set on <html> */

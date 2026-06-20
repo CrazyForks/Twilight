@@ -675,8 +675,10 @@ function FieldRow({
 // ==================== Section 卡片（可折叠） ====================
 
 // collapsedSectionsMap 记录应折叠到专用管理页面的配置段。
-const COLLAPSED_LINKS: Record<string, { href: string; labelKey: string }> = {
+const COLLAPSED_LINKS: Record<string, { href: string; labelKey: MessageKey }> = {
+  Emby: { href: "/admin/emby", labelKey: "adminConfig.manageInEmby" },
   Email: { href: "/admin/email", labelKey: "adminConfig.manageInEmail" },
+  Notification: { href: "/admin/email", labelKey: "adminConfig.manageInEmail" },
   Ticket: { href: "/admin/tickets", labelKey: "adminConfig.manageInTickets" },
   Security: { href: "/admin/security", labelKey: "adminConfig.manageInSecurity" },
   RateLimit: { href: "/admin/security", labelKey: "adminConfig.manageInSecurity" },
@@ -684,6 +686,9 @@ const COLLAPSED_LINKS: Record<string, { href: string; labelKey: string }> = {
   AuditLog: { href: "/admin/security", labelKey: "adminConfig.manageInSecurity" },
   Telegram: { href: "/admin/telegram", labelKey: "adminConfig.manageInTelegram" },
   SAR: { href: "/admin/invite", labelKey: "adminConfig.manageInInvite" },
+  Scheduler: { href: "/admin/scheduler", labelKey: "adminConfig.manageInScheduler" },
+  Database: { href: "/admin/database", labelKey: "adminConfig.manageInDatabase" },
+  BangumiSync: { href: "/admin/bangumi", labelKey: "adminConfig.manageInBangumi" },
 };
 
 function SectionCard({
@@ -744,14 +749,17 @@ function SectionCard({
                 </CardTitle>
                 <CardDescription className="text-xs mt-0.5">
                   {section.description}
-                  {section.collapsed && COLLAPSED_LINKS[section.key] && (
-                    <a
-                      href={COLLAPSED_LINKS[section.key].href}
-                      className="ml-1 text-primary underline underline-offset-2 hover:text-primary/80"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      {t(COLLAPSED_LINKS[section.key].labelKey as any)} →
-                    </a>
+                  {COLLAPSED_LINKS[section.key] && (
+                    <span className="ml-1 inline-flex flex-wrap items-center gap-1">
+                      <span>{t("adminConfig.preferModuleEdit")}</span>
+                      <a
+                        href={COLLAPSED_LINKS[section.key].href}
+                        className="text-primary underline underline-offset-2 hover:text-primary/80"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {t(COLLAPSED_LINKS[section.key].labelKey)} →
+                      </a>
+                    </span>
                   )}
                 </CardDescription>
               </div>
@@ -1017,13 +1025,13 @@ export default function AdminConfigPage() {
   const authBgInputRef = useRef<HTMLInputElement | null>(null);
   const [isUploadingAuthBg, setIsUploadingAuthBg] = useState(false);
 
-  // 初始化时展开所有 sections
+  // 初始化时默认折叠所有 sections；搜索与侧边栏定位会按需展开。
   useEffect(() => {
     if (!schema) {
       return;
     }
 
-    setExpandedSections(new Set(schema.sections.map((s) => s.key)));
+    setExpandedSections(new Set());
     setActiveSection((current) => current || schema.sections[0]?.key || "");
   }, [schema]);
 

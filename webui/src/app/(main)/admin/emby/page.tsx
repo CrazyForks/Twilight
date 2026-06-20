@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useState } from "react";
+import Link from "next/link";
 import { motion } from "framer-motion";
 import {
   Server,
@@ -15,10 +16,10 @@ import {
   Link2,
   Link2Off,
   Shield,
+  MonitorSmartphone,
+  Network,
   Wifi,
   WifiOff,
-  Send,
-  MessageCircle,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -157,39 +158,6 @@ export default function AdminEmbyPage() {
 
   // Confirm dialog
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
-
-  // Bot test state
-  const [isBotTesting, setIsBotTesting] = useState(false);
-  const [botResults, setBotResults] = useState<Array<{ target: string; success: boolean; error: string | null; username?: string; bot_id?: number; title?: string; bot_status?: string }> | null>(null);
-  const [botRuntime, setBotRuntime] = useState<{ polling?: boolean; last_ok_at?: number | null; last_error_at?: number | null; last_error?: string } | null>(null);
-
-  // Bot connectivity test
-  const handleTestBot = useCallback(async () => {
-    setIsBotTesting(true);
-    setBotResults(null);
-    setBotRuntime(null);
-    try {
-      const res = await api.testBotConnectivity();
-      if (res.success && res.data) {
-        setBotResults(res.data.results);
-        setBotRuntime(res.data.runtime || null);
-        const allOk = res.data.results.every((r) => r.success);
-        toast({
-          title: allOk ? t("adminEmby.botTestAllOk") : t("adminEmby.botTestPartialFail"),
-          description: allOk
-            ? t("adminEmby.botTestSentDesc", { count: res.data.results.length })
-            : t("adminEmby.botTestCheckConfig"),
-          variant: allOk ? "success" : "destructive",
-        });
-      } else {
-        toast({ title: t("adminEmby.botTestFailed"), description: res.message, variant: "destructive" });
-      }
-    } catch (err: any) {
-      toast({ title: t("adminEmby.botTestError"), description: err.message, variant: "destructive" });
-    } finally {
-      setIsBotTesting(false);
-    }
-  }, [toast, t]);
 
   // Connectivity test
   const handleTestConnectivity = useCallback(async () => {
@@ -472,91 +440,31 @@ export default function AdminEmbyPage() {
         </Card>
       </motion.div>
 
-      {/* Bot Connectivity Test */}
+      {/* Device / IP audit entry */}
       <motion.div variants={item}>
         <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="flex items-center gap-2">
-                  <MessageCircle className="h-5 w-5" />
-                  {t("adminEmby.botTitle")}
-                </CardTitle>
-                <CardDescription>
-                  {t("adminEmby.botDesc")}
-                </CardDescription>
+          <CardContent className="flex flex-col gap-4 p-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                <MonitorSmartphone className="h-5 w-5" />
               </div>
-              <Button onClick={handleTestBot} disabled={isBotTesting}>
-                {isBotTesting ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Send className="mr-2 h-4 w-4" />
-                )}
-                {t("adminEmby.botSendTest")}
-              </Button>
+              <div className="min-w-0">
+                <h2 className="flex items-center gap-2 text-base font-semibold">
+                  {t("adminEmby.deviceAuditTitle")}
+                  <Badge variant="outline" className="text-[10px]">{t("adminEmby.integratedBadge")}</Badge>
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t("adminEmby.deviceAuditDesc")}
+                </p>
+              </div>
             </div>
-          </CardHeader>
-          {botResults && (
-            <CardContent className="space-y-3">
-              {botRuntime && (
-                <div className="rounded-lg border bg-muted/30 p-3 text-xs text-muted-foreground">
-                  <div>{t("adminEmby.pollingLabel")}{botRuntime.polling ? t("adminEmby.pollingRunning") : t("adminEmby.pollingStopped")}</div>
-                  {botRuntime.last_ok_at ? <div>{t("adminEmby.lastOk")}{new Date(botRuntime.last_ok_at * 1000).toLocaleString()}</div> : null}
-                  {botRuntime.last_error_at ? <div>{t("adminEmby.lastErrorAt")}{new Date(botRuntime.last_error_at * 1000).toLocaleString()}</div> : null}
-                  {botRuntime.last_error ? <div className="break-words text-red-500">{t("adminEmby.lastError")}{botRuntime.last_error}</div> : null}
-                </div>
-              )}
-              <div className="grid gap-2 sm:grid-cols-2">
-                {botResults.map((r, i) => (
-                  <div
-                    key={i}
-                    className={`rounded-lg border p-3 ${
-                      r.success
-                        ? "border-emerald-500/20 bg-emerald-500/5"
-                        : "border-red-500/20 bg-red-500/5"
-                    }`}
-                  >
-                    <div className="flex items-center gap-2 mb-1">
-                      {r.success ? (
-                        <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                      ) : (
-                        <XCircle className="h-4 w-4 text-red-500" />
-                      )}
-                      <span className="font-medium text-sm font-mono">{r.target}</span>
-                    </div>
-                    {r.error && (
-                      <p className="text-xs text-red-500 mt-1">{r.error}</p>
-                    )}
-                    {!r.error && (r.username || r.title || r.bot_status) && (
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {[r.username ? `@${r.username}` : "", r.title || "", r.bot_status ? `${t("adminEmby.botStatusPrefix")}${r.bot_status}` : ""].filter(Boolean).join(" · ")}
-                      </p>
-                    )}
-                    {r.success && (
-                      <p className="text-xs text-muted-foreground">{t("adminEmby.sendSuccess")}</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <div className="flex items-center gap-2">
-                {botResults.every((r) => r.success) ? (
-                  <>
-                    <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-                    <span className="text-sm font-medium text-emerald-500">
-                      {t("adminEmby.allTargetsOk")}
-                    </span>
-                  </>
-                ) : (
-                  <>
-                    <WifiOff className="h-5 w-5 text-red-500" />
-                    <span className="text-sm font-medium text-red-500">
-                      {t("adminEmby.partialTargetsFailed")}
-                    </span>
-                  </>
-                )}
-              </div>
-            </CardContent>
-          )}
+            <Button asChild variant="outline" className="min-h-10 whitespace-normal leading-tight">
+              <Link href="/admin/device-audit">
+                <Network className="mr-2 h-4 w-4" />
+                {t("adminEmby.openDeviceAudit")}
+              </Link>
+            </Button>
+          </CardContent>
         </Card>
       </motion.div>
 
