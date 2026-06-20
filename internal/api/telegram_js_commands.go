@@ -99,6 +99,9 @@ func (a *App) telegramRunJSCustomCommandWithOptions(code string, c telegramComma
 	})
 	opts.PrivateChat = privateChat
 	_ = vm.Set("users", a.developerJSUsersAPI(vm, &user, opts, &logs))
+	_ = vm.Set("getUser", func(call goja.FunctionCall) goja.Value {
+		return a.developerJSGetUserByUID(vm, &user, call.Argument(0), &logs)
+	})
 	_ = vm.Set("text", developerJSTextAPI(vm))
 	_ = vm.Set("arrays", developerJSArraysAPI(vm))
 	_ = vm.Set("time", developerJSTimeAPI(vm))
@@ -177,12 +180,41 @@ func developerJSUserSnapshot(user store.User) map[string]any {
 		"username":                 user.Username,
 		"role":                     user.Role,
 		"active":                   user.Active,
+		"expired_at":               zeroNil(user.ExpiredAt),
+		"created_at":               zeroNil(user.CreatedAt),
+		"register_time":            zeroNil(user.RegisterTime),
 		"has_emby":                 strings.TrimSpace(user.EmbyID) != "",
+		"emby_disabled":            user.EmbyDisabled,
 		"email_verified":           user.EmailVerified,
+		"email_verified_at":        zeroNil(user.EmailVerifiedAt),
 		"telegram_bound":           user.TelegramID != 0,
 		"notify_on_login_telegram": user.NotifyOnLoginTelegram,
 		"notify_on_login_email":    user.NotifyOnLoginEmail,
 	}
+}
+
+func (a *App) developerJSGetUserByUID(vm *goja.Runtime, current *store.User, uidValue goja.Value, logs *[]string) goja.Value {
+	uid := uidValue.ToInteger()
+	if uid <= 0 {
+		return goja.Null()
+	}
+	if current == nil || current.UID == 0 {
+		if len(*logs) < 8 {
+			*logs = append(*logs, "getUser denied: no bound user")
+		}
+		return goja.Null()
+	}
+	if current.UID != uid && current.Role != store.RoleAdmin {
+		if len(*logs) < 8 {
+			*logs = append(*logs, "getUser denied: admin role required for other users")
+		}
+		return goja.Null()
+	}
+	target, ok := a.store().User(uid)
+	if !ok {
+		return goja.Null()
+	}
+	return vm.ToValue(developerJSUserSnapshot(target))
 }
 
 func (a *App) developerJSUsersAPI(vm *goja.Runtime, user *store.User, opts developerJSRunOptions, logs *[]string) map[string]any {
@@ -204,6 +236,12 @@ func (a *App) developerJSUsersAPI(vm *goja.Runtime, user *store.User, opts devel
 		},
 		"describe": func(goja.FunctionCall) goja.Value {
 			return vm.ToValue(developerJSUserSnapshot(*user))
+		},
+		"get": func(call goja.FunctionCall) goja.Value {
+			return a.developerJSGetUserByUID(vm, user, call.Argument(0), logs)
+		},
+		"byUID": func(call goja.FunctionCall) goja.Value {
+			return a.developerJSGetUserByUID(vm, user, call.Argument(0), logs)
 		},
 		"hasRole": func(call goja.FunctionCall) goja.Value {
 			return vm.ToValue(hasRole(call.Argument(0).String()))

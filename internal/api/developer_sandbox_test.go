@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -91,6 +92,70 @@ func TestDeveloperJSUsersAPISanitizesCurrentUser(t *testing.T) {
 	}
 	if !strings.Contains(output, `"username":"tg-user"`) || !strings.Contains(output, `"email_verified":true`) {
 		t.Fatalf("sanitized user output missing expected safe fields: %s", output)
+	}
+}
+
+func TestDeveloperJSGetUserByUIDIsSanitizedAndAdminScoped(t *testing.T) {
+	app := newTestApp(t)
+	admin, err := app.store().CreateUser(store.User{
+		Username:     "tg-admin",
+		Role:         store.RoleAdmin,
+		TelegramID:   111222,
+		PasswordHash: "unused",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := app.store().CreateUser(store.User{
+		Username:      "lookup-target",
+		Email:         "target-secret@example.com",
+		EmailVerified: true,
+		Role:          store.RoleNormal,
+		TelegramID:    333444,
+		EmbyID:        "emby-sensitive-target-id",
+		PasswordHash:  "unused",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	output, logs, err := app.telegramRunJSCustomCommand(
+		`const target = getUser(`+fmt.Sprint(target.UID)+`); reply(JSON.stringify(target));`,
+		telegramCommandCtx{FromID: admin.TelegramID},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("admin getUser js: %v logs=%v", err, logs)
+	}
+	if !strings.Contains(output, `"username":"lookup-target"`) || !strings.Contains(output, `"email_verified":true`) {
+		t.Fatalf("admin getUser output missing safe fields: %s", output)
+	}
+	if strings.Contains(output, "target-secret@example.com") || strings.Contains(output, "emby-sensitive-target-id") || strings.Contains(output, "333444") {
+		t.Fatalf("admin getUser leaked sensitive fields: %s", output)
+	}
+
+	denied, logs, err := app.telegramRunJSCustomCommand(
+		`reply(String(getUser(`+fmt.Sprint(admin.UID)+`) === null));`,
+		telegramCommandCtx{FromID: target.TelegramID},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("non-admin getUser js: %v logs=%v", err, logs)
+	}
+	if strings.TrimSpace(denied) != "true" {
+		t.Fatalf("non-admin should not read another user, output=%s logs=%v", denied, logs)
+	}
+
+	self, logs, err := app.telegramRunJSCustomCommand(
+		`reply(users.get(user.uid).username);`,
+		telegramCommandCtx{FromID: target.TelegramID},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("self users.get js: %v logs=%v", err, logs)
+	}
+	if strings.TrimSpace(self) != "lookup-target" {
+		t.Fatalf("user should read self by UID, output=%s", self)
 	}
 }
 

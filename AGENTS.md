@@ -343,7 +343,7 @@ pnpm build
 - 新增后台接口默认使用 `AuthAdmin`；所有创建、更新、删除、启停、沙箱执行等状态变更成功后必须写审计日志。无 HTTP 上下文的 Bot 路径使用 `a.auditEntryIP("telegram", ...)`。
 - 开发者模式入口固定为仪表盘输入 `DEBUGMODE`，再调用 `POST /admin/developer-mode/activate` 做管理员密码二次验证。Telegram JS 自定义命令仅允许 `bot_custom_commands` 中 `js:` 前缀脚本，必须运行在受控 Goja 沙箱中，不得暴露网络、文件、进程、模块加载器、浏览器全局对象、任意环境变量或任意配置读取能力。
 - 开发者 JS 沙箱文档接口固定为 `GET /admin/developer/js-docs`（`AuthAdmin`），用于下发引擎、内置对象、函数、命名空间、配置键、环境变量、示例和阻止 token。新增沙箱 API 必须同步更新该端点、开发者页面、`docs/features/telegram-bot.md` 和 `docs/reference/backend-api.md`。
-- Telegram JS 沙箱只允许通过受控白名单访问配置与环境变量。`users.*` 仅可读取/操作当前 Telegram 绑定的 Twilight 用户脱敏数据；不得提供任意用户搜索、邮箱明文、Telegram ID、Emby ID、Token、密码、管理员批量操作或跨用户写入。预览接口必须 dry-run 状态变更类函数。
+- Telegram JS 沙箱只允许通过受控白名单访问配置与环境变量。`users.*` 默认仅可读取/操作当前 Telegram 绑定的 Twilight 用户脱敏数据；`getUser(uid)` / `users.get(uid)` / `users.byUID(uid)` 仅允许按精确 UID 返回脱敏快照，普通用户只能读取自己，跨用户读取必须要求当前绑定用户为管理员。不得提供用户名/邮箱/Telegram ID 任意搜索、邮箱明文、Telegram ID、Emby ID、Token、密码、管理员批量操作或跨用户写入。预览接口必须 dry-run 状态变更类函数。
 - Telegram JS 的 `interactions.*` 只能提供受控同步编排：inline callback 使用静态 `answer/edit/reply` 动作，必须绑定同一 chat、message 和 Telegram 用户并设置 TTL；等待文本只能消费同一用户的下一条非命令文本，必须限制等待秒数、长度、脱敏和审计，不得引入异步 JS 继续执行、任意事件监听或跨用户会话状态。
 
 ## 前端约定

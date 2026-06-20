@@ -176,7 +176,7 @@ func validateDeveloperJSCommand(code string) map[string]any {
 	trimmed := strings.TrimSpace(code)
 	warnings := []string{
 		"Preview only: saving to bot_custom_commands is required before production Bot runtime can use this script.",
-		"Allowed APIs are limited to the documented ctx, args, user, constants, users, text, arrays, time, interactions, reply(text), log(text), auth(role), config(key), and env(key) bindings.",
+		"Allowed APIs are limited to the documented ctx, args, user, constants, users, text, arrays, time, interactions, getUser(uid), reply(text), log(text), auth(role), config(key), and env(key) bindings.",
 		"config(key) and env(key) are read-only allowlists; sensitive values always return an empty string.",
 	}
 	if trimmed == "" {
@@ -221,7 +221,7 @@ type developerJSDocEntry struct {
 func developerJSBindingNames() []string {
 	return []string{
 		"ctx", "args", "user", "constants", "users", "text", "arrays", "time", "interactions",
-		"reply(text)", "log(text)", "auth(role)", "config(key)", "env(key)",
+		"getUser(uid)", "reply(text)", "log(text)", "auth(role)", "config(key)", "env(key)",
 	}
 }
 
@@ -238,6 +238,12 @@ func developerJSDocs() map[string]any {
 			"title":       "Current user summary",
 			"description": "Return a sanitized summary for the Telegram-bound Twilight user.",
 			"code":        "const me = users.current();\nreply('User: ' + (me.username || 'unbound') + '\\nActive: ' + me.active);",
+		},
+		{
+			"id":          "admin-get-user",
+			"title":       "Admin exact UID lookup",
+			"description": "Read a sanitized user snapshot by exact UID. Other users require the current Telegram-bound user to be an administrator.",
+			"code":        "if (!auth('admin')) {\n  reply('Admin only');\n  return;\n}\nconst target = getUser(Number(args[0] || 0));\nif (!target) {\n  reply('User not found or permission denied');\n  return;\n}\nreply([\n  'UID: ' + target.uid,\n  'Username: ' + target.username,\n  'Active: ' + target.active,\n  'Role: ' + target.role,\n  'Has Emby: ' + target.has_emby,\n  'Email verified: ' + target.email_verified\n].join('\\n'));",
 		},
 		{
 			"id":          "login-notify",
@@ -283,7 +289,7 @@ func developerJSDocs() map[string]any {
 			{Name: "ctx.command_time", Category: "context", Type: "number", Description: "Unix timestamp in seconds when the command entered the sandbox."},
 			{Name: "ctx.preview", Category: "context", Type: "boolean", Description: "True when running from the admin sandbox preview endpoint."},
 			{Name: "args", Category: "context", Type: "string[]", Description: "Command arguments excluding the command name.", Example: "const action = (args[0] || 'help').toLowerCase();"},
-			{Name: "user", Category: "user", Type: "object", Description: "Sanitized snapshot of the Telegram-bound Twilight user.", Fields: []string{"uid", "username", "role", "active", "has_emby", "email_verified", "telegram_bound", "notify_on_login_telegram", "notify_on_login_email"}},
+			{Name: "user", Category: "user", Type: "object", Description: "Sanitized snapshot of the Telegram-bound Twilight user.", Fields: []string{"uid", "username", "role", "active", "expired_at", "created_at", "register_time", "has_emby", "emby_disabled", "email_verified", "email_verified_at", "telegram_bound", "notify_on_login_telegram", "notify_on_login_email"}},
 			{Name: "constants.roles", Category: "constants", Type: "object", Description: "Role constants: admin=0, user=1, whitelist=2."},
 			{Name: "constants.limits", Category: "constants", Type: "object", Description: "Runtime collection limits for reply and log calls."},
 		},
@@ -291,12 +297,15 @@ func developerJSDocs() map[string]any {
 			{Name: "reply(text)", Category: "output", Type: "function", Description: "Append one reply segment. At most four segments are collected and joined with newlines.", Example: "reply('hello')"},
 			{Name: "log(text)", Category: "output", Type: "function", Description: "Append one audit/debug log line for this execution. At most eight lines are collected.", Example: "log('branch=help')"},
 			{Name: "auth(role)", Category: "auth", Type: "function", Description: "Check the current user role. Accepts admin, whitelist, user, or numeric role strings.", Example: "if (!auth('admin')) return;"},
+			{Name: "getUser(uid)", Category: "users", Type: "function", Description: "Global shortcut for exact UID lookup. Returns a sanitized snapshot or null. Other-user lookup requires administrator role; non-admin users can only read themselves.", Example: "const u = getUser(10001); if (u) reply(u.username);"},
 			{Name: "config(key)", Category: "config", Type: "function", Description: "Read one non-sensitive allowlisted config value. Denied keys return an empty string.", Example: "config('invite.enabled')"},
 			{Name: "env(key)", Category: "config", Type: "function", Description: "Read one non-sensitive allowlisted TWILIGHT_* environment value. Denied keys return an empty string.", Example: "env('TWILIGHT_HOST')"},
 		},
 		"namespaces": []developerJSDocEntry{
 			{Name: "users.current()", Category: "users", Type: "function", Description: "Return the sanitized current Telegram-bound user snapshot.", Example: "const me = users.current(); reply(me.username || 'unbound');"},
 			{Name: "users.describe()", Category: "users", Type: "function", Description: "Alias of users.current() for readable scripts.", Example: "JSON.stringify(users.describe())"},
+			{Name: "users.get(uid)", Category: "users", Type: "function", Description: "Exact UID lookup returning the same sanitized snapshot as getUser(uid). Other-user lookup requires administrator role.", Example: "const target = users.get(10001);"},
+			{Name: "users.byUID(uid)", Category: "users", Type: "function", Description: "Alias of users.get(uid).", Example: "users.byUID(user.uid)"},
 			{Name: "users.hasRole(role)", Category: "users", Type: "function", Description: "Role check under the users namespace; same role semantics as auth(role).", Example: "users.hasRole('whitelist')"},
 			{Name: "users.requireActive()", Category: "users", Type: "function", Description: "Return true only when the command is bound to an enabled local user.", Example: "if (!users.requireActive()) reply('Account inactive');"},
 			{Name: "users.setLoginNotify(options)", Category: "users", Type: "function", Description: "Update the current bound user's login notification preferences. Only telegram/email boolean fields are accepted.", Example: "users.setLoginNotify({ telegram: true, email: false })", Mutates: true, Scope: "current_user_only"},
