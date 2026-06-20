@@ -72,6 +72,9 @@ import type {
   SigninPublicConfig,
   SigninRenewalResult,
   SigninSummary,
+  SetupPayload,
+  SetupResult,
+  SetupStatus,
   SystemHealth,
   SystemInfo,
   SystemStats,
@@ -91,6 +94,11 @@ import { normalizeMediaRequestStatus } from "./media-status";
 const BIND_CODE_CREATE_HEADERS = {
   "X-Twilight-Client": "webui",
   "X-Twilight-Intent": "create-bind-code",
+};
+
+const SETUP_COMPLETE_HEADERS = {
+  "X-Twilight-Client": "webui",
+  "X-Twilight-Intent": "complete-setup",
 };
 
 // emailCodeBody 把可选的邮箱验证码凭据展开进改密请求体。强制邮箱验证开启时后端
@@ -240,6 +248,18 @@ class ApiClient {
       res.data.icon = this.toAbsoluteAssetUrl(res.data.icon) || "";
     }
     return res;
+  }
+
+  async getSetupStatus() {
+    return this.request<SetupStatus>("/setup/status");
+  }
+
+  async completeSetup(payload: SetupPayload) {
+    return this.request<SetupResult>("/setup/complete", {
+      method: "POST",
+      headers: SETUP_COMPLETE_HEADERS,
+      body: JSON.stringify(payload),
+    });
   }
 
   private toApiRelativeAssetValue(value?: string | null): string {

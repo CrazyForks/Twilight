@@ -1423,20 +1423,51 @@ curl -X GET "http://localhost:5000/api/v1/system/health"
 
 `GET /system/info`
 
-- 说明：系统公开信息。`telegram_bot` 会在 Telegram 已启用且可连通时返回 Bot 用户名；`telegram_links.groups/channels` 只返回通过白名单校验的公开 `t.me` 链接，不暴露纯数字私有群 ID。
+- 说明：系统公开信息。`telegram_bot` 会在 Telegram 已启用且可连通时返回 Bot 用户名；`telegram_links.groups/channels` 只返回通过白名单校验的公开 `t.me` 链接，不暴露纯数字私有群 ID。`setup` 字段返回初始化向导状态，前端可在 `setup.available=true` 时跳转 `/setup`。
 - 认证：公开（`AuthPublic`）
 
 ```bash
 curl -X GET "http://localhost:5000/api/v1/system/info"
 ```
 
-### 10.3 服务器图标
+### 10.3 初始化向导
+
+`GET /setup/status`
+
+- 说明：查询网页初始化向导是否可用。
+- 认证：公开（`AuthPublic`）
+- 可用条件：配置文件显式启用 `setup_mode = true` 或 `SetupMode = true`，状态存储中没有任何用户，且当前运行配置中没有 `Admin.uids` / `Admin.usernames`（包括环境变量覆盖）。`setup_mode` / `SetupMode` 可写在任意 TOML table 中；任一条件不满足都会返回 `available=false`。
+
+`POST /setup/complete`
+
+- 说明：一次性创建初始化管理员、写入基础配置、追加 `[Admin] usernames = [...]`，并下发管理员会话 Cookie。
+- 认证：公开（`AuthPublic`），但必须同时满足空系统硬门控、IP 限流和显式 WebUI intent 头。
+- 必填头：`X-Twilight-Client: webui`、`X-Twilight-Intent: complete-setup`。
+- 安全边界：完成后主配置会移除 `setup_mode` / `SetupMode` 标记；同时由于已有用户与管理员配置，初始化入口永久关闭。普通 `/users/register` 仍不会因为空数据库自动获得管理员权限。
+- 敏感信息：请求中的密码、Token、SMTP 密码等只写入受控配置或密码哈希，不在响应和审计 detail 中明文回显。
+
+示例请求：
+
+```bash
+curl -X POST "http://localhost:5000/api/v1/setup/complete" \
+  -H "Content-Type: application/json" \
+  -H "X-Twilight-Client: webui" \
+  -H "X-Twilight-Intent: complete-setup" \
+  -d '{
+    "admin": {"username": "owner", "password": "Owner123456"},
+    "global": {"server_name": "Twilight"},
+    "emby": {"emby_url": "http://emby:8096"},
+    "policy": {"register_mode": false, "register_code_limit": true}
+  }'
+```
+
+### 10.4 服务器图标
 
 `GET /system/server-icon` — 读取服务器图标（公开）。
 
 `POST /system/admin/server-icon/upload` — 上传服务器图标（管理员）。
 
-### 10.4 读取运行时配置（公开给登录用户）
+### 10.5 读取运行时配置（公开给登录用户）
 
 `GET /system/config`
 
@@ -1448,18 +1479,18 @@ curl -X GET "http://localhost:5000/api/v1/system/config" \
   -H "Authorization: Bearer <token>"
 ```
 
-### 10.5 管理员配置只读视图
+### 10.6 管理员配置只读视图
 
 `GET /system/admin/config`
 
 - 说明：返回完整运行时配置视图（管理面板使用）。
 - 认证：管理员（`AuthAdmin`）
 
-### 10.6 系统/管理员统计
+### 10.7 系统/管理员统计
 
 `GET /system/stats` 与 `GET /system/admin/stats` — 均为管理员级别（`AuthAdmin`），与 `/admin/stats` 同 handler，返回系统聚合统计。
 
-### 10.7 获取 Emby 服务线路（按角色下发）
+### 10.8 获取 Emby 服务线路（按角色下发）
 
 `GET /system/emby-urls`
 
@@ -1485,14 +1516,14 @@ curl -X GET "http://localhost:5000/api/v1/system/config" \
 }
 ```
 
-### 10.8 Emby 线路探测
+### 10.9 Emby 线路探测
 
 `POST /system/emby-urls/probe`
 
 - 说明：服务端探测 Emby 线路连通性，供前端在多线路间选择。
 - 认证：登录用户（`AuthUser`）
 
-### 10.9 管理员运行状态与实时日志
+### 10.10 管理员运行状态与实时日志
 
 `GET /system/admin/runtime/status`
 
@@ -1533,7 +1564,7 @@ curl -N "http://localhost:5000/api/v1/system/admin/runtime/logs/stream?limit=100
   -H "Authorization: Bearer <admin_token>"
 ```
 
-### 10.10 config.toml 读写与备份
+### 10.11 config.toml 读写与备份
 
 `GET /system/admin/config/toml` — 读取当前 config.toml（管理员）。
 
@@ -1573,7 +1604,7 @@ curl -N "http://localhost:5000/api/v1/system/admin/runtime/logs/stream?limit=100
 | `POST /system/admin/config/restore` | 从备份恢复配置 |
 | `POST /system/admin/config/sweep` | 手动触发 config.toml 自动整理（迁移历史段、删孤立键、补默认值，带备份） |
 
-### 10.11 数据库状态、备份、恢复、迁移
+### 10.12 数据库状态、备份、恢复、迁移
 
 > Twilight 把全部业务状态保存在 **单一状态文档** 中：JSON 文件 `db/twilight_go_state.json` 或 PostgreSQL `twilight_state` 表（`id=1` 的一行 jsonb）；另有独立表 `twilight_sessions`、`twilight_runtime_logs`。`twilight_runtime_logs` 仅用于高写入运行日志，并按 `id` 游标、索引和 cutoff id 裁剪优化；业务实体仍不得拆成独立表。下列接口围绕该状态文档操作。
 
@@ -1634,7 +1665,7 @@ curl -N "http://localhost:5000/api/v1/system/admin/runtime/logs/stream?limit=100
 - 旧 SQLite 来源会额外返回 `legacy_sqlite` 与 `legacy_sqlite_import`，包含检测到的文件、表计数、已映射表和未映射表。
 - 执行响应会额外返回 `pre_operation_backup` / `pre_migration_backup`；旧 SQLite 来源还会返回 `legacy_sqlite_backup`，确认写入前已自动备份旧文件集。
 
-### 10.12 Git 自动更新
+### 10.13 Git 自动更新
 
 `POST /system/admin/update`
 
@@ -1655,7 +1686,7 @@ curl -N "http://localhost:5000/api/v1/system/admin/runtime/logs/stream?limit=100
 - 重启策略：只有 commit 实际变化且请求 `restart_services=true` 时才调度重启；优先使用 `systemd-run --on-active=2` 延迟重启 `twilight`、`twilight-bot`、`twilight-scheduler`，失败时回退为后台 `systemctl restart`。
 - 响应字段：`updated` 表示 commit 是否变化，`restart_requested` 表示请求是否要求重启，`restart_scheduled` 表示是否成功安排重启，`restart_method` 表示使用的调度方式。
 
-### 10.13 测试 Telegram Bot 连通性
+### 10.14 测试 Telegram Bot 连通性
 
 `POST /system/admin/bot/test`
 
@@ -1682,14 +1713,14 @@ curl -N "http://localhost:5000/api/v1/system/admin/runtime/logs/stream?limit=100
 }
 ```
 
-### 10.14 获取全部路由列表
+### 10.15 获取全部路由列表
 
 `GET /system/admin/apis`
 
 - 说明：获取后端注册的全部路由列表。
 - 认证：管理员（`AuthAdmin`）
 
-### 10.15 开发者模式与 JS 沙箱
+### 10.16 开发者模式与 JS 沙箱
 
 `POST /admin/developer-mode/activate`
 

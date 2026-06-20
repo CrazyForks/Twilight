@@ -54,13 +54,15 @@ systemd 部署对应三个服务单元：`twilight`、`twilight-bot`、`twilight
 
 > 安全说明：旧版存在「空库引导」通道——状态存储为空时第一个注册的用户无条件成为管理员。该通道已被移除，因为它是一个抢注风险：生产部署后、运维注册前的窗口内，任何访问者抢先 `POST /api/v1/users/register` 即可拿到管理员权限。现在首个注册用户只是普通用户（`RoleNormal`），除非其 UID / 用户名命中配置列表才会在创建后被提升。
 
+首次部署可使用网页初始化向导：先在 `config.toml` 任意结构块临时写入 `setup_mode = true` 或 `SetupMode = true`；`GET /api/v1/setup/status` 在该标记启用、用户数为 0 且当前配置没有 `Admin.uids` / `Admin.usernames` 时返回可用；`POST /api/v1/setup/complete` 需要显式 WebUI intent 头，成功后创建管理员、写入 `[Admin].usernames`、移除 setup 标记、下发会话 Cookie，并因用户与管理员配置已存在而永久关闭。
+
 机制（`internal/api/auth_handlers.go` + `internal/api/configured_admins.go`）：
 
 - 注册成功后，`configuredAdminMatch` 按新用户的实际 UID / 用户名比对配置列表（大小写不敏感）；命中则在创建后提升为 `RoleAdmin` 且 `Active=true`。
 - `applyConfiguredAdmins` 在启动和配置热重载时遍历现有用户，把命中 `Admin.uids` / `Admin.usernames` 的账号强制设为 `RoleAdmin` 且 `Active=true`。这是把指定账号提权为管理员的稳定机制。
-- `Admin.uids` / `Admin.usernames` 以及 `[SystemUpdate].repo_url` 属于**受保护配置字段**：网页端配置接口（schema PUT / raw TOML PUT）无法改写它们，提交的新值会被剥离或就地还原为磁盘原值，只能由运维在配置文件 / 环境变量侧设定。这避免被盗管理员会话自行增删管理员或把 git 自动更新的来源仓库指向攻击者 fork。
+- `Admin.uids` / `Admin.usernames`、网页初始化 `setup_mode` / `SetupMode` 标记以及 `[SystemUpdate].repo_url` 属于**受保护配置字段**：普通网页配置接口（schema PUT / raw TOML PUT）无法持久改写它们，提交的新值会被剥离、重渲染丢弃或就地还原为磁盘原值。初始化向导有独立的一次性写入路径，只能在显式 setup 标记 + 空系统硬门控下追加首个管理员用户名，并在保存时移除 setup 标记。这避免被盗管理员会话自行增删管理员或把 git 自动更新的来源仓库指向攻击者 fork。
 
-> 注意：旧文档描述的「从旧 Python `db/users.db` 只读导入 active 管理员做引导登录」「检测空 PostgreSQL + 已有 JSON 管理员时临时回退 JSON」「空库注册首用户成为管理员」等流程，当前代码中均已不存在。引导管理员的唯一路径是配置文件指定 `Admin.uids` / `Admin.usernames`。
+> 注意：旧文档描述的「从旧 Python `db/users.db` 只读导入 active 管理员做引导登录」「检测空 PostgreSQL + 已有 JSON 管理员时临时回退 JSON」「空库注册首用户成为管理员」等流程，当前代码中均已不存在。引导管理员的路径是网页初始化向导或由运维在配置文件指定 `Admin.uids` / `Admin.usernames`。
 
 ## 配置解析规则
 

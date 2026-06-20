@@ -232,7 +232,8 @@ Twilight 不对 Cookie 鉴权的变更类请求做 CSRF 令牌校验，也不做
 - 更换存储后端前，必须先调用 `/api/v1/system/admin/database/migrate` 并传入 `dry_run=true`。预检会返回实体数量、快照大小、目标连通性以及重启 / 配置告警。
 - 旧部署迁移应使用显式的一次性导入流程，不应在启动时隐式修改或猜测旧业务数据。
 - 管理员身份只来自配置文件：启动时 `applyConfiguredAdmins` 会按 `config.toml` 的 `admin_uids` / `admin_usernames`（大小写不敏感）把匹配到的用户提升为管理员并置为 active；注册时命中同一配置列表的账号也会被提升。默认不配置时列表为空，没有任何账号是管理员。已移除「空库首注册者无条件成为管理员」通道，避免部署窗口期被陌生人抢注提权。
-- `admin_uids` / `admin_usernames` 以及 `[SystemUpdate].repo_url` 都禁止经网页配置接口（schema / 原始 TOML 保存）改写：保存时提交值会被剥离或就地还原为磁盘原值，只能由运维在配置文件 / 环境变量侧设定。
+- 首次部署使用网页初始化向导：先在 `config.toml` 任意结构块临时写入 `setup_mode = true` 或 `SetupMode = true`；`GET /api/v1/setup/status` 仅在该标记启用、用户数为 0 且没有管理员配置时返回可用；`POST /api/v1/setup/complete` 需要 `X-Twilight-Client: webui` 与 `X-Twilight-Intent: complete-setup`，成功后创建管理员、写入 `[Admin].usernames`、移除 setup 标记并永久关闭入口。
+- `admin_uids` / `admin_usernames`、网页初始化 `setup_mode` / `SetupMode` 标记以及 `[SystemUpdate].repo_url` 都禁止经普通网页配置接口（schema / 原始 TOML 保存）持久改写：保存时提交值会被剥离、重渲染丢弃或就地还原为磁盘原值，只能由运维在配置文件 / 环境变量侧设定。初始化向导是唯一网页侧一次性写入管理员名单的例外，并受显式 setup 标记 + 空系统硬门控保护。
 
 ## Docker 本地开发
 

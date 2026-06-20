@@ -58,6 +58,7 @@ type App struct {
 	runtime               atomic.Pointer[runtimeState]
 	routes                []Route
 	runtimeMu             sync.Mutex
+	setupMu               sync.Mutex
 	configSignature       string
 	telegramBotMu         sync.Mutex
 	telegramBotCacheToken string
@@ -209,6 +210,7 @@ const (
 	twilightClientHeader         = "X-Twilight-Client"
 	twilightIntentHeader         = "X-Twilight-Intent"
 	twilightIntentCreateBindCode = "create-bind-code"
+	twilightIntentCompleteSetup  = "complete-setup"
 )
 
 func New(cfg config.Config, st *store.Store) (*App, error) {

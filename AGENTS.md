@@ -32,6 +32,7 @@
 
 | 功能域 | 后端（handler / 业务 / client） | store | 路由前缀 | 前端页面 / 组件 | 配置段 · 专题文档 |
 | ---- | ---- | ---- | ---- | ---- | ---- |
+| 网页初始化向导 | `setup_handlers.go`、`config_admin.go`(`saveInitialSetupConfigContent`) | `store.go`(User/AuditLog) | `/setup/*` | `(auth)/setup` | `setup_mode`/`[Admin]`/基础配置 · [后端 API](docs/reference/backend-api.md#103-初始化向导) |
 | 登录 / 会话 / 找回密码 | `auth_handlers.go`、`password_verify.go`、`session.go` | `login_log.go`、sessions() | `/auth/*` | `(auth)/login`、`(auth)/forgot-password` | `[Security]` |
 | 用户自助（资料/改密/头像/背景/登录通知） | `handlers.go`、`upload_handlers.go`、`safepath.go` | `store.go`(User) | `/users/me/*` | `(main)/settings`、`settings/background`、`settings/appearance` | [背景与头像](docs/features/background.md) |
 | 邮箱验证 / 找回 / 强制绑定 / 验证记录审查 / 自动清理 | `email_handlers.go`、`email_verify_service.go`、`email_client.go` | `email_verification.go` | `/users/me/email/*`、`/auth/password/email/*`、`/admin/email/*` | `components/email-*.tsx`、`admin/users/admin-email-dialog.tsx`、`(main)/admin/email` | `[Email]`/`[SAR]`名单/`[RateLimit]` · [邮箱](docs/features/email.md) |
@@ -65,6 +66,7 @@
 |------|---------|
 | `routes.go` | `registerAllRoutes()`、`registerAPIRoutes()`、`registerAdminRoutes()`、`registerAPIKeyRoutes()`、`registerSecurityRoutes()`、`registerBatchRoutes()` |
 | `auth_handlers.go` | `handleLogin`、`handleRegister`、`handleLogout`、`handleAuthMe`、`handleForgotPasswordByEmby` |
+| `setup_handlers.go` | `handleSetupStatus`、`handleSetupComplete`、`setupConfigValues` |
 | `handlers.go` | `handleAdminUsers`(行1624)、`handleAdminCreateUser`(行1681)、`handleAdminUpdateUser`(行1755)、`handleAdminDeleteUser`(行1888)、`handleAdminToggleUser`(行1956)、`handleAdminToggleEmby`(行2021)、`handleAdminForceUnbind`(行2096)、`handleAdminRenewUser`(行2296)、`handleAdminSetUserExpiry`(行2344)、`handleAdminResetPassword`(行2381)、`handleAdminSetRole`(行2420)、`handleAdminUnbindTelegram`(行2466)、`handleUpdateMe`(行62)、`handleUpdateUsername`、`handleChangePassword`、`handleGeneratedPassword`、`handleBindEmby`、`handleRegisterEmby`、`handleUnbindEmby`、`handleRenew`、`handleTelegramStatus`、`handleUnbindTelegram`、`handleTelegramRebindRequest` |
 | `regcode_handlers.go` | `handleListRegcodes`、`handleCreateRegcodes`、`handleUpdateRegcode`、`handleDeleteRegcode`、`handleBatchDeleteRegcodes`、`handleRegcodeUsers`、`handleClearRegcodeUsage` |
 | `code_use_handlers.go` | `handleUseCode`、`handleQueueStatus` |
@@ -313,6 +315,7 @@ pnpm build
 - Emby/Jellyfin 外部副作用必须先完成本地权限、容量、过期状态和绑定冲突校验；非系统管理员不得绑定或操作 Emby 管理员账号。Emby 线路下发统一走 `/api/v1/system/emby-urls` 并按用户状态/权限过滤。
 - 运行时可热重载的 `cfg/store/sessions/limiter/redis` 通过 `runtimeState` 原子快照管理。读配置或 store 时优先使用 `a.cfg()`、`a.store()` 等访问器，不要缓存会跨 reload 失效的句柄。
 - 配置入口固定为工作目录下的 `config.toml`；`--config` 只接受同一个工作目录的 `config.toml`。私密覆盖使用同目录 `config.local.toml` 或 `TWILIGHT_CONFIG_LOCAL_FILE`，环境变量以 `TWILIGHT_*` 覆盖字段。新增配置项一律落到 `config.toml`（在 `config.production.toml` 模板与后台 schema 中体现），**不要**把功能配置写进 `.env.example`——后端 `.env` 仅保留后端监听地址、站点名称等极少数部署级项目，前端展示项（API 基址 / 站点名 / 介绍 / 图标）走 `webui/.env`。
+- 网页初始化向导是唯一允许网页侧一次性写入 `[Admin]` 管理员名单的路径：必须先由运维在 `config.toml` 任意结构块临时写入 `setup_mode = true` 或 `SetupMode = true`；`/api/v1/setup/status` 和 `/api/v1/setup/complete` 必须保持 `AuthPublic` + 显式 setup 标记 + 空系统硬门控（用户数为 0 且无 `Admin.uids` / `Admin.usernames`）+ WebUI intent 头 + 限流。完成后必须移除 setup 标记；普通注册不得因空数据库自动成为管理员；普通配置管理仍必须保护管理员名单和 setup 标记，禁止后续网页改写。
 - 存储模型是单一 `store.State` 文档。新增业务实体通常是在 `internal/store/store.go` 的 `State` 上加字段，并在 `ensure()` 中补默认值；不要为邀请、公告、注册码等业务重新创建独立 SQLite 文件或独立表。
 - PostgreSQL 后端只把主状态存为 `twilight_state` 的单行 `jsonb`，并有独立 `twilight_sessions` 与 `twilight_runtime_logs`。迁移、备份、恢复必须保持快照完整性。
 - `twilight_runtime_logs` 是高写入运行日志表：读取使用 `id` 游标递增，最新快照使用最近 N 条，裁剪必须保留最近 N 条并优先使用 cutoff id / 索引友好的 SQL；不要把业务实体迁移成独立表来“优化性能”。

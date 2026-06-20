@@ -111,6 +111,13 @@
 | PUT | `/api/v1/users/me/apikeys/{key_id}` | User | 更新当前用户 API Key |
 | DELETE | `/api/v1/users/me/apikeys/{key_id}` | User | 删除当前用户 API Key |
 
+## Setup
+
+| 方法 | 路径 | 鉴权 | 说明 |
+| ---- | ---- | ---- | ---- |
+| GET | `/api/v1/setup/status` | Public | 查询初始化向导是否可用 |
+| POST | `/api/v1/setup/complete` | Public | 一次性完成初始化，需空系统硬门控与 WebUI intent 头 |
+
 ## System
 
 | 方法 | 路径 | 鉴权 | 说明 |

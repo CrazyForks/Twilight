@@ -68,6 +68,11 @@ tmdb_image_url = "https://image.tmdb.org/t/p"
 # 兼容旧写法：
 # admin_uids = [1, 2]
 # admin_usernames = ["admin", "owner"]
+#
+# 网页初始化向导必须显式临时开启。首次部署时可在任意结构块写入：
+# setup_mode = true
+# 或 SetupMode = true
+# 完成初始化后，后端会在写回主配置时移除该标记；普通网页配置管理不会保留它。
 
 # ───────── 数据库 ─────────
 [Database]

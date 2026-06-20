@@ -1138,6 +1138,7 @@ func (a *App) handleSystemInfo(w http.ResponseWriter, r *http.Request, _ Params)
 		"auth_background_url": cfg.AuthBackgroundURL,
 		"limits":              map[string]any{"user_limit": cfg.UserLimit, "stream_limit": cfg.MaxStreams},
 		"telegram_bot":        a.publicTelegramBotInfo(r.Context()),
+		"setup":               a.setupStatusData(),
 		"telegram_links":      publicTelegramLinks(cfg.TelegramGroupIDs, cfg.TelegramChannelIDs),
 		"required_telegram_links": publicTelegramLinks(
 			requiredTelegramLinkIDs(cfg.TelegramGroupIDs, cfg.TelegramForceBindGroup),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Eye, EyeOff, ArrowRight, Loader2, Send } from "lucide-react";
@@ -34,6 +34,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (systemInfo?.setup?.available) {
+      router.replace("/setup");
+    }
+  }, [router, systemInfo?.setup?.available]);
 
   const requiredTelegramLinks = [
     ...(systemInfo?.required_telegram_links?.groups || []),

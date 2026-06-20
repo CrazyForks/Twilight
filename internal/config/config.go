@@ -102,6 +102,7 @@ type Config struct {
 	RuntimeLogLimit               int
 	AdminUIDs                     []int64
 	AdminUsernames                []string
+	SetupMode                     bool
 
 	CORSOrigins       []string
 	AllowCredential   bool
@@ -328,6 +329,7 @@ func Load(path string) (Config, error) {
 	cfg.RuntimeLogLimit = reader.intValue(cfg.RuntimeLogLimit, "Global.runtime_log_limit", "runtime_log_limit")
 	cfg.AdminUIDs = reader.int64ListValue(cfg.AdminUIDs, "Admin.uids", "Admin.admin_uids", "SAR.admin_uids", "admin_uids")
 	cfg.AdminUsernames = reader.stringListValue(cfg.AdminUsernames, "Admin.usernames", "Admin.admin_usernames", "Admin.users", "SAR.admin_usernames", "admin_usernames")
+	cfg.SetupMode = reader.boolValue(cfg.SetupMode, "SetupMode", "setup_mode")
 	cfg.DatabaseDir = reader.stringValue(cfg.DatabaseDir, "Global.databases_dir", "databases_dir")
 	cfg.DatabaseDriver = strings.ToLower(reader.stringValue(cfg.DatabaseDriver, "Database.driver", "Global.database_driver", "database_driver"))
 	cfg.DatabaseURL = reader.stringValue(cfg.DatabaseURL, "Database.url", "Database.database_url", "Global.database_url", "database_url")
@@ -575,9 +577,8 @@ func defaults() Config {
 		// docker volume 丢配置）不再"自动开放注册 + Emby 直登"。运营要让外部
 		// 用户注册必须在 production.toml 显式 `[SAR] register_mode = true`，
 		// 这样审计 / 误启动场景下没有窗口可以被陌生人抢占。
-		// 注意：handleRegister 已经有"empty DB bootstrap"通道（auth_handlers.go
-		// :214 / :328）允许首位用户在 RegisterEnabled=false 的状态下注册成为
-		// Admin，因此对首次部署 UX 几乎无影响。
+		// 首次部署由网页初始化向导（/api/v1/setup/*）一次性创建管理员并写入
+		// [Admin].usernames；普通注册路径不会因为空数据库而自动获得管理员权限。
 		RegisterEnabled:                   false,
 		AllowPendingRegister:              false,
 		EmbyDirectRegisterDays:            30,

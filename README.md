@@ -48,14 +48,15 @@ cd Twilight
 cp deploy/docker/config.docker.toml config.toml
 cp deploy/docker/.env.example .env
 
-# 编辑 config.toml，至少填写 Emby URL、Token 等必要项
-# 编辑 .env，修改 PostgreSQL 密码、内部密钥、管理员用户名等部署项
+# 编辑 .env，修改 PostgreSQL 密码、内部密钥等部署项
 docker compose up -d --build
 
 # 默认访问
 # WebUI: http://localhost:3000
 # API:   默认仅在 Docker 网络内开放，由 WebUI 代理访问
 ```
+
+首次初始化前，在 `config.toml` 任意结构块中临时写入 `setup_mode = true` 或 `SetupMode = true`，再打开 WebUI。若系统没有用户且没有管理员配置，会进入初始化向导。向导会创建首个管理员、写入 `[Admin].usernames` 与基础配置；Emby、Telegram 和邮箱等非必要项可以跳过，稍后在对应管理页继续完善。完成后初始化标记会从主配置中移除，入口会永久关闭。
 
 完整说明见 [Docker 部署](docs/guides/docker.md)。
 
@@ -117,7 +118,7 @@ pnpm build
 ## 安全提示
 
 - 生产环境请启用 HTTPS，并设置安全的 session cookie。
-- 管理员账号应通过配置文件明确指定，避免部署窗口期被抢注。
+- 首次部署请在配置文件临时启用 `setup_mode = true` 后使用网页初始化向导，或直接在配置文件中明确指定管理员；普通首个注册用户不会自动成为管理员。
 - Token、密码、API Key、数据库 URL 等敏感信息不要写入公开 issue、日志或截图。
 - 配置查看和编辑必须依赖后台 schema 的脱敏逻辑，禁止明文回显 secret。
 - 公开接口、验证码、发信、绑定码和卡码检查类接口应配置合理限流。

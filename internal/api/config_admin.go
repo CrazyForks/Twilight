@@ -458,6 +458,70 @@ func (a *App) saveConfigContent(content string) (map[string]any, int, string) {
 	return info, http.StatusOK, ""
 }
 
+func (a *App) saveInitialSetupConfigContent(content, adminUsername string) (map[string]any, int, string) {
+	if strings.TrimSpace(content) == "" {
+		return nil, http.StatusBadRequest, "配置内容不能为空"
+	}
+	adminUsername = strings.TrimSpace(adminUsername)
+	if adminUsername == "" {
+		return nil, http.StatusBadRequest, "管理员用户名不能为空"
+	}
+	configFile := a.configFilePath()
+	if err := os.MkdirAll(filepath.Dir(configFile), 0o700); err != nil {
+		return nil, http.StatusInternalServerError, "创建配置目录失败"
+	}
+	normalizedContent, err := normalizeConfigContent(configFile, content)
+	if err != nil {
+		return nil, http.StatusBadRequest, "配置校验失败: " + err.Error()
+	}
+	content = strings.TrimRight(stripProtectedAdminConfig(normalizedContent), "\n") +
+		"\n\n[Admin]\nusernames = " + tomlValue([]any{adminUsername}) + "\n"
+	existing, readErr := os.ReadFile(configFile)
+	hadExisting := readErr == nil
+	if hadExisting {
+		content = restoreProtectedRepoURL(content, string(existing))
+	}
+	if err := validateConfigContent(configFile, []byte(content)); err != nil {
+		return nil, http.StatusBadRequest, "配置校验失败: " + err.Error()
+	}
+	var backupInfo *store.BackupInfo
+	if hadExisting {
+		info, err := writeConfigBackupBytes(configFile, a.configBackupDir(), existing)
+		if err != nil {
+			return nil, http.StatusInternalServerError, "备份现有配置失败"
+		}
+		backupInfo = &info
+	}
+	stamp := strconv.FormatInt(time.Now().UnixNano(), 10)
+	tmpPath := configFile + "." + stamp + ".tmp"
+	if err := os.WriteFile(tmpPath, []byte(content), 0o600); err != nil {
+		return nil, http.StatusInternalServerError, "保存临时配置失败"
+	}
+	if err := os.Rename(tmpPath, configFile); err != nil {
+		_ = os.Remove(tmpPath)
+		return nil, http.StatusInternalServerError, "替换配置失败"
+	}
+	reloadInfo, err := a.reloadConfig()
+	if err != nil {
+		if hadExisting {
+			rollbackTmp := configFile + "." + stamp + ".rollback.tmp"
+			if writeErr := os.WriteFile(rollbackTmp, existing, 0o600); writeErr == nil {
+				if renameErr := os.Rename(rollbackTmp, configFile); renameErr != nil {
+					_ = os.Remove(rollbackTmp)
+				}
+			}
+			_, _ = a.reloadConfig()
+		}
+		return nil, http.StatusBadRequest, "配置已回滚，热重载失败: " + err.Error()
+	}
+	info := map[string]any{"path": configFile, "reload": reloadInfo}
+	if backupInfo != nil {
+		info["backup"] = *backupInfo
+		info["backup_path"] = backupInfo.Path
+	}
+	return info, http.StatusOK, ""
+}
+
 func normalizeConfigContent(configFile, content string) (string, error) {
 	dir := filepath.Dir(configFile)
 	tmpPath := filepath.Join(dir, ".twilight_config_normalize_"+strconv.FormatInt(time.Now().UnixNano(), 10)+".toml")
