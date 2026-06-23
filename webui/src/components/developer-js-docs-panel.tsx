@@ -939,6 +939,86 @@ function filterRows(rows: DeveloperJSDocEntry[], query: string, category?: strin
   return rows.filter((row) => (!category || row.category === category) && matchRow(row, query));
 }
 
+// returnNote derives a short plain-language explanation for a raw return-type
+// string so admins understand the shape without reading TypeScript. It is locale
+// aware for all three locales (English is generated here, not supplied by backend).
+function returnNote(locale: TextLocale, returns?: string): string {
+  if (!returns) return "";
+  const r = returns.trim();
+  const en = locale === "en-US";
+  const zhHant = locale === "zh-Hant";
+  if (/\bok\s*:\s*boolean/.test(r) && /dry_run/.test(r)) {
+    if (en) return "Controlled write result. ok marks success; dry_run is a preview without real changes; error carries the failure reason.";
+    if (zhHant) return "受控寫入結果。ok 表示是否成功，dry_run 代表僅預覽未實際變更，error 為失敗原因。";
+    return "受控写入结果。ok 表示是否成功，dry_run 代表仅预览未实际变更，error 为失败原因。";
+  }
+  if (/^void$/.test(r)) {
+    if (en) return "No return value.";
+    return zhHant ? "無回傳值。" : "无返回值。";
+  }
+  if (/^never$/.test(r)) {
+    if (en) return "Stops the current script run; nothing is returned to the caller.";
+    return zhHant ? "結束當前腳本執行，不會回傳。" : "结束当前脚本执行，不会返回。";
+  }
+  if (/UserSnapshot/.test(r)) {
+    const arr = /\[\]/.test(r);
+    const nullable = /null/.test(r);
+    if (en) return arr ? "Array of sanitized user snapshots." : nullable ? "Sanitized user snapshot, or null when not found or not permitted." : "Sanitized user snapshot.";
+    if (zhHant) return arr ? "脫敏使用者快照陣列。" : nullable ? "脫敏使用者快照；找不到或無權限時為 null。" : "脫敏使用者快照。";
+    return arr ? "脱敏用户快照数组。" : nullable ? "脱敏用户快照；找不到或无权限时为 null。" : "脱敏用户快照。";
+  }
+  if (/Snapshot/.test(r)) {
+    const arr = /\[\]/.test(r);
+    if (en) return arr ? "Array of masked snapshots; secrets are never included." : "Masked snapshot; secrets are never included.";
+    if (zhHant) return arr ? "脫敏快照陣列，永不包含機密。" : "脫敏快照，永不包含機密。";
+    return arr ? "脱敏快照数组，永不包含机密。" : "脱敏快照，永不包含机密。";
+  }
+  if (/^boolean$/.test(r)) {
+    if (en) return "Boolean true/false result.";
+    return zhHant ? "布林 true/false 結果。" : "布尔 true/false 结果。";
+  }
+  return "";
+}
+
+// DocRowsGrouped renders entries grouped by category with a heading and count,
+// giving the Functions tab a clearer structure than a flat list when no single
+// category is selected.
+function DocRowsGrouped({ rows, labels: l, locale, emptyIcon }: { rows: DeveloperJSDocEntry[]; labels: Labels; locale: TextLocale; emptyIcon?: React.ReactNode }) {
+  if (rows.length === 0) {
+    return (
+      <div className="flex min-h-24 items-center justify-center rounded-md border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground">
+        {emptyIcon}
+        <span className="ml-2">{l.noMatches}</span>
+      </div>
+    );
+  }
+  const groups: Array<{ category: string; rows: DeveloperJSDocEntry[] }> = [];
+  const index = new Map<string, number>();
+  for (const row of rows) {
+    let pos = index.get(row.category);
+    if (pos === undefined) {
+      pos = groups.length;
+      index.set(row.category, pos);
+      groups.push({ category: row.category, rows: [] });
+    }
+    groups[pos].rows.push(row);
+  }
+  groups.sort((a, b) => a.category.localeCompare(b.category));
+  return (
+    <div className="space-y-4">
+      {groups.map((group) => (
+        <div key={group.category} className="space-y-2">
+          <div className="flex items-center gap-2 border-b pb-1">
+            <p className="text-sm font-semibold">{categoryLabel(locale, group.category)}</p>
+            <Badge variant="secondary" className="text-[10px]">{group.rows.length}</Badge>
+          </div>
+          <DocRows rows={group.rows} labels={l} locale={locale} />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function DocRows({ rows, labels: l, locale, emptyIcon }: { rows: DeveloperJSDocEntry[]; labels: Labels; locale: TextLocale; emptyIcon?: React.ReactNode }) {
   if (rows.length === 0) {
     return (
@@ -974,9 +1054,9 @@ function DocRows({ rows, labels: l, locale, emptyIcon }: { rows: DeveloperJSDocE
               {row.params.map((param) => (
                 <div key={`${row.name}-${param.name}`} className="rounded border bg-background/70 p-2 text-[11px]">
                   <div className="flex flex-wrap items-center gap-1.5">
-                    <code className="break-all font-mono">{param.name}</code>
+                    <code className="break-all font-mono font-semibold">{param.name}</code>
                     {param.type ? <Badge variant="secondary" className="text-[10px]">{param.type}</Badge> : null}
-                    <Badge variant="outline" className="text-[10px]">{param.required ? l.required : l.optional}</Badge>
+                    <Badge variant={param.required ? "default" : "outline"} className="text-[10px]">{param.required ? l.required : l.optional}</Badge>
                     {param.default ? <span className="break-all text-muted-foreground">{l.defaultValue}: <code>{param.default}</code></span> : null}
                   </div>
                   <p className="mt-1 break-words text-muted-foreground">{param.description}</p>
@@ -985,9 +1065,15 @@ function DocRows({ rows, labels: l, locale, emptyIcon }: { rows: DeveloperJSDocE
             </div>
           ) : null}
           {row.returns ? (
-            <p className="mt-2 break-words text-[11px] text-muted-foreground">
-              {l.returns}: <code>{row.returns}</code>
-            </p>
+            <div className="mt-2 rounded border border-dashed bg-background/50 p-2 text-[11px]">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="font-medium text-muted-foreground">{l.returns}:</span>
+                <code className="break-all font-mono">{row.returns}</code>
+              </div>
+              {returnNote(locale, row.returns) ? (
+                <p className="mt-1 break-words text-muted-foreground">{returnNote(locale, row.returns)}</p>
+              ) : null}
+            </div>
           ) : null}
           {row.example ? (
             <div className="mt-3">
@@ -1015,8 +1101,18 @@ function TypeCards({ locale, labels: l, query }: { locale: TextLocale; labels: L
             <Badge variant="secondary" className="text-[10px]">type</Badge>
           </div>
           <p className="mt-2 text-xs leading-relaxed text-muted-foreground">{section.description}</p>
-          <div className="mt-2 flex flex-wrap gap-1">
-            {section.fields.map((field) => <Badge key={`${section.name}-${field}`} variant="outline" className="max-w-full break-all text-[10px]">{field}</Badge>)}
+          <div className="mt-3 grid gap-1.5">
+            {section.fields.map((field) => {
+              const sep = field.indexOf(":");
+              const fieldName = sep > 0 ? field.slice(0, sep).trim() : field;
+              const fieldType = sep > 0 ? field.slice(sep + 1).trim() : "";
+              return (
+                <div key={`${section.name}-${field}`} className="flex flex-wrap items-center gap-1.5 rounded border bg-background/70 px-2 py-1 text-[11px]">
+                  <code className="break-all font-mono font-semibold">{fieldName}</code>
+                  {fieldType ? <Badge variant="secondary" className="max-w-full break-all text-[10px]">{fieldType}</Badge> : null}
+                </div>
+              );
+            })}
           </div>
           {section.example ? <pre className="mt-3 overflow-auto whitespace-pre-wrap rounded-md bg-background p-2 text-[11px]">{section.example}</pre> : null}
         </div>
@@ -1206,7 +1302,11 @@ export function DeveloperJSDocsPanel({ className, onInsertSnippet }: DeveloperJS
                   </Button>
                 ))}
               </div>
-              <DocRows rows={searchedFunctions} labels={l} locale={textLocale} emptyIcon={<Code2 className="h-4 w-4" />} />
+              {category === "" ? (
+                <DocRowsGrouped rows={searchedFunctions} labels={l} locale={textLocale} emptyIcon={<Code2 className="h-4 w-4" />} />
+              ) : (
+                <DocRows rows={searchedFunctions} labels={l} locale={textLocale} emptyIcon={<Code2 className="h-4 w-4" />} />
+              )}
               <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">{l.namespaces}</div>
               <DocRows rows={searchedNamespaces} labels={l} locale={textLocale} />
             </TabsContent>

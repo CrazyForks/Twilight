@@ -267,6 +267,69 @@ func TestClosedTicketRejectsImageUpload(t *testing.T) {
 	}
 }
 
+// uploadedTicketImageFilename 上传一张图片并从响应里取回服务端落盘后的文件名。
+func uploadedTicketImageFilename(t *testing.T, app *App, ticketID int64, name string, cookies []*http.Cookie) string {
+	t.Helper()
+	rr := uploadTicketImage(t, app, ticketID, name, pngBytes(), cookies)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("upload status = %d body=%s", rr.Code, rr.Body.String())
+	}
+	var resp struct {
+		Data struct {
+			Attachments []struct {
+				Filename string `json:"filename"`
+			} `json:"attachments"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode upload resp: %v body=%s", err, rr.Body.String())
+	}
+	if len(resp.Data.Attachments) == 0 {
+		t.Fatalf("expected at least one attachment, body=%s", rr.Body.String())
+	}
+	return resp.Data.Attachments[len(resp.Data.Attachments)-1].Filename
+}
+
+// TestClosedTicketBlocksUserImageDelete 验证工单关闭后普通用户不能删除自己的图片，
+// 但管理员仍可删除 (TASK#2)。
+func TestClosedTicketBlocksUserImageDelete(t *testing.T) {
+	app := newTestApp(t)
+	enableTicketSystem(t, app, nil)
+	user := registerAndLogin(t, app, "user", "User12345678")
+	admin := registerAndLogin(t, app, "admin", "Admin123456")
+
+	id := createTicket(t, app, "freeze-img", "freeze on close", user)
+	keepFile := uploadedTicketImageFilename(t, app, id, "keep.png", user)
+	adminFile := uploadedTicketImageFilename(t, app, id, "admincanremove.png", user)
+
+	// 关闭前用户可删除（这里只验证关闭后行为，关闭工单）。
+	if rr := doJSON(app, http.MethodPost, "/api/v1/tickets/"+strconv.FormatInt(id, 10)+"/close", ``, user); rr.Code != http.StatusOK {
+		t.Fatalf("close status = %d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// 关闭后普通用户删除应被 403 拦下。
+	delPath := "/api/v1/tickets/" + strconv.FormatInt(id, 10) + "/images/" + keepFile
+	rr := doJSON(app, http.MethodDelete, delPath, ``, user)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 deleting image on closed ticket as user, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if !bytes.Contains(rr.Body.Bytes(), []byte(ErrTicketAlreadyClosed)) {
+		t.Fatalf("expected %s, body=%s", ErrTicketAlreadyClosed, rr.Body.String())
+	}
+	if ticket, _ := app.store().Ticket(id); !ticketHasAttachment(ticket, keepFile) {
+		t.Fatalf("user image should remain after blocked delete")
+	}
+
+	// 管理员仍可删除已关闭工单的图片。
+	adminDel := doJSON(app, http.MethodDelete, "/api/v1/tickets/"+strconv.FormatInt(id, 10)+"/images/"+adminFile, ``, admin)
+	if adminDel.Code != http.StatusOK {
+		t.Fatalf("expected admin delete to succeed, got %d body=%s", adminDel.Code, adminDel.Body.String())
+	}
+	if ticket, _ := app.store().Ticket(id); ticketHasAttachment(ticket, adminFile) {
+		t.Fatalf("admin delete should remove attachment on closed ticket")
+	}
+}
+
 // TestClosedTicketsWithAttachmentsBefore 验证清理任务的查询基础 (子需求 E)。
 func TestClosedTicketsWithAttachmentsBefore(t *testing.T) {
 	app := newTestApp(t)

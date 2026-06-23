@@ -543,19 +543,53 @@ func ensureTicketDefaults(values map[string]map[string]any) {
 	if !ok {
 		return
 	}
-	raw := ticketSection["types"]
-	items, _ := raw.([]any)
+	// types 可能以 []string（configValues 由 cfg.TicketTypes 产出）或
+	// []any（旧渲染路径）形式传入，必须同时兼容，否则类型断言失败会把
+	// 用户新增的工单类型整体丢弃，回退成 ["all"]。
+	names := normalizeStringList(ticketSection["types"])
+	deduped := make([]string, 0, len(names))
 	seen := map[string]bool{}
-	for _, it := range items {
-		if s, ok := it.(string); ok && s != "" {
-			seen[strings.ToLower(s)] = true
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
 		}
+		key := strings.ToLower(name)
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		deduped = append(deduped, name)
 	}
 	// 确保至少保留一个类型，防止管理员清空所有类型导致 fallback 失效
-	if len(seen) == 0 {
-		ticketSection["types"] = []any{"all"}
-	} else {
-		ticketSection["types"] = items
+	if len(deduped) == 0 {
+		ticketSection["types"] = []string{"all"}
+		return
+	}
+	ticketSection["types"] = deduped
+}
+
+// normalizeStringList 把配置值里常见的字符串列表形态（[]string / []any /
+// 单个字符串）统一成 []string，便于 ensureTicketDefaults 这类归一逻辑复用。
+func normalizeStringList(raw any) []string {
+	switch typed := raw.(type) {
+	case []string:
+		return append([]string(nil), typed...)
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, it := range typed {
+			if s, ok := it.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return nil
+		}
+		return []string{typed}
+	default:
+		return nil
 	}
 }
 

@@ -197,7 +197,20 @@
 
 `Ticket.types` 配置受最小保护：
 - 通过配置保存页面（schema 编辑器或原始 TOML 编辑器）保存时，`ensureTicketDefaults` 自动确保至少保留一个类型（默认 `"all"`），防止管理员清空所有类型导致 fallback 失效
-- 管理员可在工单管理页自由增删改类型，默认仅含 `"all"` 一个类型
+- 管理员可在工单管理页自由增删改类型，默认仅含 `"all"` 一个类型。在此页面编辑工单类型时，修改会首先经过 `ensureTicketDefaults` 守护，接着原子写入 `internal/store` 内存状态并同步将其持久化保存回 `config.toml` 中，保障系统重启或执行高风险热重载时其配置不会发生意外丢失。
+
+### 工单关闭状态保护
+
+当工单状态处于 `closed`（已关闭）时：
+- 服务端在上传/删除图片 handler (`handleUploadTicketImage` / `handleDeleteTicketImage`) 通过安全拦截检测：如果是普通用户所属的关闭工单，则强制拒绝并返回 `ErrTicketClosed` (HTTP 403 Forbidden)，阻止其修改、剔除或销毁证据性历史图片。
+- 系统管理员 (`AuthAdmin`) 拥有不受限的调试特权，允许继续添加、编辑或剔除该特定关闭工单的内容。
+- 前端对应地将 `canDelete` 控制属性注入并下发给 [webui/src/components/ticket-images.tsx](webui/src/components/ticket-images.tsx)，联动工单主控，普通用户不可交互已结单图片。
+
+### 注册码批量加速生成约定
+
+- 服务端提供极速批量插入支持：在批量生成注册码时，传统的多轮单条循环写入操作已被全部淘汰。
+- [internal/store/store.go](internal/store/store.go) 的 `UpsertRegCodes` 方法和后端 handler 均已升级为多行一次性批量合并事务操作，生成和落库 1000 个全新卡码只需大约 100ms 左右的耗费时间。
+- 研发人员后续涉及序列注册相关的接口生成行为时，应确保底层持续复用该高效数据库合并机制。
 
 ### 注册邮箱验证约定
 
@@ -362,6 +375,15 @@ pnpm build
 - 保持现有中文文案、暗色/亮色主题、Tailwind token 和组件风格。前端改动必须兼顾桌面与移动端。
 - 资产 URL、背景 CSS、头像、上传结果等必须沿用 `api.ts` 中的安全归一化逻辑，不允许保存任意外部 `url()` 或不受控协议。
 - 前端资产、背景、头像和外链跳转必须复用 `safe-url` / API 客户端归一化逻辑，不要把后端返回值直接拼进 CSS `url()`、`href` 或图片地址。
+- 前端 JS 自定义指令编辑器高亮与符号树：
+  - 在 `webui/src/components/js-code-editor.tsx` 编写极简高亮器，采取覆盖同步技术将透明 text-area 作为输入，并把高亮分词结果 `<pre className="js-code-highlight">` 垫底叠放，语法高亮规则包含：`tok-keyword` (紫色加粗), `tok-string` (绿色), `tok-number` (黄色), `tok-comment` (斜体灰色), `tok-fn` (蓝色，匹配标识符后常跟 `(`)。
+  - 在 globals.css 注入了主题自适应高亮规则样式，设置了统一的行高与缩进样式约定 (`tabSize: 2; line-height: 1.5` 保证前后层完美垂直重合对齐，不发生错位)。
+  - 右侧嵌入了动态符号层级树面板，该面板连接 `GET /admin/developer/js-docs` 获取详细注入列表，折叠展示：
+    1. **全局绑定** (bindings) 可用对象详情。
+    2. **全局函数** (functions) 形式、返回与参数详情。
+    3. **内建命名空间** (namespaces) 如 `users`、`db`、`time` 等多级层级结构和方法文档。
+    4. **环境和配置白名单**。
+  - 所有符号支持光标绝对定位一键 `insertSnippet` 追加和用例示例预填。
 - 轮询、SSE、后台刷新和批量操作必须有停止条件、可见性判断或退避策略；终态任务要及时清理本地轮询状态，避免隐藏标签页持续请求。
 - 公告内容渲染统一走 `SafeAnnouncementContent`（`webui/src/lib/safe-render.tsx`），支持 Markdown / BBCode / plain 三种模式。Markdown 解析器为手写实现（无第三方 MD 库），仅支持安全子集（标题、列表、代码块、引用、分割线、行内格式、链接、图片）。列表项使用 `list-inside` 避免圆点被容器裁剪。公告板组件 `AnnouncementBoard` 支持长内容折叠（maxHeight + Expand/Collapse）。
 - 新增配置项时：后端 config struct 加字段 → `defaults()` 补默认值 → `config_admin.go` 的 `configSectionDefs()` 加 schema 定义 + `configValues()` 加值映射 → `config.production.toml` 模板中体现。邮箱白名单/黑名单/验证模式属于 Email section，不属于 SAR/Register section。

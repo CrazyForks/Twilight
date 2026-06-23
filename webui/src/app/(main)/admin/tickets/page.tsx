@@ -248,6 +248,7 @@ export default function AdminTicketsPage() {
                     ticketId={ticket.id}
                     attachments={ticket.attachments || []}
                     editable={!isClosed}
+                    canDelete
                     maxSize={imageMaxSize}
                     maxCount={imageMaxCount}
                     onChange={() => void reload()}

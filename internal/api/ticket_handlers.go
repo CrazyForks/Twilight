@@ -428,7 +428,8 @@ func (a *App) handleGetTicketImage(w http.ResponseWriter, r *http.Request, param
 	http.ServeFile(w, r, target)
 }
 
-// handleDeleteTicketImage 删除工单图片。本人或管理员可删除。
+// handleDeleteTicketImage 删除工单图片。工单关闭前本人或管理员可删除；
+// 关闭后仅管理员可删除（冻结用户侧的历史图片）。
 func (a *App) handleDeleteTicketImage(w http.ResponseWriter, r *http.Request, params Params) {
 	cfg := a.cfg()
 	if !cfg.TicketSystemEnabled {
@@ -445,6 +446,11 @@ func (a *App) handleDeleteTicketImage(w http.ResponseWriter, r *http.Request, pa
 	ticket, allowed := a.ticketAccessible(p, id)
 	if !allowed {
 		failWithCode(w, http.StatusNotFound, ErrTicketNotFound, "工单不存在")
+		return
+	}
+	// 工单关闭后冻结历史图片：普通用户不能再删除自己的图片，仅管理员可清理。
+	if ticket.Status == "closed" && p.User.Role != store.RoleAdmin {
+		failWithCode(w, http.StatusForbidden, ErrTicketAlreadyClosed, "工单已关闭，无法删除图片")
 		return
 	}
 	if !ticketHasAttachment(ticket, filename) {

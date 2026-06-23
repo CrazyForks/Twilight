@@ -66,7 +66,7 @@ func (a *App) telegramHandleCustomCommand(ctx context.Context, command string, c
 		a.auditEntryIP("telegram", user.UID, user.Username, "telegram_js_command_blocked", "system", user.UID, map[string]any{
 			"command":      telegramCommand(command),
 			"reason":       err.Error(),
-			"preset_id":    valueOrNilInt64(presetID),
+			"preset_id":    zeroNil(presetID),
 			"private_chat": privateChat,
 		})
 		_ = a.telegramSendMessage(ctx, c.ChatID, "Custom JS command is not available. Please contact an administrator.")
@@ -107,13 +107,6 @@ func (a *App) telegramResolveJSCustomCommand(script string) (string, int64, erro
 		return "", id, fmt.Errorf("preset_not_found")
 	}
 	return strings.TrimSpace(preset.Code), id, nil
-}
-
-func valueOrNilInt64(value int64) any {
-	if value == 0 {
-		return nil
-	}
-	return value
 }
 
 func (a *App) telegramRunJSCustomCommand(code string, c telegramCommandCtx, privateChat bool) (string, []string, error) {

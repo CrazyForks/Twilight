@@ -5,6 +5,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   BookOpen,
+  ChevronDown,
+  ChevronRight,
   Code2,
   Copy,
   FileCode2,
@@ -20,10 +22,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { JsCodeEditor } from "@/components/js-code-editor";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
-import type { DeveloperJSPreset } from "@/lib/api-types";
+import type { DeveloperJSPreset, DeveloperJSDocs, DeveloperJSDocEntry } from "@/lib/api-types";
 import { useI18n, type MessageKey } from "@/lib/i18n";
 
 type DeveloperTemplate = {
@@ -362,6 +364,9 @@ export default function AdminDeveloperPage() {
   const [serverPresets, setServerPresets] = useState<DeveloperJSPreset[]>([]);
   const [activeTemplateId, setActiveTemplateId] = useState("hello");
   const [result, setResult] = useState<Awaited<ReturnType<typeof api.previewDeveloperJSCommand>>["data"] | null>(null);
+  const [docs, setDocs] = useState<DeveloperJSDocs | null>(null);
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
 
   const loadPresets = useCallback(async () => {
     try {
@@ -374,9 +379,56 @@ export default function AdminDeveloperPage() {
     }
   }, [t, toast]);
 
+  const loadDocs = useCallback(async () => {
+    try {
+      const res = await api.getDeveloperJSDocs();
+      if (res.success && res.data) {
+        setDocs(res.data);
+      }
+    } catch {
+      // 符号树为辅助功能，加载失败时静默降级，不打断编辑器使用。
+    }
+  }, []);
+
+  const toggleGroup = useCallback((key: string) => {
+    setExpandedGroups((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
+  }, []);
+
+  const isExpanded = useCallback((key: string, defaultVal = false) => {
+    if (expandedGroups[key] !== undefined) {
+      return expandedGroups[key];
+    }
+    return defaultVal;
+  }, [expandedGroups]);
+
+  const toggleSymbolDetails = useCallback((name: string) => {
+    setSelectedSymbol((prev) => (prev === name ? null : name));
+  }, []);
+
+  const groupedNamespaces = useMemo(() => {
+    if (!docs || !docs.namespaces) return {};
+    const groups: Record<string, DeveloperJSDocEntry[]> = {};
+    docs.namespaces.forEach((entry) => {
+      const parts = entry.name.split(".");
+      const ns = parts[0] || "other";
+      if (!groups[ns]) {
+        groups[ns] = [];
+      }
+      groups[ns].push(entry);
+    });
+    return groups;
+  }, [docs]);
+
   useEffect(() => {
     void loadPresets();
   }, [loadPresets]);
+
+  useEffect(() => {
+    void loadDocs();
+  }, [loadDocs]);
 
   const customTemplates = useMemo(() => serverPresets.map(presetToTemplate), [serverPresets]);
   const allTemplates = useMemo(() => [...builtInTemplates, ...customTemplates], [customTemplates]);
@@ -609,12 +661,13 @@ export default function AdminDeveloperPage() {
                 {t("adminDeveloper.copyCode")}
               </Button>
             </div>
-            <Textarea
+            <JsCodeEditor
               ref={editorRef}
               value={code}
-              onChange={(event) => setCode(event.target.value)}
-              className="min-h-[440px] font-mono text-sm"
+              onChange={setCode}
+              className="min-h-[440px]"
               spellCheck={false}
+              ariaLabel={t("adminDeveloper.editorTitle")}
             />
             <Alert className="border-sky-500/40 bg-sky-500/10">
               <BookOpen className="h-4 w-4" />
@@ -660,6 +713,346 @@ export default function AdminDeveloperPage() {
               </Button>
             </CardContent>
           </Card>
+
+          {docs && (
+            <Card>
+              <CardHeader className="pb-3 border-b">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Code2 className="h-4 w-4 text-primary" />
+                  {t("adminDeveloper.symbolTreeTitle")}
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  {t("adminDeveloper.symbolTreeDescription")}
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4 text-sm max-h-[600px] overflow-y-auto pr-1 pt-4">
+                {/* 1. Global bindings */}
+                <div className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup("bindings")}
+                    className="flex w-full items-center justify-between py-1 text-xs font-semibold text-muted-foreground hover:text-foreground"
+                  >
+                    <span className="flex items-center gap-1">
+                      {isExpanded("bindings", true) ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                      {t("adminDeveloper.groupBindings")}
+                    </span>
+                    <Badge variant="secondary" className="px-1 text-[10px]">
+                      {docs.bindings?.length || 0}
+                    </Badge>
+                  </button>
+                  {isExpanded("bindings", true) && docs.bindings && (
+                    <div className="pl-3 space-y-1 border-l ml-1.5 border-muted">
+                      {docs.bindings.map((item) => (
+                        <div key={item.name} className="group flex flex-col rounded hover:bg-muted/30 p-1">
+                          <div className="flex items-center justify-between gap-2">
+                            <button
+                              type="button"
+                              onClick={() => toggleSymbolDetails(item.name)}
+                              className="font-mono text-xs text-left hover:text-primary break-all font-semibold flex-1"
+                            >
+                              {item.name}
+                            </button>
+                            <div className="flex gap-1 opacity-85 group-hover:opacity-100">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="h-5 w-5 rounded p-0 text-[10px]"
+                                title={t("adminDeveloper.btnInsert")}
+                                onClick={() => insertSnippet(item.name)}
+                              >
+                                <Plus className="h-3 w-3" />
+                              </Button>
+                            </div>
+                          </div>
+                          {selectedSymbol === item.name && (
+                            <div className="mt-1.5 text-xs text-muted-foreground space-y-1 bg-muted/20 p-2 rounded">
+                              <p className="text-foreground">{item.description}</p>
+                              {item.fields && item.fields.length > 0 && (
+                                <p className="break-all font-mono text-[10px]">
+                                  <span className="font-semibold text-primary">{t("adminDeveloper.fieldsLabel")}</span>
+                                  {item.fields.join(", ")}
+                                </p>
+                              )}
+                              {item.example && (
+                                <div className="mt-1 space-y-1">
+                                  <p className="font-semibold text-[10px] text-primary">{t("adminDeveloper.exampleLabel")}</p>
+                                  <pre className="font-mono text-[10px] bg-background border rounded px-1.5 py-1 whitespace-pre-wrap leading-normal break-all">
+                                    {item.example}
+                                  </pre>
+                                  <Button
+                                    size="sm"
+                                    type="button"
+                                    variant="outline"
+                                    className="h-5 text-[10px] px-1.5 py-0 mt-1"
+                                    onClick={() => insertSnippet(item.example || "")}
+                                  >
+                                    {t("adminDeveloper.btnExample")}
+                                  </Button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 2. Global functions */}
+                <div className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup("functions")}
+                    className="flex w-full items-center justify-between py-1 text-xs font-semibold text-muted-foreground hover:text-foreground"
+                  >
+                    <span className="flex items-center gap-1">
+                      {isExpanded("functions", true) ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                      {t("adminDeveloper.groupFunctions")}
+                    </span>
+                    <Badge variant="secondary" className="px-1 text-[10px]">
+                      {docs.functions?.length || 0}
+                    </Badge>
+                  </button>
+                  {isExpanded("functions", true) && docs.functions && (
+                    <div className="pl-3 space-y-1 border-l ml-1.5 border-muted">
+                      {docs.functions.map((item) => {
+                        return (
+                          <div key={item.name} className="group flex flex-col rounded hover:bg-muted/30 p-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <button
+                                type="button"
+                                onClick={() => toggleSymbolDetails(item.name)}
+                                className="font-mono text-xs text-left hover:text-primary break-all font-semibold flex-1"
+                              >
+                                {item.name}
+                              </button>
+                              <div className="flex gap-1 opacity-85 group-hover:opacity-100">
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  className="h-5 w-5 rounded p-0 text-[10px]"
+                                  title={t("adminDeveloper.btnInsert")}
+                                  onClick={() => insertSnippet(item.name)}
+                                >
+                                  <Plus className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            </div>
+                            {selectedSymbol === item.name && (
+                              <div className="mt-1.5 text-xs text-muted-foreground space-y-1 bg-muted/20 p-2 rounded">
+                                <p className="text-foreground">{item.description}</p>
+                                {item.returns && (
+                                  <p className="font-mono text-[10px]">
+                                    <span className="font-semibold text-primary">{t("adminDeveloper.returnsLabel")}</span>
+                                    {item.returns}
+                                  </p>
+                                )}
+                                {item.params && item.params.length > 0 && (
+                                  <div className="space-y-0.5">
+                                    <span className="font-semibold text-[10px] text-primary">{t("adminDeveloper.paramsLabel")}</span>
+                                    <ul className="list-disc list-inside space-y-0.5 mt-0.5 font-mono text-[10px]">
+                                      {item.params.map(p => (
+                                        <li key={p.name} className="list-item">
+                                          <span className="font-semibold text-foreground">{p.name}</span>
+                                          {p.type && <span className="text-muted-foreground"> ({p.type})</span>}
+                                          {p.required && <span className="text-destructive font-semibold"> *</span>}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                )}
+                                {item.example && (
+                                  <div className="mt-1 space-y-1">
+                                    <p className="font-semibold text-[10px] text-primary">{t("adminDeveloper.exampleLabel")}</p>
+                                    <pre className="font-mono text-[10px] bg-background border rounded px-1.5 py-1 whitespace-pre-wrap leading-normal break-all">
+                                      {item.example}
+                                    </pre>
+                                    <Button
+                                      size="sm"
+                                      type="button"
+                                      variant="outline"
+                                      className="h-5 text-[10px] px-1.5 py-0 mt-1"
+                                      onClick={() => insertSnippet(item.example || "")}
+                                    >
+                                      {t("adminDeveloper.btnExample")}
+                                    </Button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* 3. Grouped Namespaces */}
+                <div className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup("namespaces")}
+                    className="flex w-full items-center justify-between py-1 text-xs font-semibold text-muted-foreground hover:text-foreground"
+                  >
+                    <span className="flex items-center gap-1">
+                      {isExpanded("namespaces", false) ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                      {t("adminDeveloper.groupNamespaces")}
+                    </span>
+                    <Badge variant="secondary" className="px-1 text-[10px]">
+                      {docs.namespaces?.length || 0}
+                    </Badge>
+                  </button>
+                  {isExpanded("namespaces", false) && (
+                    <div className="pl-3 space-y-2 border-l ml-1.5 border-muted">
+                      {Object.entries(groupedNamespaces).map(([ns, entries]) => (
+                        <div key={ns} className="space-y-1">
+                          <button
+                            type="button"
+                            onClick={() => toggleGroup(`ns-${ns}`)}
+                            className="flex w-full items-center justify-between py-0.5 text-[11px] font-bold text-foreground/80 hover:text-foreground"
+                          >
+                            <span className="flex items-center gap-1 font-mono">
+                              {isExpanded(`ns-${ns}`, false) ? <ChevronDown className="h-2.5 w-2.5" /> : <ChevronRight className="h-2.5 w-2.5" />}
+                              {ns}
+                            </span>
+                            <span className="text-[10px] opacity-60">({entries.length})</span>
+                          </button>
+                          {isExpanded(`ns-${ns}`, false) && (
+                            <div className="pl-2 space-y-1 border-l border-muted/50 ml-1">
+                              {entries.map((item) => (
+                                <div key={item.name} className="group flex flex-col rounded hover:bg-muted/30 p-1">
+                                  <div className="flex items-center justify-between gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleSymbolDetails(item.name)}
+                                      className="font-mono text-[11px] text-left hover:text-primary break-all font-medium flex-1"
+                                    >
+                                      {item.name}
+                                    </button>
+                                    <div className="flex gap-1 opacity-85 group-hover:opacity-100">
+                                      <Button
+                                        size="icon"
+                                        variant="ghost"
+                                        className="h-4 w-4 rounded p-0 text-[10px]"
+                                        title={t("adminDeveloper.btnInsert")}
+                                        onClick={() => insertSnippet(item.name)}
+                                      >
+                                        <Plus className="h-2.5 w-2.5" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                  {selectedSymbol === item.name && (
+                                    <div className="mt-1 text-xs text-muted-foreground space-y-1 bg-muted/20 p-2 rounded">
+                                      <p className="text-foreground">{item.description}</p>
+                                      {item.returns && (
+                                        <p className="font-mono text-[10px]">
+                                          <span className="font-semibold text-primary">{t("adminDeveloper.returnsLabel")}</span>
+                                          {item.returns}
+                                        </p>
+                                      )}
+                                      {item.params && item.params.length > 0 && (
+                                        <div className="space-y-0.5">
+                                          <span className="font-semibold text-[10px] text-primary">{t("adminDeveloper.paramsLabel")}</span>
+                                          <ul className="list-disc list-inside space-y-0.5 mt-0.5 font-mono text-[10px]">
+                                            {item.params.map(p => (
+                                              <li key={p.name} className="list-item">
+                                                <span className="font-semibold text-foreground">{p.name}</span>
+                                                {p.type && <span className="text-muted-foreground font-light"> ({p.type})</span>}
+                                              </li>
+                                            ))}
+                                          </ul>
+                                        </div>
+                                      )}
+                                      {item.example && (
+                                        <div className="mt-1 space-y-1">
+                                          <p className="font-semibold text-[10px] text-primary">{t("adminDeveloper.exampleLabel")}</p>
+                                          <pre className="font-mono text-[10px] bg-background border rounded px-1.5 py-1 whitespace-pre-wrap leading-normal break-all">
+                                            {item.example}
+                                          </pre>
+                                          <Button
+                                            size="sm"
+                                            type="button"
+                                            variant="outline"
+                                            className="h-5 text-[10px] px-1.5 py-0 mt-1"
+                                            onClick={() => insertSnippet(item.example || "")}
+                                          >
+                                            {t("adminDeveloper.btnExample")}
+                                          </Button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* 4. Configuration and Environment keys */}
+                <div className="space-y-1">
+                  <button
+                    type="button"
+                    onClick={() => toggleGroup("configEnv")}
+                    className="flex w-full items-center justify-between py-1 text-xs font-semibold text-muted-foreground hover:text-foreground"
+                  >
+                    <span className="flex items-center gap-1">
+                      {isExpanded("configEnv", false) ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                      {t("adminDeveloper.groupConfigEnv")}
+                    </span>
+                    <Badge variant="secondary" className="px-1 text-[10px]">
+                      {(docs.config_keys?.length || 0) + (docs.env_keys?.length || 0)}
+                    </Badge>
+                  </button>
+                  {isExpanded("configEnv", false) && (
+                    <div className="pl-3 space-y-3 border-l ml-1.5 border-muted">
+                      {docs.config_keys && docs.config_keys.length > 0 && (
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{t("adminDeveloper.configKeysTitle")}</p>
+                          <div className="flex flex-wrap gap-1">
+                            {docs.config_keys.map((k) => (
+                              <button
+                                key={k}
+                                type="button"
+                                title={t("adminDeveloper.clickToInsertKey")}
+                                onClick={() => insertSnippet(`config("${k}")`)}
+                                className="font-mono text-[10px] px-1.5 py-0.5 rounded border bg-background hover:bg-muted hover:text-primary transition-colors text-left truncate max-w-full"
+                              >
+                                {k}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {docs.env_keys && docs.env_keys.length > 0 && (
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">{t("adminDeveloper.envKeysTitle")}</p>
+                          <div className="flex flex-wrap gap-1">
+                            {docs.env_keys.map((k) => (
+                              <button
+                                key={k}
+                                type="button"
+                                title={t("adminDeveloper.clickToInsertKey")}
+                                onClick={() => insertSnippet(`env("${k}")`)}
+                                className="font-mono text-[10px] px-1.5 py-0.5 rounded border bg-background hover:bg-muted hover:text-primary transition-colors text-left truncate max-w-full border-muted-foreground/30"
+                              >
+                                {k}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {result && (
             <Card>

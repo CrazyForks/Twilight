@@ -652,4 +652,24 @@
   @media (min-width: 768px) {
     .tw-compact .section-surface { padding: 1.25rem; }
   }
+
+  /* JS 代码编辑器语法高亮配色（叠加在透明 textarea 之下的 pre 层）。 */
+  .js-code-highlight {
+    line-height: 1.5;
+    tab-size: 2;
+    color: hsl(var(--foreground));
+  }
+  .js-code-highlight .tok-keyword { color: #c084fc; font-weight: 600; }
+  .js-code-highlight .tok-string { color: #6ee7b7; }
+  .js-code-highlight .tok-number { color: #fbbf24; }
+  .js-code-highlight .tok-comment { color: hsl(var(--muted-foreground)); font-style: italic; }
+  .js-code-highlight .tok-fn { color: #60a5fa; }
+  .light .js-code-highlight .tok-keyword,
+  :root:not(.dark) .js-code-highlight .tok-keyword { color: #9333ea; }
+  .light .js-code-highlight .tok-string,
+  :root:not(.dark) .js-code-highlight .tok-string { color: #059669; }
+  .light .js-code-highlight .tok-number,
+  :root:not(.dark) .js-code-highlight .tok-number { color: #b45309; }
+  .light .js-code-highlight .tok-fn,
+  :root:not(.dark) .js-code-highlight .tok-fn { color: #2563eb; }
 }

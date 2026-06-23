@@ -3567,6 +3567,40 @@ func (s *Store) UpsertRegCode(code RegCode) error {
 	})
 }
 
+// UpsertRegCodes 在一次状态写入中批量插入/更新注册码。批量生成注册码时用它替代
+// 逐条 UpsertRegCode，避免每条都触发一次全量状态落盘（saveLocked 每次序列化整个
+// state，逐条写入时磁盘开销随数量线性放大）。单条字段默认值与 UpsertRegCode 保持一致。
+func (s *Store) UpsertRegCodes(codes []RegCode) error {
+	if len(codes) == 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mutateAndSaveLocked(func() error {
+		now := time.Now().Unix()
+		for _, code := range codes {
+			_, exists := s.state.RegCodes[code.Code]
+			if code.CreatedAt == 0 {
+				code.CreatedAt = now
+			}
+			if code.CreatedTime == 0 {
+				code.CreatedTime = code.CreatedAt
+			}
+			if code.ValidityTime == 0 {
+				code.ValidityTime = -1
+			}
+			if code.UseCountLimit == 0 {
+				code.UseCountLimit = 1
+			}
+			if !exists && !code.Active && code.UseCount == 0 {
+				code.Active = true
+			}
+			s.state.RegCodes[code.Code] = code
+		}
+		return nil
+	})
+}
+
 func (s *Store) ConsumeRegCode(code string, uid, telegramID int64) (RegCode, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

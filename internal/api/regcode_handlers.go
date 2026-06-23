@@ -137,6 +137,10 @@ func (a *App) handleCreateRegcodes(w http.ResponseWriter, r *http.Request, _ Par
 	if algorithm == "digits-12" || algorithm == "hex10" {
 		maxAttempts = 30
 	}
+	admin := current(r).User
+	note := truncateString(stringValue(payload, "note"), 120)
+	isDecoy := boolValue(payload, "decoy", false)
+	pending := make([]store.RegCode, 0, count)
 	for i := 0; i < count; i++ {
 		code := ""
 		for attempt := 0; attempt < maxAttempts; attempt++ {
@@ -152,11 +156,12 @@ func (a *App) handleCreateRegcodes(w http.ResponseWriter, r *http.Request, _ Par
 			return
 		}
 		seen[code] = true
-		admin := current(r).User
-		if err := a.store().UpsertRegCode(store.RegCode{Code: code, Type: codeType, ValidityTime: validity, UseCountLimit: useLimit, Days: days, Note: truncateString(stringValue(payload, "note"), 120), IsDecoy: boolValue(payload, "decoy", false), TargetUsername: targetUsername, TargetTelegramUsername: targetTelegramUsername, TargetTelegramID: targetTelegramID, Active: true, Source: "admin", CreatorUID: admin.UID}); statusFromError(w, err) {
-			return
-		}
+		pending = append(pending, store.RegCode{Code: code, Type: codeType, ValidityTime: validity, UseCountLimit: useLimit, Days: days, Note: note, IsDecoy: isDecoy, TargetUsername: targetUsername, TargetTelegramUsername: targetTelegramUsername, TargetTelegramID: targetTelegramID, Active: true, Source: "admin", CreatorUID: admin.UID})
 		codes = append(codes, code)
+	}
+	// 一次性落盘：避免逐条 UpsertRegCode 触发 count 次全量状态序列化写入。
+	if err := a.store().UpsertRegCodes(pending); statusFromError(w, err) {
+		return
 	}
 	a.audit(r, "create_regcode", "admin", 0, map[string]any{
 		"count": len(codes), "type": codeType, "days": days, "codes": codes,

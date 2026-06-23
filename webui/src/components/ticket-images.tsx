@@ -13,8 +13,10 @@ const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp", "im
 interface TicketImagesProps {
   ticketId: number;
   attachments: TicketAttachment[];
-  /** 是否允许上传/删除（默认 true）。工单关闭后传 false 仅展示。 */
+  /** 是否允许上传（默认 true）。工单关闭后传 false 仅展示。 */
   editable?: boolean;
+  /** 是否允许删除图片。不传时跟随 editable；工单关闭后管理员仍可删除，故管理端单独传 true。 */
+  canDelete?: boolean;
   /** 单张最大字节数（来自系统信息 limits.ticket_image_max_size）。 */
   maxSize: number;
   /** 最大图片数量（来自系统信息 limits.ticket_image_max_count）。 */
@@ -27,6 +29,7 @@ export function TicketImages({
   ticketId,
   attachments,
   editable = true,
+  canDelete,
   maxSize,
   maxCount,
   onChange,
@@ -40,6 +43,7 @@ export function TicketImages({
   const sizeMB = Math.round((maxSize / (1024 * 1024)) * 10) / 10;
   const list = Array.isArray(attachments) ? attachments : [];
   const canAdd = editable && list.length < maxCount;
+  const allowDelete = canDelete ?? editable;
 
   const handlePick = () => inputRef.current?.click();
 
@@ -91,7 +95,7 @@ export function TicketImages({
     }
   };
 
-  if (!editable && list.length === 0) return null;
+  if (!editable && !allowDelete && list.length === 0) return null;
 
   return (
     <div className="space-y-2">
@@ -113,7 +117,7 @@ export function TicketImages({
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img src={src} alt={att.filename} className="h-full w-full object-cover" loading="lazy" />
               </a>
-              {editable && (
+              {allowDelete && (
                 <button
                   type="button"
                   onClick={() => handleDelete(att.filename)}
