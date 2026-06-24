@@ -1196,6 +1196,7 @@ export interface ViolationLog {
 // ==================== Bangumi 同步 ====================
 export interface BangumiSyncStatus {
   bgm_mode: boolean;
+  bgm_manage_mode: boolean;
   bgm_token_set: boolean;
   sync_ready: boolean;
   total_records: number;

@@ -102,6 +102,26 @@ func postJSONWithTimeout(ctx context.Context, endpoint string, headers map[strin
 	return doJSONRequestWithTimeout(req, dst, timeout)
 }
 
+func patchJSON(ctx context.Context, endpoint string, headers map[string]string, body any, dst any) error {
+	return patchJSONWithTimeout(ctx, endpoint, headers, body, dst, 10*time.Second)
+}
+
+func patchJSONWithTimeout(ctx context.Context, endpoint string, headers map[string]string, body any, dst any, timeout time.Duration) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, endpoint, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	return doJSONRequestWithTimeout(req, dst, timeout)
+}
+
 func doJSONRequest(req *http.Request, dst any) error {
 	return doJSONRequestWithTimeout(req, dst, 10*time.Second)
 }

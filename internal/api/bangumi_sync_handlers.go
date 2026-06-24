@@ -23,12 +23,13 @@ func (a *App) handleBangumiSyncStatus(w http.ResponseWriter, r *http.Request, _ 
 		}
 	}
 	ok(w, "OK", map[string]any{
-		"bgm_mode":      u.BGMMode,
-		"bgm_token_set": u.BGMToken != "",
-		"sync_ready":    u.BGMMode && u.BGMToken != "",
-		"total_records": totalRecords,
-		"synced_count":  syncedCount,
-		"recent_logs":   logs,
+		"bgm_mode":        u.BGMMode,
+		"bgm_manage_mode": u.BGMManageMode,
+		"bgm_token_set":   u.BGMToken != "",
+		"sync_ready":      u.BGMMode && u.BGMToken != "",
+		"total_records":   totalRecords,
+		"synced_count":    syncedCount,
+		"recent_logs":     logs,
 	})
 }
 
@@ -217,6 +218,14 @@ func (a *App) handleBangumiMe(w http.ResponseWriter, r *http.Request, _ Params) 
 		return
 	}
 
+	if !u.BGMManageMode {
+		ok(w, "Management disabled", map[string]any{
+			"bgm_token_set":       true,
+			"bgm_manage_disabled": true,
+		})
+		return
+	}
+
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 
@@ -239,11 +248,11 @@ func (a *App) handleBangumiMe(w http.ResponseWriter, r *http.Request, _ Params) 
 	}
 
 	// Fetch watching collections (type 3 - 在看)
-	watching, watchingTotal, _ := a.getBangumiUserCollections(ctx, username, u.BGMToken, 3)
+	watching, watchingTotal, _ := a.getBangumiUserCollections(ctx, username, u.BGMToken, 3, 8, 0)
 	// Fetch wishlist collections (type 1 - 想看)
-	wishlist, wishlistTotal, _ := a.getBangumiUserCollections(ctx, username, u.BGMToken, 1)
+	wishlist, wishlistTotal, _ := a.getBangumiUserCollections(ctx, username, u.BGMToken, 1, 8, 0)
 	// Fetch collected collections (type 2 - 看过)
-	collected, collectedTotal, _ := a.getBangumiUserCollections(ctx, username, u.BGMToken, 2)
+	collected, collectedTotal, _ := a.getBangumiUserCollections(ctx, username, u.BGMToken, 2, 8, 0)
 
 	ok(w, "OK", map[string]any{
 		"bgm_token_set":   true,
@@ -256,4 +265,87 @@ func (a *App) handleBangumiMe(w http.ResponseWriter, r *http.Request, _ Params) 
 		"collected":       collected,
 		"collected_total": collectedTotal,
 	})
+}
+
+func (a *App) handleBangumiCollections(w http.ResponseWriter, r *http.Request, _ Params) {
+	p := current(r)
+	u := p.User
+	if u.BGMToken == "" {
+		failWithCode(w, http.StatusBadRequest, ErrBangumiTokenMissing, "请先配置 Bangumi Token")
+		return
+	}
+	if !u.BGMManageMode {
+		failWithCode(w, http.StatusBadRequest, ErrInternal, "BGM 管理功能未启用")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	me, _, err := a.getBangumiMe(ctx, u.BGMToken)
+	if err != nil {
+		failWithCode(w, http.StatusBadGateway, ErrInternal, "获取 Bangumi 用户信息失败: "+err.Error())
+		return
+	}
+	username := asString(me["username"])
+	if username == "" {
+		username = fmt.Sprint(me["id"])
+	}
+
+	collectType := queryInt(r, "type", 3) // 1:想看, 2:看过, 3:在看
+	limit := queryInt(r, "limit", 20)
+	offset := queryInt(r, "offset", 0)
+
+	entries, total, err := a.getBangumiUserCollections(ctx, username, u.BGMToken, collectType, limit, offset)
+	if err != nil {
+		failWithCode(w, http.StatusBadGateway, ErrInternal, "获取 Bangumi 收藏列表失败: "+err.Error())
+		return
+	}
+
+	ok(w, "OK", map[string]any{
+		"entries": entries,
+		"total":   total,
+		"limit":   limit,
+		"offset":  offset,
+	})
+}
+
+func (a *App) handleUpdateBangumiCollection(w http.ResponseWriter, r *http.Request, ps Params) {
+	subjectID := ps["subject_id"]
+	if subjectID == "" {
+		failWithCode(w, http.StatusBadRequest, ErrInternal, "缺少 Subject ID")
+		return
+	}
+
+	p := current(r)
+	u := p.User
+	if u.BGMToken == "" {
+		failWithCode(w, http.StatusBadRequest, ErrBangumiTokenMissing, "请先配置 Bangumi Token")
+		return
+	}
+	if !u.BGMManageMode {
+		failWithCode(w, http.StatusBadRequest, ErrInternal, "BGM 管理功能未启用")
+		return
+	}
+
+	payload := decodeMap(r)
+	collectType := int(numeric(payload["type"])) // 1: 想看, 2: 看过, 3: 在看, 4: 搁置, 5: 抛弃
+	epStatus := int(numeric(payload["ep_status"]))
+
+	if collectType <= 0 || collectType > 5 {
+		failWithCode(w, http.StatusBadRequest, ErrInternal, "收藏状态不合法 (应为 1-5)")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+
+	err := a.updateBangumiCollection(ctx, subjectID, u.BGMToken, collectType, epStatus)
+	if err != nil {
+		failWithCode(w, http.StatusBadGateway, ErrInternal, "更新 Bangumi 收藏失败: "+err.Error())
+		return
+	}
+
+	a.audit(r, "update_bangumi_collection", "user", 0, map[string]any{"subject_id": subjectID, "type": collectType, "ep_status": epStatus})
+	ok(w, "更新成功", nil)
 }

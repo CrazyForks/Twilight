@@ -1397,6 +1397,7 @@ func publicUser(u store.User) map[string]any {
 		"avatar":                   u.Avatar,
 		"background":               u.Background,
 		"bgm_mode":                 u.BGMMode,
+		"bgm_manage_mode":          u.BGMManageMode,
 		"bgm_token_set":            u.BGMToken != "",
 		"bgm_sync_ready":           u.BGMMode && u.BGMToken != "",
 		"created_at":               u.CreatedAt,

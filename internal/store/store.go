@@ -133,6 +133,7 @@ type User struct {
 	Avatar                string   `json:"avatar,omitempty"`
 	Background            string   `json:"background,omitempty"`
 	BGMMode               bool     `json:"bgm_mode"`
+	BGMManageMode         bool     `json:"bgm_manage_mode"`
 	BGMToken              string   `json:"bgm_token,omitempty"`
 	CreatedAt             int64    `json:"created_at"`
 	RegisterTime          int64    `json:"register_time"`
@@ -933,8 +934,17 @@ func (s *State) ensure() {
 		s.Users = map[int64]User{}
 	}
 	for uid, u := range s.Users {
+		changed := false
 		if !u.EmbyGrantLocked && (u.PendingEmby || strings.TrimSpace(u.RegistrationSource) != "" || strings.TrimSpace(u.RegistrationCode) != "") {
 			u.EmbyGrantLocked = true
+			changed = true
+		}
+		// Backfill BGMManageMode to true for users who already have BGMToken set, so they keep management features by default
+		if u.BGMToken != "" && !u.BGMManageMode && u.BGMMode {
+			u.BGMManageMode = true
+			changed = true
+		}
+		if changed {
 			s.Users[uid] = u
 		}
 	}

@@ -166,12 +166,15 @@ func (a *App) getBangumiMe(ctx context.Context, token string) (map[string]any, b
 	return payload, false, nil
 }
 
-func (a *App) getBangumiUserCollections(ctx context.Context, username string, token string, collectType int) ([]map[string]any, int, error) {
+func (a *App) getBangumiUserCollections(ctx context.Context, username string, token string, collectType int, limit int, offset int) ([]map[string]any, int, error) {
+	if limit <= 0 {
+		limit = 8
+	}
 	values := url.Values{
 		"subject_type": {"2"}, // 2 for anime
-		"type":         {strconv.Itoa(collectType)}, // 1:想看, 3:在看
-		"limit":        {"8"},
-		"offset":       {"0"},
+		"type":         {strconv.Itoa(collectType)}, // 1:想看, 2:看过, 3:在看
+		"limit":        {strconv.Itoa(limit)},
+		"offset":       {strconv.Itoa(offset)},
 	}
 	endpoint, err := bangumiEndpoint(a.cfg().BangumiAPIURL, "/users/"+username+"/collections", values)
 	if err != nil {
@@ -196,4 +199,26 @@ func (a *App) getBangumiUserCollections(ctx context.Context, username string, to
 	}
 	total := int(numeric(payload["total"]))
 	return results, total, nil
+}
+
+func (a *App) updateBangumiCollection(ctx context.Context, subjectID string, token string, collectType int, epStatus int) error {
+	endpoint, err := bangumiEndpoint(a.cfg().BangumiAPIURL, "/users/-/collections/"+subjectID, nil)
+	if err != nil {
+		return err
+	}
+	body := map[string]any{
+		"type":      collectType,
+		"ep_status": epStatus,
+	}
+	headers := map[string]string{
+		"User-Agent":    "Twilight/1.0",
+		"Accept":        "application/json",
+		"Authorization": "Bearer " + token,
+	}
+	var result map[string]any
+	if err := patchJSON(ctx, endpoint, headers, body, &result); err != nil {
+		// Fallback to checking if POST also works, just in case
+		return err
+	}
+	return nil
 }

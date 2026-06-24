@@ -293,7 +293,7 @@ class ApiClient {
     return this.request<UserSettings>("/users/me/settings");
   }
 
-  async updateMySettings(data: { bgm_mode?: boolean; bgm_token?: string; email?: string; notify_on_login_telegram?: boolean; notify_on_login_email?: boolean }) {
+  async updateMySettings(data: { bgm_mode?: boolean; bgm_manage_mode?: boolean; bgm_token?: string; email?: string; notify_on_login_telegram?: boolean; notify_on_login_email?: boolean }) {
     return this.request<UserInfo>("/users/me", {
       method: "PUT",
       body: JSON.stringify(data),
@@ -323,6 +323,22 @@ class ApiClient {
       watching?: any[];
       wishlist?: any[];
     }>("/bangumi/me");
+  }
+
+  async getBangumiCollections(type: number, limit = 20, offset = 0) {
+    return this.request<{
+      entries: any[];
+      total: number;
+      limit: number;
+      offset: number;
+    }>(`/bangumi/collections?type=${type}&limit=${limit}&offset=${offset}`);
+  }
+
+  async updateBangumiCollection(subjectId: string, type: number, epStatus: number) {
+    return this.request(`/bangumi/collections/${subjectId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ type, ep_status: epStatus }),
+    });
   }
 
   async triggerBangumiSync() {

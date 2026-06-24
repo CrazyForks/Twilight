@@ -118,6 +118,9 @@ func (a *App) handleUpdateMe(w http.ResponseWriter, r *http.Request, _ Params) {
 		if _, ok := payload["bgm_mode"]; ok {
 			u.BGMMode = boolValue(payload, "bgm_mode", u.BGMMode)
 		}
+		if _, ok := payload["bgm_manage_mode"]; ok {
+			u.BGMManageMode = boolValue(payload, "bgm_manage_mode", u.BGMManageMode)
+		}
 		if token := stringValue(payload, "bgm_token"); token != "" {
 			u.BGMToken = token
 		}
