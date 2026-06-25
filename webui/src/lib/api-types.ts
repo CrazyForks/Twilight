@@ -147,6 +147,7 @@ export interface UserInfo {
   emby_disabled?: boolean;  // 远端 Emby 启停的镜像：Web 正常但 Emby 被单独禁用时为 true
   notify_on_login_telegram?: boolean;  // 登录时发送 Telegram 通知
   notify_on_login_email?: boolean;  // 登录时发送邮件通知
+  notify_on_ticket_telegram?: boolean;  // 工单变动时发送 Telegram 通知
   rebinding_in_progress?: boolean;  // 是否处于强制换绑流程中
 }
 
@@ -287,6 +288,7 @@ export interface UserSettings {
   api_key_enabled: boolean;
   notify_on_login_telegram?: boolean;
   notify_on_login_email?: boolean;
+  notify_on_ticket_telegram?: boolean;
   telegram: {
     bound: boolean;
     telegram_id?: string;
@@ -1268,6 +1270,7 @@ export interface Ticket {
   priority: "low" | "medium" | "high" | "urgent";
   admin_note?: string;
   attachments?: TicketAttachment[];
+  notify_telegram: boolean;
   created_at: number;
   updated_at: number;
   resolved_at?: number;

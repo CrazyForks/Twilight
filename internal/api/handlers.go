@@ -136,6 +136,9 @@ func (a *App) handleUpdateMe(w http.ResponseWriter, r *http.Request, _ Params) {
 		if _, ok := payload["notify_on_login_email"]; ok {
 			u.NotifyOnLoginEmail = boolValue(payload, "notify_on_login_email", u.NotifyOnLoginEmail)
 		}
+		if _, ok := payload["notify_on_ticket_telegram"]; ok {
+			u.NotifyOnTicketTelegram = boolValue(payload, "notify_on_ticket_telegram", u.NotifyOnTicketTelegram)
+		}
 		return nil
 	})
 	if statusFromError(w, err) {
@@ -933,7 +936,7 @@ func (a *App) handleUserSettings(w http.ResponseWriter, r *http.Request, _ Param
 
 	ok(w, "OK", map[string]any{
 		"bgm_mode": u.BGMMode, "bgm_token_set": u.BGMToken != "", "api_key_enabled": u.LegacyAPIKeyStatus,
-		"notify_on_login_telegram": u.NotifyOnLoginTelegram, "notify_on_login_email": u.NotifyOnLoginEmail,
+		"notify_on_login_telegram": u.NotifyOnLoginTelegram, "notify_on_login_email": u.NotifyOnLoginEmail, "notify_on_ticket_telegram": u.NotifyOnTicketTelegram,
 		// 与 /users/me/telegram 共用 telegramStatusFields，避免两个端点对换绑状态
 		// 给出互相矛盾的 can_change / can_unbind。
 		"telegram":      a.telegramStatusFields(u),

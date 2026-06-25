@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/prejudice-studio/twilight/internal/config"
 	"github.com/prejudice-studio/twilight/internal/store"
 	"go.uber.org/zap"
 )
@@ -77,14 +79,21 @@ func (a *App) handleCreateTicket(w http.ResponseWriter, r *http.Request, _ Param
 		priority = "medium"
 	}
 
+	var notifyTG *bool
+	if _, ok := payload["notify_telegram"]; ok {
+		b := boolValue(payload, "notify_telegram", true)
+		notifyTG = &b
+	}
+
 	ticket, err := a.store().UpsertTicket(store.Ticket{
-		UID:      p.User.UID,
-		Username: p.User.Username,
-		Title:    title,
-		Content:  content,
-		Type:     ticketType,
-		Priority: priority,
-		Status:   "open",
+		UID:            p.User.UID,
+		Username:       p.User.Username,
+		Title:          title,
+		Content:        content,
+		Type:           ticketType,
+		Priority:       priority,
+		Status:         "open",
+		NotifyTelegram: notifyTG,
 	})
 	if statusFromError(w, err) {
 		return
@@ -165,6 +174,45 @@ func (a *App) handleReopenOwnTicket(w http.ResponseWriter, r *http.Request, para
 	ok(w, "工单已重开", ticketDTO(ticket))
 }
 
+// handleToggleTicketNotify 切换单个工单的 Telegram 通知开关。
+func (a *App) handleToggleTicketNotify(w http.ResponseWriter, r *http.Request, params Params) {
+	if !a.cfg().TicketSystemEnabled {
+		failWithCode(w, http.StatusServiceUnavailable, ErrTicketDisabled, "工单系统未启用")
+		return
+	}
+	id, _ := int64Param(params, "ticket_id")
+	p := current(r)
+	existing, found := a.store().Ticket(id)
+	if !found || existing.UID != p.User.UID {
+		failWithCode(w, http.StatusNotFound, ErrTicketNotFound, "工单不存在")
+		return
+	}
+	payload := decodeMap(r)
+	if _, ok := payload["enabled"]; !ok {
+		failWithCode(w, http.StatusBadRequest, ErrInvalidPayload, "缺少 enabled 字段")
+		return
+	}
+	enabled := boolValue(payload, "enabled", true)
+	ticket, err := a.store().UpsertTicket(store.Ticket{
+		ID:             id,
+		UID:            existing.UID,
+		Username:       existing.Username,
+		Title:          existing.Title,
+		Content:        existing.Content,
+		Type:           existing.Type,
+		Priority:       existing.Priority,
+		Status:         existing.Status,
+		AdminNote:      existing.AdminNote,
+		NotifyTelegram: &enabled,
+		CreatedAt:      existing.CreatedAt,
+	})
+	if statusFromError(w, err) {
+		return
+	}
+	a.audit(r, "toggle_ticket_notify", "user", 0, map[string]any{"ticket_id": id, "enabled": enabled})
+	ok(w, "通知设置已更新", ticketDTO(ticket))
+}
+
 // ---- 管理员工单接口 ----
 
 // handleAdminTickets 管理员查看所有工单（支持筛选）。管理端接口不受 TicketSystemEnabled 开关限制。
@@ -202,6 +250,9 @@ func (a *App) handleAdminUpdateTicket(w http.ResponseWriter, r *http.Request, pa
 	}
 
 	ticketType := strings.TrimSpace(firstNonEmpty(stringValue(payload, "type"), existing.Type))
+	if !validTicketType(a.store().TicketTypes(), ticketType) {
+		ticketType = existing.Type
+	}
 	adminNote := strings.TrimSpace(stringValue(payload, "admin_note"))
 
 	// 管理员更新时保护已有字段
@@ -221,6 +272,10 @@ func (a *App) handleAdminUpdateTicket(w http.ResponseWriter, r *http.Request, pa
 		return
 	}
 	a.audit(r, "update_ticket", "admin", ticket.UID, map[string]any{"ticket_id": ticket.ID, "new_status": status})
+
+	// 工单变动后通知工单所属用户（如果用户开启了 TG 通知）
+	a.notifyTicketOwner(r.Context(), ticket, existing)
+
 	ok(w, "工单已更新", ticketDTO(ticket))
 }
 
@@ -510,21 +565,26 @@ func ticketAttachmentDTOs(ticketID int64, atts []store.TicketAttachment) []map[s
 
 // ticketDTO 把单个工单序列化为响应 map，并为每张附件补上可访问的 url 字段。
 func ticketDTO(t store.Ticket) map[string]any {
+	notifyTelegram := true
+	if t.NotifyTelegram != nil {
+		notifyTelegram = *t.NotifyTelegram
+	}
 	dto := map[string]any{
-		"id":          t.ID,
-		"uid":         t.UID,
-		"username":    t.Username,
-		"title":       t.Title,
-		"content":     t.Content,
-		"type":        t.Type,
-		"status":      t.Status,
-		"priority":    t.Priority,
-		"admin_note":  t.AdminNote,
-		"attachments": ticketAttachmentDTOs(t.ID, t.Attachments),
-		"created_at":  t.CreatedAt,
-		"updated_at":  t.UpdatedAt,
-		"resolved_at": t.ResolvedAt,
-		"closed_at":   t.ClosedAt,
+		"id":              t.ID,
+		"uid":             t.UID,
+		"username":        t.Username,
+		"title":           t.Title,
+		"content":         t.Content,
+		"type":            t.Type,
+		"status":          t.Status,
+		"priority":        t.Priority,
+		"admin_note":      t.AdminNote,
+		"attachments":     ticketAttachmentDTOs(t.ID, t.Attachments),
+		"notify_telegram": notifyTelegram,
+		"created_at":      t.CreatedAt,
+		"updated_at":      t.UpdatedAt,
+		"resolved_at":     t.ResolvedAt,
+		"closed_at":       t.ClosedAt,
 	}
 	return dto
 }
@@ -639,4 +699,63 @@ func (a *App) persistTicketTypesFromStore() {
 	if _, status, message := a.saveConfigContent(renderConfigTOML(values)); status != http.StatusOK {
 		zap.L().Warn("failed to persist ticket types to config.toml", zap.Int("status", status), zap.String("message", message))
 	}
+}
+
+// notifyTicketOwner 工单变动后向工单所属用户发送 Telegram 通知。
+func (a *App) notifyTicketOwner(ctx context.Context, updated, existing store.Ticket) {
+	owner, found := a.store().User(updated.UID)
+	if !found {
+		return
+	}
+	if !a.telegramAvailable() || owner.TelegramID == 0 {
+		return
+	}
+	// 优先使用工单级别的通知设置，未设置时回退到用户全局设置
+	notify := owner.NotifyOnTicketTelegram
+	if updated.NotifyTelegram != nil {
+		notify = *updated.NotifyTelegram
+	}
+	if !notify {
+		return
+	}
+	now := time.Now().Format("2006-01-02 15:04:05")
+	adminNote := strings.TrimSpace(updated.AdminNote)
+	adminNoteContent := ""
+	if adminNote != "" {
+		adminNoteContent = "回复内容：\n" + adminNote
+	}
+	notifValues := map[string]string{
+		"{ticket_id}":          strconv.FormatInt(updated.ID, 10),
+		"{title}":              updated.Title,
+		"{status}":             statusLabel(updated.Status),
+		"{priority}":           updated.Priority,
+		"{type}":               updated.Type,
+		"{admin_note}":         adminNote,
+		"{admin_note_content}": adminNoteContent,
+		"{time}":               now,
+		"{server_name}":        a.cfg().AppName,
+	}
+	tmpl := a.cfg().TicketNotifyTelegramTemplate
+	if tmpl == "" {
+		tmpl = config.DefaultTicketNotifyTelegramTemplate
+	}
+	text := replaceNotifPlaceholders(tmpl, notifValues)
+	if err := a.telegramSendMessage(ctx, owner.TelegramID, text); err != nil {
+		zap.L().Warn("发送工单变动通知失败", zap.Int64("ticket_id", updated.ID), zap.Int64("uid", owner.UID), zap.Error(err))
+	}
+}
+
+// statusLabel 返回工单状态的中文描述。
+func statusLabel(status string) string {
+	switch status {
+	case "open":
+		return "待处理"
+	case "in_progress":
+		return "处理中"
+	case "resolved":
+		return "已解决"
+	case "closed":
+		return "已关闭"
+	}
+	return status
 }

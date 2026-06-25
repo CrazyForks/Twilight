@@ -595,7 +595,9 @@
     "telegramRebindDialogDescription": "管理員批准後會解除目前 Telegram 綁定，你可以重新綁定新的 Telegram 帳號。",
     "rebindReasonLabel": "備註給管理員（可選）",
     "rebindReasonPlaceholder": "例如：原 Telegram 帳號無法登入，需要換綁到新帳號",
-    "submitApplication": "提交申請"
+    "submitApplication": "提交申請",
+    "ticketNotifyTelegram": "工單變動通知",
+    "ticketNotifyTelegramDesc": "管理員回覆或處理工單時通過已綁定的 Telegram Bot 發送通知"
   },
   "tickets": {
     "pageTitle": "我的工單",
@@ -643,7 +645,11 @@
     "imageTooLarge": "圖片大小超過限制（單張最大 {size}MB）",
     "imageTooMany": "圖片數量已達上限（每個工單最多 {count} 張）",
     "imageInvalidType": "無效的圖片檔案，僅支援 JPG / PNG / GIF / WEBP / BMP",
-    "imageClosedHint": "工單已關閉，無法繼續上傳圖片"
+    "imageClosedHint": "工單已關閉，無法繼續上傳圖片",
+    "notifyTelegram": "Telegram 通知",
+    "notifyTelegramDesc": "管理員回覆或處理此工單時發送 Telegram 通知",
+    "notifyOn": "通知已開啟",
+    "notifyOff": "通知已關閉"
   },
   "adminTickets": {
     "title": "工單管理",

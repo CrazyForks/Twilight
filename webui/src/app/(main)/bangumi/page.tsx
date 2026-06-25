@@ -776,6 +776,8 @@ export default function BangumiPage() {
                     <SelectItem value="1">想看</SelectItem>
                     <SelectItem value="2">看过</SelectItem>
                     <SelectItem value="3">在看</SelectItem>
+                    <SelectItem value="4">搁置</SelectItem>
+                    <SelectItem value="5">抛弃</SelectItem>
                   </SelectContent>
                 </Select>
               </div>

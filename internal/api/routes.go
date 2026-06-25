@@ -349,6 +349,7 @@ func (a *App) registerStatsInviteSigninAnnouncementRoutes() {
 	a.add(http.MethodPost, "/api/v1/tickets", AuthUser, a.handleCreateTicket)
 	a.add(http.MethodPost, "/api/v1/tickets/:ticket_id/close", AuthUser, a.handleCloseOwnTicket)
 	a.add(http.MethodPost, "/api/v1/tickets/:ticket_id/reopen", AuthUser, a.handleReopenOwnTicket)
+	a.add(http.MethodPut, "/api/v1/tickets/:ticket_id/notify-telegram", AuthUser, a.handleToggleTicketNotify)
 	a.add(http.MethodPost, "/api/v1/tickets/:ticket_id/images", AuthUser, a.handleUploadTicketImage)
 	a.add(http.MethodGet, "/api/v1/tickets/:ticket_id/images/:filename", AuthUser, a.handleGetTicketImage)
 	a.add(http.MethodDelete, "/api/v1/tickets/:ticket_id/images/:filename", AuthUser, a.handleDeleteTicketImage)

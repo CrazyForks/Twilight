@@ -206,11 +206,15 @@ func (a *App) updateBangumiCollection(ctx context.Context, subjectID string, tok
 	if err != nil {
 		return err
 	}
-	// Bangumi API 的 ep_status 仅允许修改书籍类条目 (subject_type=1)，
-	// 对动画/剧集修改 ep_status 会返回 400。因此仅当 ep_status > 0 时才包含。
+	// Bangumi API 仅对包含的字段进行修改，未包含的字段保持不变。
+	// - type: 始终发送（收藏状态变更）
+	// - rate: 仅当 > 0 时发送，避免误清已有评分
+	// - ep_status: 仅当 > 0 时发送（Bangumi API 限制仅书籍类可修改完成度）
 	body := map[string]any{
 		"type": collectType,
-		"rate": rate,
+	}
+	if rate > 0 {
+		body["rate"] = rate
 	}
 	if epStatus > 0 {
 		body["ep_status"] = epStatus

@@ -432,6 +432,9 @@ image_max_size = 5242880
 image_max_count = 5
 # 工单关闭后图片保留天数，到期由调度任务清理；0=不自动清理
 image_retention_days = 30
+# 工单变动 Telegram 通知模板（留空使用内置默认）
+# 占位符：{ticket_id}、{title}、{status}、{priority}、{type}、{admin_note}、{time}、{server_name}
+notify_telegram_template = ""
 
 # ───────── 操作审计 ─────────
 [AuditLog]

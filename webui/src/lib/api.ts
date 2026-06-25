@@ -293,7 +293,7 @@ class ApiClient {
     return this.request<UserSettings>("/users/me/settings");
   }
 
-  async updateMySettings(data: { bgm_mode?: boolean; bgm_manage_mode?: boolean; bgm_token?: string; email?: string; notify_on_login_telegram?: boolean; notify_on_login_email?: boolean }) {
+  async updateMySettings(data: { bgm_mode?: boolean; bgm_manage_mode?: boolean; bgm_token?: string; email?: string; notify_on_login_telegram?: boolean; notify_on_login_email?: boolean; notify_on_ticket_telegram?: boolean }) {
     return this.request<UserInfo>("/users/me", {
       method: "PUT",
       body: JSON.stringify(data),
@@ -2493,7 +2493,7 @@ class ApiClient {
     return this.request<{ tickets: Ticket[]; total: number; ticket_types: string[] }>("/tickets");
   }
 
-  async createTicket(payload: { title: string; content: string; type?: string; priority?: string }) {
+  async createTicket(payload: { title: string; content: string; type?: string; priority?: string; notify_telegram?: boolean }) {
     return this.request<Ticket>("/tickets", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -2506,6 +2506,13 @@ class ApiClient {
 
   async reopenOwnTicket(id: number) {
     return this.request<Ticket>(`/tickets/${id}/reopen`, { method: "POST" });
+  }
+
+  async toggleTicketNotify(id: number, enabled: boolean) {
+    return this.request<Ticket>(`/tickets/${id}/notify-telegram`, {
+      method: "PUT",
+      body: JSON.stringify({ enabled }),
+    });
   }
 
   // 工单交流图片

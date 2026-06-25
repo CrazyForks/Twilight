@@ -66,6 +66,15 @@ const DefaultLoginNotifyTelegramTemplate = `新登录通知
 IP：{ip}
 设备：{device}`
 
+// DefaultTicketNotifyTelegramTemplate 工单变动通知 Telegram 模板。
+// 占位符：{ticket_id}、{title}、{status}、{priority}、{type}、{admin_note}、{time}、{server_name}。
+const DefaultTicketNotifyTelegramTemplate = `工单变动通知
+
+工单：#{ticket_id} {title}
+状态：{status}
+时间：{time}
+{admin_note_content}`
+
 // DefaultLoginNotifyEmailSubjectTemplate 登录通知邮件标题模板。
 const DefaultLoginNotifyEmailSubjectTemplate = "{server_name} 登录通知"
 
@@ -293,13 +302,14 @@ type Config struct {
 	ForgotPasswordEmbyEnabled  bool
 	ForgotPasswordEmailEnabled bool
 
-	TicketSystemEnabled      bool
-	TicketTypes              []string
-	TicketUserOpenLimit      int   // 单个用户同时处于待处理/处理中的工单上限，0=不限
-	TicketGlobalOpenLimit    int   // 全局处于待处理/处理中的工单上限，0=不限
-	TicketImageMaxSize       int64 // 单张图片最大字节数
-	TicketImageMaxCount      int   // 单个工单最多图片数
-	TicketImageRetentionDays int   // 工单关闭后保留图片的天数，0=不自动清理
+	TicketSystemEnabled          bool
+	TicketTypes                  []string
+	TicketUserOpenLimit          int   // 单个用户同时处于待处理/处理中的工单上限，0=不限
+	TicketGlobalOpenLimit        int   // 全局处于待处理/处理中的工单上限，0=不限
+	TicketImageMaxSize           int64 // 单张图片最大字节数
+	TicketImageMaxCount          int   // 单个工单最多图片数
+	TicketImageRetentionDays     int   // 工单关闭后保留图片的天数，0=不自动清理
+	TicketNotifyTelegramTemplate string
 
 	AuditLogEnabled            bool
 	AuditLogAutoCleanupEnabled bool
@@ -540,6 +550,7 @@ func Load(path string) (Config, error) {
 	cfg.TicketImageMaxSize = reader.int64Value(cfg.TicketImageMaxSize, "Ticket.image_max_size", "ticket_image_max_size")
 	cfg.TicketImageMaxCount = reader.intValue(cfg.TicketImageMaxCount, "Ticket.image_max_count", "ticket_image_max_count")
 	cfg.TicketImageRetentionDays = reader.intValue(cfg.TicketImageRetentionDays, "Ticket.image_retention_days", "ticket_image_retention_days")
+	cfg.TicketNotifyTelegramTemplate = reader.stringValue(cfg.TicketNotifyTelegramTemplate, "Ticket.notify_telegram_template", "ticket_notify_telegram_template")
 	cfg.AuditLogEnabled = reader.boolValue(cfg.AuditLogEnabled, "AuditLog.enabled", "audit_log_enabled")
 	cfg.AuditLogAutoCleanupEnabled = reader.boolValue(cfg.AuditLogAutoCleanupEnabled, "AuditLog.auto_cleanup_enabled", "audit_log_auto_cleanup_enabled")
 	cfg.AuditLogRetentionDays = reader.intValue(cfg.AuditLogRetentionDays, "AuditLog.retention_days", "audit_log_retention_days")

@@ -1109,6 +1109,7 @@ func configSectionDefs() []configSectionDef {
 			{Key: "image_max_size", Label: "单图最大字节", Type: "int", Description: "工单交流图片单张大小上限（字节），默认 5MB"},
 			{Key: "image_max_count", Label: "单工单最多图片", Type: "int", Description: "每个工单可上传的图片数量上限，默认 5"},
 			{Key: "image_retention_days", Label: "图片保留天数", Type: "int", Description: "工单关闭后保留图片的天数，到期由调度任务清理；0=不自动清理"},
+			{Key: "notify_telegram_template", Label: "TG 通知模板", Type: "textarea", Description: "工单变动通知模板。占位符：{ticket_id}、{title}、{status}、{priority}、{type}、{admin_note}、{time}、{server_name}；留空使用内置默认；支持换行"},
 		}},
 		{Key: "AuditLog", Title: "操作审计", Description: "审计日志记录与自动清理策略\n推荐在「安全中心」页面统一维护", Category: "security", Collapsed: true, Fields: []configFieldDef{
 			{Key: "enabled", Label: "启用审计日志", Type: "bool", Description: "关闭后不再记录新的审计日志；已有日志不受影响"},
@@ -1212,7 +1213,7 @@ func configValues(cfg config.Config) map[string]map[string]any {
 		"SystemUpdate": {"auto_update_enabled": cfg.SystemUpdateEnabled, "repo_url": cfg.SystemUpdateRepoURL, "branch": cfg.SystemUpdateBranch, "restart_services": cfg.SystemUpdateRestartServices, "auto_update_trigger_type": cfg.SystemUpdateTriggerType, "auto_update_interval_hours": cfg.SystemUpdateIntervalHours, "auto_update_time": cfg.SystemUpdateTime},
 		"Notification": {"enabled": cfg.NotificationEnabled, "expiry_remind_days": cfg.NotificationExpiryRemindDays, "login_notify_telegram_template": cfg.LoginNotifyTelegramTemplate, "login_notify_email_subject_template": cfg.LoginNotifyEmailSubjectTemplate, "login_notify_email_body_template": cfg.LoginNotifyEmailBodyTemplate},
 		"BangumiSync":  {"enabled": cfg.BangumiEnabled, "manage_enabled": cfg.BangumiManageEnabled, "webhook_secret": cfg.BangumiWebhookSecret},
-		"Ticket":       {"enabled": cfg.TicketSystemEnabled, "types": cfg.TicketTypes, "user_open_limit": cfg.TicketUserOpenLimit, "global_open_limit": cfg.TicketGlobalOpenLimit, "image_max_size": cfg.TicketImageMaxSize, "image_max_count": cfg.TicketImageMaxCount, "image_retention_days": cfg.TicketImageRetentionDays},
+		"Ticket":       {"enabled": cfg.TicketSystemEnabled, "types": cfg.TicketTypes, "user_open_limit": cfg.TicketUserOpenLimit, "global_open_limit": cfg.TicketGlobalOpenLimit, "image_max_size": cfg.TicketImageMaxSize, "image_max_count": cfg.TicketImageMaxCount, "image_retention_days": cfg.TicketImageRetentionDays, "notify_telegram_template": cfg.TicketNotifyTelegramTemplate},
 		"AuditLog": {
 			"enabled": cfg.AuditLogEnabled, "auto_cleanup_enabled": cfg.AuditLogAutoCleanupEnabled,
 			"retention_days": cfg.AuditLogRetentionDays, "max_entries": cfg.AuditLogMaxEntries,

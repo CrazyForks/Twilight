@@ -595,7 +595,9 @@
     "telegramRebindDialogDescription": "After admin approval, your current Telegram is unbound so you can bind a new Telegram account.",
     "rebindReasonLabel": "Note for the admin (optional)",
     "rebindReasonPlaceholder": "e.g. the original Telegram account can no longer log in and needs to rebind to a new one",
-    "submitApplication": "Submit request"
+    "submitApplication": "Submit request",
+    "ticketNotifyTelegram": "Ticket Notifications",
+    "ticketNotifyTelegramDesc": "Receive notifications via Telegram when an admin replies to or processes your tickets"
   },
   "tickets": {
     "pageTitle": "My Tickets",
@@ -643,7 +645,11 @@
     "imageTooLarge": "Image exceeds size limit (max {size}MB each)",
     "imageTooMany": "Image count limit reached (max {count} per ticket)",
     "imageInvalidType": "Invalid image file, only JPG / PNG / GIF / WEBP / BMP are supported",
-    "imageClosedHint": "Ticket is closed, cannot upload more images"
+    "imageClosedHint": "Ticket is closed, cannot upload more images",
+    "notifyTelegram": "Telegram Notification",
+    "notifyTelegramDesc": "Receive a Telegram notification when the admin replies to or processes this ticket",
+    "notifyOn": "Notifications on",
+    "notifyOff": "Notifications off"
   },
   "adminTickets": {
     "title": "Ticket Management",

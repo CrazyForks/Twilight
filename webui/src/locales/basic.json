@@ -1325,7 +1325,9 @@
     "loginNotifyTelegram": "Telegram 通知",
     "loginNotifyTelegramDesc": "登录时通过已绑定的 Telegram Bot 发送通知",
     "loginNotifyEmail": "邮件通知",
-    "loginNotifyEmailDesc": "登录时通过绑定的邮箱发送通知"
+    "loginNotifyEmailDesc": "登录时通过绑定的邮箱发送通知",
+    "ticketNotifyTelegram": "工单变动通知",
+    "ticketNotifyTelegramDesc": "管理员回复或处理工单时通过已绑定的 Telegram Bot 发送通知"
   },
   "tickets": {
     "pageTitle": "我的工单",
@@ -1373,7 +1375,11 @@
     "imageTooLarge": "图片大小超过限制（单张最大 {size}MB）",
     "imageTooMany": "图片数量已达上限（每个工单最多 {count} 张）",
     "imageInvalidType": "无效的图片文件，仅支持 JPG / PNG / GIF / WEBP / BMP",
-    "imageClosedHint": "工单已关闭，无法继续上传图片"
+    "imageClosedHint": "工单已关闭，无法继续上传图片",
+    "notifyTelegram": "Telegram 通知",
+    "notifyTelegramDesc": "管理员回复或处理此工单时发送 Telegram 通知",
+    "notifyOn": "通知已开启",
+    "notifyOff": "通知已关闭"
   },
   "adminTickets": {
     "title": "工单管理",

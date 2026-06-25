@@ -87,6 +87,7 @@ export default function SettingsPage() {
   const [embyStatus, setEmbyStatus] = useState<EmbyStatus | null>(null);
   const [notifyLoginTelegram, setNotifyLoginTelegram] = useState(false);
   const [notifyLoginEmail, setNotifyLoginEmail] = useState(false);
+  const [notifyTicketTelegram, setNotifyTicketTelegram] = useState(false);
 
   // 仅首次挂载播放进场动画；切语言不再重播
   const [hasAppeared, setHasAppeared] = useState(false);
@@ -323,6 +324,7 @@ export default function SettingsPage() {
       setTelegramStatus(settingsRes.data.telegram as TelegramStatus);
       setNotifyLoginTelegram(Boolean(settingsRes.data.notify_on_login_telegram));
       setNotifyLoginEmail(Boolean(settingsRes.data.notify_on_login_email));
+      setNotifyTicketTelegram(Boolean(settingsRes.data.notify_on_ticket_telegram));
     }
     return true;
   }, []);
@@ -1410,6 +1412,24 @@ export default function SettingsPage() {
                 }}
                 disabled={!hasVerifiedEmail}
                 aria-readonly={!hasVerifiedEmail}
+              />
+            </div>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label>{t("settings.ticketNotifyTelegram")}</Label>
+                <p className="text-sm text-muted-foreground">
+                  {t("settings.ticketNotifyTelegramDesc")}
+                </p>
+              </div>
+              <Switch
+                checked={notifyTicketTelegram}
+                onCheckedChange={(v) => {
+                  setNotifyTicketTelegram(v);
+                  api.updateMySettings({ notify_on_ticket_telegram: v });
+                }}
+                disabled={!hasTelegramBinding}
+                aria-readonly={!hasTelegramBinding}
               />
             </div>
           </CardContent>

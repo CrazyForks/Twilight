@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect } from "react";
 import { motion } from "framer-motion";
 import {
   MessageSquareMore, Plus, Loader2, Clock, AlertCircle,
-  CheckCircle2, XCircle, RotateCcw, Archive,
+  CheckCircle2, XCircle, RotateCcw, Archive, Bell, BellOff,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -16,6 +16,7 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import { useAsyncResource } from "@/hooks/use-async-resource";
 import { api, type Ticket } from "@/lib/api";
@@ -57,6 +58,7 @@ export default function UserTicketsPage() {
   const [content, setContent] = useState("");
   const [ticketType, setTicketType] = useState("all");
   const [priority, setPriority] = useState("medium");
+  const [notifyTelegram, setNotifyTelegram] = useState(true);
   const [saving, setSaving] = useState(false);
 
   const loadTickets = useCallback(async () => {
@@ -78,7 +80,7 @@ export default function UserTicketsPage() {
     if (!content.trim()) { toast({ title: t("tickets.contentRequired"), variant: "destructive" }); return; }
     setSaving(true);
     try {
-      const res = await api.createTicket({ title: title.trim(), content: content.trim(), type: ticketType, priority });
+      const res = await api.createTicket({ title: title.trim(), content: content.trim(), type: ticketType, priority, notify_telegram: notifyTelegram });
       if (res.success) { toast({ title: t("tickets.submitted") }); setCreateOpen(false); setTitle(""); setContent(""); await reload(); }
       else toast({ title: res.message, variant: "destructive" });
     } catch (err: any) { toast({ title: err?.message || t("common.networkError"), variant: "destructive" }); }
@@ -121,7 +123,7 @@ export default function UserTicketsPage() {
           </h1>
           <p className="text-sm text-muted-foreground mt-1">{t("tickets.pageDescription")}</p>
         </div>
-        <Button onClick={() => { setTitle(""); setContent(""); setTicketType(types[0] || "all"); setCreateOpen(true); }} size="sm">
+        <Button onClick={() => { setTitle(""); setContent(""); setTicketType(types[0] || "all"); setNotifyTelegram(true); setCreateOpen(true); }} size="sm">
           <Plus className="h-4 w-4 mr-1" />{t("tickets.submit")}
         </Button>
       </div>
@@ -169,6 +171,23 @@ export default function UserTicketsPage() {
                       <h3 className="font-bold text-base">{ticket.title}</h3>
                     </div>
                     <div className="flex gap-1 shrink-0">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-7 w-7"
+                        title={ticket.notify_telegram ? t("tickets.notifyOn") : t("tickets.notifyOff")}
+                        onClick={async () => {
+                          try {
+                            const res = await api.toggleTicketNotify(ticket.id, !ticket.notify_telegram);
+                            if (res.success) await reload();
+                            else toast({ title: res.message, variant: "destructive" });
+                          } catch (err: any) {
+                            toast({ title: err?.message || t("common.networkError"), variant: "destructive" });
+                          }
+                        }}
+                      >
+                        {ticket.notify_telegram ? <Bell className="h-3.5 w-3.5 text-info" /> : <BellOff className="h-3.5 w-3.5 text-muted-foreground" />}
+                      </Button>
                       {!isClosed && (
                         <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground hover:text-destructive" onClick={() => handleClose(ticket.id)}>
                           <Archive className="h-3.5 w-3.5 mr-1" />{t("tickets.closeTicket")}
@@ -266,6 +285,16 @@ export default function UserTicketsPage() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+            <div className="flex items-center justify-between rounded-lg border px-3 py-2">
+              <div className="space-y-0.5">
+                <Label className="text-sm">{t("tickets.notifyTelegram")}</Label>
+                <p className="text-xs text-muted-foreground">{t("tickets.notifyTelegramDesc")}</p>
+              </div>
+              <Switch
+                checked={notifyTelegram}
+                onCheckedChange={setNotifyTelegram}
+              />
             </div>
           </div>
           <DialogFooter>

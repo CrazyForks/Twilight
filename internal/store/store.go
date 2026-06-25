@@ -129,29 +129,30 @@ type User struct {
 	// EmbyDisabled 是远端 Emby 账号「当前是否被禁用」的尽力镜像（true=已禁用）。
 	// 由每次启停 Emby 时回写、并在强制刷新时按远端真值校正。让用户列表无需逐行
 	// 查 Emby 即可区分「Web 正常但 Emby 被单独禁用」。仅在 EmbyID 非空时有意义。
-	EmbyDisabled          bool     `json:"emby_disabled"`
-	Avatar                string   `json:"avatar,omitempty"`
-	Background            string   `json:"background,omitempty"`
-	BGMMode               bool     `json:"bgm_mode"`
-	BGMManageMode         bool     `json:"bgm_manage_mode"`
-	BGMToken              string   `json:"bgm_token,omitempty"`
-	CreatedAt             int64    `json:"created_at"`
-	RegisterTime          int64    `json:"register_time"`
-	EmbyGrantLocked       bool     `json:"emby_grant_locked"`
-	RegistrationSource    string   `json:"registration_source,omitempty"`
-	RegistrationCode      string   `json:"registration_code,omitempty"`
-	PendingEmby           bool     `json:"pending_emby"`
-	PendingEmbyDays       *int     `json:"pending_emby_days,omitempty"`
-	NotifyOnLoginTelegram bool     `json:"notify_on_login_telegram,omitempty"`
-	NotifyOnLoginEmail    bool     `json:"notify_on_login_email,omitempty"`
-	LegacyAPIKeyHash      string   `json:"legacy_api_key_hash,omitempty"`
-	LegacyAPIKeyPrefix    string   `json:"legacy_api_key_prefix,omitempty"`
-	LegacyAPIKeySuffix    string   `json:"legacy_api_key_suffix,omitempty"`
-	LegacyAPIKeyStatus    bool     `json:"legacy_api_key_status"`
-	LegacyPermissions     []string `json:"legacy_permissions,omitempty"`
-	PasswordHash          string   `json:"password_hash"`
-	RebindingInProgress   bool     `json:"rebinding_in_progress"`
-	RebindingSince        int64    `json:"rebinding_since,omitempty"`
+	EmbyDisabled           bool     `json:"emby_disabled"`
+	Avatar                 string   `json:"avatar,omitempty"`
+	Background             string   `json:"background,omitempty"`
+	BGMMode                bool     `json:"bgm_mode"`
+	BGMManageMode          bool     `json:"bgm_manage_mode"`
+	BGMToken               string   `json:"bgm_token,omitempty"`
+	CreatedAt              int64    `json:"created_at"`
+	RegisterTime           int64    `json:"register_time"`
+	EmbyGrantLocked        bool     `json:"emby_grant_locked"`
+	RegistrationSource     string   `json:"registration_source,omitempty"`
+	RegistrationCode       string   `json:"registration_code,omitempty"`
+	PendingEmby            bool     `json:"pending_emby"`
+	PendingEmbyDays        *int     `json:"pending_emby_days,omitempty"`
+	NotifyOnLoginTelegram  bool     `json:"notify_on_login_telegram,omitempty"`
+	NotifyOnLoginEmail     bool     `json:"notify_on_login_email,omitempty"`
+	NotifyOnTicketTelegram bool     `json:"notify_on_ticket_telegram,omitempty"`
+	LegacyAPIKeyHash       string   `json:"legacy_api_key_hash,omitempty"`
+	LegacyAPIKeyPrefix     string   `json:"legacy_api_key_prefix,omitempty"`
+	LegacyAPIKeySuffix     string   `json:"legacy_api_key_suffix,omitempty"`
+	LegacyAPIKeyStatus     bool     `json:"legacy_api_key_status"`
+	LegacyPermissions      []string `json:"legacy_permissions,omitempty"`
+	PasswordHash           string   `json:"password_hash"`
+	RebindingInProgress    bool     `json:"rebinding_in_progress"`
+	RebindingSince         int64    `json:"rebinding_since,omitempty"`
 }
 
 type APIKey struct {
@@ -416,20 +417,21 @@ type BangumiSyncLog struct {
 }
 
 type Ticket struct {
-	ID          int64              `json:"id"`
-	UID         int64              `json:"uid"`
-	Username    string             `json:"username"`
-	Title       string             `json:"title"`
-	Content     string             `json:"content"`
-	Type        string             `json:"type"`
-	Status      string             `json:"status"`
-	Priority    string             `json:"priority"`
-	AdminNote   string             `json:"admin_note,omitempty"`
-	Attachments []TicketAttachment `json:"attachments,omitempty"`
-	CreatedAt   int64              `json:"created_at"`
-	UpdatedAt   int64              `json:"updated_at"`
-	ResolvedAt  int64              `json:"resolved_at,omitempty"`
-	ClosedAt    int64              `json:"closed_at,omitempty"`
+	ID             int64              `json:"id"`
+	UID            int64              `json:"uid"`
+	Username       string             `json:"username"`
+	Title          string             `json:"title"`
+	Content        string             `json:"content"`
+	Type           string             `json:"type"`
+	Status         string             `json:"status"`
+	Priority       string             `json:"priority"`
+	AdminNote      string             `json:"admin_note,omitempty"`
+	Attachments    []TicketAttachment `json:"attachments,omitempty"`
+	NotifyTelegram *bool              `json:"notify_telegram,omitempty"`
+	CreatedAt      int64              `json:"created_at"`
+	UpdatedAt      int64              `json:"updated_at"`
+	ResolvedAt     int64              `json:"resolved_at,omitempty"`
+	ClosedAt       int64              `json:"closed_at,omitempty"`
 }
 
 // TicketAttachment 描述挂在工单上的一张交流图片。文件按工单 ID 存放在
@@ -2952,6 +2954,10 @@ func (s *Store) UpsertTicket(t Ticket) (Ticket, error) {
 			// 避免管理员更新状态 / 用户改内容时把交流图片清空。
 			if t.Attachments == nil {
 				t.Attachments = existing.Attachments
+			}
+			// NotifyTelegram nil 表示沿用已有值，避免更新其他字段时意外重置。
+			if t.NotifyTelegram == nil {
+				t.NotifyTelegram = existing.NotifyTelegram
 			}
 			// Status transition timestamps
 			if t.Status == "resolved" && existing.Status != "resolved" && t.ResolvedAt == 0 {
