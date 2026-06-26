@@ -1585,7 +1585,7 @@ func (a *App) handleBotTest(w http.ResponseWriter, r *http.Request, _ Params) {
 	for _, chatID := range telegramChatIDs(a.cfg().TelegramChannelIDs) {
 		var chat map[string]any
 		err := a.telegramPost(testCtx, "getChat", map[string]any{"chat_id": chatID}, &chat)
-		item := map[string]any{"target": "棰戦亾 " + chatID, "success": err == nil}
+		item := map[string]any{"target": "频道 " + chatID, "success": err == nil}
 		if err != nil {
 			item["error"] = err.Error()
 		} else {
