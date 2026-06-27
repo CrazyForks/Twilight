@@ -26,6 +26,7 @@ import { JsCodeEditor } from "@/components/js-code-editor";
 import { useToast } from "@/hooks/use-toast";
 import { api } from "@/lib/api";
 import type { DeveloperJSPreset, DeveloperJSDocs, DeveloperJSDocEntry } from "@/lib/api-types";
+import { useSystemStore } from "@/store/system";
 import { useI18n, type MessageKey } from "@/lib/i18n";
 
 type DeveloperTemplate = {
@@ -355,6 +356,8 @@ function presetToTemplate(preset: DeveloperJSPreset): DeveloperTemplate {
 export default function AdminDeveloperPage() {
   const { toast } = useToast();
   const { t } = useI18n();
+  const { info: systemInfo } = useSystemStore();
+  const devModeEnabled = Boolean(systemInfo?.features?.developer_mode);
   const editorRef = useRef<HTMLTextAreaElement | null>(null);
   const [code, setCode] = useState(helloTemplate);
   const [running, setRunning] = useState(false);
@@ -552,6 +555,34 @@ export default function AdminDeveloperPage() {
       setRunning(false);
     }
   };
+
+  if (!devModeEnabled) {
+    return (
+      <div className="space-y-5">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <h1 className="flex items-center gap-2 text-2xl font-bold">
+              <Code2 className="h-6 w-6" />
+              {t("adminDeveloper.title")}
+            </h1>
+            <p className="mt-1 text-sm text-muted-foreground">{t("adminDeveloper.description")}</p>
+          </div>
+        </div>
+        <Card className="border-dashed">
+          <CardContent className="p-8 text-center space-y-3">
+            <AlertTriangle className="h-10 w-10 mx-auto text-muted-foreground opacity-40" />
+            <p className="font-medium text-lg">开发者模式未开启</p>
+            <p className="text-sm text-muted-foreground max-w-md mx-auto">
+              开发者模式需要在仪表盘输入 DEBUGMODE 并完成管理员密码二次验证后启用。
+            </p>
+            <Link href="/dashboard">
+              <Button variant="outline">前往仪表盘</Button>
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-5">
