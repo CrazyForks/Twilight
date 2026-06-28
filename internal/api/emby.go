@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -345,6 +346,11 @@ func (a *App) embySetUserEnabled(ctx context.Context, userID string, enabled boo
 	return a.embyUpdatePolicy(ctx, userID, func(policy map[string]any) {
 		policy["IsDisabled"] = !enabled
 	})
+}
+
+// embyDeleteUser 从 Emby 删除指定用户。仅用于调度任务清理未绑定 Web 的孤立 Emby 账号。
+func (a *App) embyDeleteUser(ctx context.Context, userID string) error {
+	return a.embyDelete(ctx, "/Users/"+url.PathEscape(userID))
 }
 
 // embyApplyEnabledState 启停 Emby 后把状态镜像回本地 EmbyDisabled，让用户列表无需逐行

@@ -851,6 +851,14 @@ func (a *App) handleRebindComplete(w http.ResponseWriter, r *http.Request, _ Par
 	if statusFromError(w, err) {
 		return
 	}
+	// 换绑完成后同步恢复 Emby 账号
+	if u.EmbyID != "" {
+		sideCtx, sideCancel := schedulerSideEffectContext(r.Context())
+		if a.embyShouldEnableUser(u) {
+			_ = a.embyApplyEnabledState(sideCtx, u.UID, u.EmbyID, true)
+		}
+		sideCancel()
+	}
 	ok(w, "rebinding complete", publicUser(u))
 }
 
@@ -940,6 +948,12 @@ func (a *App) handleUnbindTelegram(w http.ResponseWriter, r *http.Request, _ Par
 		}
 		return nil
 	})
+	// 解绑时同步禁用 Emby 账号，防止用户通过旧 TG 关联的 Emby 继续使用
+	if u.EmbyID != "" {
+		sideCtx, sideCancel := schedulerSideEffectContext(r.Context())
+		_, _ = a.disableRemoteEmbyForWebState(sideCtx, u)
+		sideCancel()
+	}
 	a.audit(r, "unbind_telegram", "user", 0, nil)
 	ok(w, "Telegram unbound. rebinding required", publicUser(u))
 }

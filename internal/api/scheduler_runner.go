@@ -238,6 +238,7 @@ func (a *App) runSchedulerJob(r *http.Request, jobID string) (map[string]any, []
 		// 拖到管理员手动 cancel。
 		syncCtx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
 		defer cancel()
+		logs := []string{}
 		var remote []map[string]any
 		// /Users 列表是幂等 GET，遇 5xx / 连接抖动重试 2 次更划算（详见
 		// embyRetryOn5xx 的注释）。一开局拉用户列表如果直接挂掉，整轮 sync 全
@@ -304,6 +305,16 @@ func (a *App) runSchedulerJob(r *http.Request, jobID string) (map[string]any, []
 			}
 			name := embyRemoteName(remoteUser)
 			updatedUser := u
+			changes := []string{}
+			if remoteID != u.EmbyID {
+				changes = append(changes, "emby_id: "+u.EmbyID+"→"+remoteID)
+			}
+			if name != "" && name != u.EmbyUsername {
+				changes = append(changes, "username: "+u.EmbyUsername+"→"+name)
+			}
+			if u.PendingEmby {
+				changes = append(changes, "pending_emby: cleared")
+			}
 			if remoteID != u.EmbyID || (name != "" && name != u.EmbyUsername) || u.PendingEmby {
 				var err error
 				updatedUser, err = a.store().UpdateUser(u.UID, func(u *store.User) error {
@@ -323,11 +334,13 @@ func (a *App) runSchedulerJob(r *http.Request, jobID string) (map[string]any, []
 						if placeholder {
 							repairedPlaceholders++
 						}
+						logs = append(logs, "user #"+fmt.Sprintf("%d", u.UID)+" ("+u.Username+"): "+strings.Join(changes, ", "))
 					}
 					updatedNames++
 					claimedRemoteIDs[remoteID] = u.UID
 				} else {
 					conflicts++
+					logs = append(logs, "user #"+fmt.Sprintf("%d", u.UID)+" ("+u.Username+"): sync conflict - "+truncateString(err.Error(), 120))
 					continue
 				}
 			}
@@ -347,9 +360,11 @@ func (a *App) runSchedulerJob(r *http.Request, jobID string) (map[string]any, []
 				return err
 			}) == nil {
 				syncedState++
+				logs = append(logs, "user #"+fmt.Sprintf("%d", updatedUser.UID)+" ("+updatedUser.Username+"): emby disabled by policy")
 			}
 		}
-		return map[string]any{"success": true, "remote_users": len(remote), "updated_names": updatedNames, "synced_state": syncedState, "state_unchanged": stateUnchanged, "missing": missing, "filled_emby_ids": filledIDs, "repaired_placeholders": repairedPlaceholders, "conflicts": conflicts}, []string{fmt.Sprintf("read %d Emby users", len(remote))}, nil
+		logs = append(logs, fmt.Sprintf("read %d Emby users, %d synced, %d unchanged, %d missing, %d conflicts", len(remote), syncedState, stateUnchanged, missing, conflicts))
+		return map[string]any{"success": true, "remote_users": len(remote), "updated_names": updatedNames, "synced_state": syncedState, "state_unchanged": stateUnchanged, "missing": missing, "filled_emby_ids": filledIDs, "repaired_placeholders": repairedPlaceholders, "conflicts": conflicts}, logs, nil
 	case "cleanup_no_emby":
 		ignoreEnabled := jobParamBool(params, "ignore_enabled_flag", false)
 		enabled := jobParamBool(params, "enabled", jobParamBool(params, "auto_enabled", a.cfg().AutoCleanupNoEmby))
@@ -594,6 +609,59 @@ func (a *App) runSchedulerJob(r *http.Request, jobID string) (map[string]any, []
 			logs = append(logs, fmt.Sprintf("removed %d entries older than %d days (preserve_admin=%v)", removed, retentionDays, preserveAdmin))
 		}
 		return map[string]any{"success": true, "current": a.store().AuditLogCount()}, logs, nil
+	case "cleanup_unlinked_emby":
+		if !a.embyConfigured() {
+			return map[string]any{"success": true, "configured": false}, []string{"Emby not configured"}, nil
+		}
+		logs := []string{}
+		dryRun := jobParamBool(params, "dry_run", true)
+		delete := jobParamBool(params, "delete", false)
+		if dryRun && !delete {
+			logs = append(logs, "dry-run mode: scanning only, no deletions")
+		}
+		var remote []map[string]any
+		syncCtx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+		defer cancel()
+		if err := embyRetryOn5xx(syncCtx, func(ctx context.Context) error {
+			return a.embyGet(ctx, "/Users", &remote)
+		}); err != nil {
+			return map[string]any{"success": false}, nil, err
+		}
+		localEmbyIDs := map[string]bool{}
+		for _, u := range a.store().ListUsers() {
+			if u.EmbyID != "" {
+				localEmbyIDs[u.EmbyID] = true
+			}
+		}
+		unlinked := []map[string]any{}
+		for _, user := range remote {
+			id := embyRemoteID(user)
+			if id == "" || localEmbyIDs[id] {
+				continue
+			}
+			name := embyRemoteName(user)
+			if name == "" {
+				name = "(no name)"
+			}
+			unlinked = append(unlinked, user)
+			logs = append(logs, "unlinked Emby user: "+id+" ("+name+")")
+		}
+		deleted := 0
+		if !dryRun && delete {
+			for _, user := range unlinked {
+				id := embyRemoteID(user)
+				if id == "" {
+					continue
+				}
+				if err := a.embyDeleteUser(syncCtx, id); err != nil {
+					logs = append(logs, "delete failed for "+id+": "+truncateString(err.Error(), 120))
+					continue
+				}
+				deleted++
+				logs = append(logs, "deleted Emby user: "+id)
+			}
+		}
+		return map[string]any{"success": true, "unlinked": len(unlinked), "deleted": deleted, "dry_run": dryRun || !delete}, logs, nil
 	case "cleanup_ticket_images":
 		retentionDays := jobParamInt(params, "retention_days", a.cfg().TicketImageRetentionDays)
 		if retentionDays <= 0 {
