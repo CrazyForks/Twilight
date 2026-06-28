@@ -9,22 +9,22 @@ import (
 )
 
 var schedulerJobs = []map[string]any{
-	{"id": "check_expired", "name": "检查已过期用户", "description": "扫描已过期账号，并按规则禁用系统或 Emby 访问。", "manual_only": false, "enabled": true},
-	{"id": "check_expiring", "name": "检查即将到期用户", "description": "统计近期即将到期的用户，供管理员确认续期风险。", "manual_only": false, "enabled": true},
-	{"id": "expiry_reminders", "name": "发送到期提醒", "description": "向即将到期且已绑定 Telegram 的用户发送续期提醒。", "manual_only": false, "enabled": true},
-	{"id": "daily_stats", "name": "每日统计", "description": "生成每日用户与活跃状态汇总。", "manual_only": false, "enabled": true},
-	{"id": "cleanup_sessions", "name": "会话巡检", "description": "读取 Emby 当前会话，统计活跃播放情况。", "manual_only": false, "enabled": true},
-	{"id": "emby_sync", "name": "同步 Emby 用户", "description": "同步本地用户与 Emby 用户名称、启用状态等信息。", "manual_only": true, "enabled": true},
-	{"id": "cleanup_no_emby", "name": "清理无 Emby Web 账号", "description": "清理注册后长期没有绑定或注册 Emby、且没有 Emby 开通资格的 Web 账号。", "manual_only": false, "enabled": true},
-	{"id": "cleanup_pending_emby_entitlements", "name": "清理未使用 Emby 开通资格", "description": "收回长期拥有 Emby 注册资格但尚未创建 Emby 的资格，不删除 Web 账号。", "manual_only": false, "enabled": true},
-	{"id": "enforce_group_membership", "name": "Telegram 群成员校验", "description": "校验用户是否仍在要求加入的 Telegram 群组内，并按配置处理退群用户。", "manual_only": false, "enabled": true},
-	{"id": "check_telegram_bindings", "name": "Telegram 绑定检查", "description": "检查重复或异常的 Telegram 绑定关系。", "manual_only": false, "enabled": true},
-	{"id": "system_auto_update", "name": "系统自动更新", "description": "按配置拉取可信 Git 仓库更新，并可选择重启服务。", "manual_only": false, "enabled": false},
-	{"id": "cleanup_unused_uploads", "name": "清理未使用上传文件", "description": "删除未被头像、背景或服务器图标引用的历史上传文件。", "manual_only": false, "enabled": true},
-	{"id": "cleanup_audit_logs", "name": "审计日志自动清理", "description": "按配置的保留天数/最大条数策略清理过期审计日志，可保留管理员操作。", "manual_only": false, "enabled": true},
-	{"id": "cleanup_ticket_images", "name": "清理过期工单图片", "description": "按配置的保留天数清理已关闭工单的交流图片附件，并同步清空元数据。", "manual_only": false, "enabled": true},
-	{"id": "cleanup_unlinked_emby", "name": "清理孤立 Emby 账号", "description": "扫描 Emby 中未绑定任何 Web 账号的孤立用户，支持仅扫描（dry-run）和删除模式。", "manual_only": false, "enabled": false, "runtime_params": []string{"dry_run", "delete"}},
-	{"id": "kick_unknown_group_members", "name": "踢出未知 Telegram 群成员", "description": "根据已观察到的群成员名册，踢出无系统账号、未绑定 Emby 或已禁用的成员。", "manual_only": true, "enabled": true, "runtime_params": []string{"dry_run", "max_per_run"}},
+	{"id": "check_expired", "name": "检查已过期用户", "description": "扫描已过期账号，按规则禁用系统或 Emby 访问，并清除过期会话。", "manual_only": false, "enabled": true},
+	{"id": "check_expiring", "name": "检查即将到期用户", "description": "统计近期即将到期的用户数量，供管理员评估续期风险。", "manual_only": false, "enabled": true},
+	{"id": "expiry_reminders", "name": "发送到期提醒", "description": "向即将到期且已绑定 Telegram 的用户发送续期通知。", "manual_only": false, "enabled": true},
+	{"id": "daily_stats", "name": "每日统计", "description": "记录每日用户总数与活跃用户数。", "manual_only": false, "enabled": true},
+	{"id": "cleanup_sessions", "name": "会话巡检与清理", "description": "清理过期会话与邮箱验证码，并读取 Emby 当前活跃会话数。", "manual_only": false, "enabled": true},
+	{"id": "emby_sync", "name": "同步 Emby 用户", "description": "将本地用户与 Emby 远程用户的 ID、名称、禁用状态同步，修复占位 ID。", "manual_only": true, "enabled": true},
+	{"id": "cleanup_no_emby", "name": "清理无 Emby 账号", "description": "删除注册后长期未绑定 Emby 且无开通资格的 Web 账号。", "manual_only": false, "enabled": true},
+	{"id": "cleanup_pending_emby_entitlements", "name": "清理未使用的 Emby 开通资格", "description": "收回长期未创建 Emby 的开通资格，保留 Web 账号。", "manual_only": false, "enabled": true},
+	{"id": "enforce_group_membership", "name": "Telegram 群成员校验", "description": "校验用户是否仍在要求的群组内，按配置处理退群（禁用/封禁/自动解禁）。", "manual_only": false, "enabled": true},
+	{"id": "check_telegram_bindings", "name": "Telegram 绑定检查", "description": "扫描重复或异常的 Telegram 绑定关系。", "manual_only": false, "enabled": true},
+	{"id": "system_auto_update", "name": "系统自动更新", "description": "从 Git 拉取更新并选择性重启服务。", "manual_only": false, "enabled": false},
+	{"id": "cleanup_unused_uploads", "name": "清理未使用上传文件", "description": "删除未被引用的过期间接上传文件。", "manual_only": false, "enabled": true},
+	{"id": "cleanup_audit_logs", "name": "审计日志自动清理", "description": "按保留天数/条数策略清理过期操作日志，可保留管理员记录。", "manual_only": false, "enabled": true},
+	{"id": "cleanup_ticket_images", "name": "清理过期工单图片", "description": "按保留天数清理已关闭工单的图片附件及元数据。", "manual_only": false, "enabled": true},
+	{"id": "cleanup_unlinked_emby", "name": "清理孤立 Emby 账号", "description": "扫描 Emby 中未绑定任何 Web 账号的孤立用户，支持仅扫描与删除模式。", "manual_only": false, "enabled": false, "runtime_params": []string{"dry_run", "delete"}},
+	{"id": "kick_unknown_group_members", "name": "踢出未知 Telegram 群成员", "description": "根据观察到的群成员名册，踢出无账号/未绑定 Emby/已禁用的成员。", "manual_only": true, "enabled": true, "runtime_params": []string{"dry_run", "max_per_run"}},
 }
 
 func (a *App) handleSchedulerJobs(w http.ResponseWriter, r *http.Request, _ Params) {

@@ -198,6 +198,14 @@ function cleanupSchedulerRuntimeConfig(t: TFunc, jobID: string) {
       description: t("adminScheduler.cleanupAuditLogsDescription"),
     };
   }
+  if (jobID === "cleanup_unlinked_emby") {
+    return {
+      hasDays: false,
+      hasDryRunDelete: true,
+      title: t("adminScheduler.cleanupUnlinkedEmbyTitle"),
+      description: t("adminScheduler.cleanupUnlinkedEmbyDescription"),
+    };
+  }
   return null;
 }
 
@@ -211,6 +219,8 @@ function ScheduleEditor({ job, open, onOpenChange, onSaved }: ScheduleEditorProp
   const [intervalUnit, setIntervalUnit] = useState<IntervalUnit>("hours");
   const [cleanupDays, setCleanupDays] = useState("7");
   const [cleanupEnabled, setCleanupEnabled] = useState(false);
+  const [cleanupDryRun, setCleanupDryRun] = useState(true);
+  const [cleanupDelete, setCleanupDelete] = useState(false);
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
 
@@ -227,11 +237,15 @@ function ScheduleEditor({ job, open, onOpenChange, onSaved }: ScheduleEditorProp
       setIntervalUnit("hours");
       setCleanupDays(String(Number((rp.retention_days ?? rp.days) ?? 7) || 7));
       setCleanupEnabled(job.id === "enforce_group_membership" ? Boolean(rp.auto_enable_rejoined) : Boolean(rp.enabled ?? rp.auto_enabled));
+      setCleanupDryRun(Boolean(rp.dry_run ?? true));
+      setCleanupDelete(Boolean(rp.delete));
       return;
     }
     setType(spec.type);
     setCleanupDays(String(Number(rp.days ?? 7) || 7));
     setCleanupEnabled(job.id === "enforce_group_membership" ? Boolean(rp.auto_enable_rejoined) : Boolean(rp.enabled ?? rp.auto_enabled));
+    setCleanupDryRun(Boolean(rp.dry_run ?? true));
+    setCleanupDelete(Boolean(rp.delete));
     if (spec.type === "cron_daily") {
       setHour(spec.hour);
       setMinute(spec.minute);
@@ -277,7 +291,10 @@ function ScheduleEditor({ job, open, onOpenChange, onSaved }: ScheduleEditorProp
       }
       if (cleanupConfig) {
         const runtimeParams: Record<string, unknown> = {};
-        if ("hasAutoEnableRejoined" in cleanupConfig && cleanupConfig.hasAutoEnableRejoined) {
+        if ("hasDryRunDelete" in cleanupConfig && cleanupConfig.hasDryRunDelete) {
+          runtimeParams.dry_run = cleanupDryRun;
+          runtimeParams.delete = cleanupDelete;
+        } else if ("hasAutoEnableRejoined" in cleanupConfig && cleanupConfig.hasAutoEnableRejoined) {
           runtimeParams.auto_enable_rejoined = cleanupEnabled;
         } else {
           runtimeParams.enabled = cleanupEnabled;
@@ -434,24 +451,53 @@ function ScheduleEditor({ job, open, onOpenChange, onSaved }: ScheduleEditorProp
                   {cleanupConfig.description}
                 </p>
               </div>
-              <label className="flex items-start gap-2 rounded-lg border border-border/60 bg-background/60 p-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={cleanupEnabled}
-                  onChange={(e) => setCleanupEnabled(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 rounded border-border accent-primary"
-                />
-                <span>
-                  {"hasAutoEnableRejoined" in cleanupConfig && cleanupConfig.hasAutoEnableRejoined
-                    ? t("adminScheduler.autoUnbanLabel")
-                    : t("adminScheduler.enableAutoCleanupLabel")}
-                  <span className="block text-xs text-muted-foreground">
+              {"hasDryRunDelete" in cleanupConfig && cleanupConfig.hasDryRunDelete ? (
+                <>
+                  <label className="flex items-start gap-2 rounded-lg border border-border/60 bg-background/60 p-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={cleanupDryRun}
+                      onChange={(e) => setCleanupDryRun(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-border accent-primary"
+                    />
+                    <span>
+                      {t("adminScheduler.dryRunLabel")}
+                      <span className="block text-xs text-muted-foreground">{t("adminScheduler.dryRunHint")}</span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 rounded-lg border border-border/60 bg-background/60 p-2 text-sm">
+                    <input
+                      type="checkbox"
+                      checked={cleanupDelete}
+                      onChange={(e) => setCleanupDelete(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-border accent-primary"
+                    />
+                    <span>
+                      {t("adminScheduler.deleteLabel")}
+                      <span className="block text-xs text-muted-foreground">{t("adminScheduler.deleteHint")}</span>
+                    </span>
+                  </label>
+                </>
+              ) : (
+                <label className="flex items-start gap-2 rounded-lg border border-border/60 bg-background/60 p-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={cleanupEnabled}
+                    onChange={(e) => setCleanupEnabled(e.target.checked)}
+                    className="mt-0.5 h-4 w-4 rounded border-border accent-primary"
+                  />
+                  <span>
                     {"hasAutoEnableRejoined" in cleanupConfig && cleanupConfig.hasAutoEnableRejoined
-                      ? t("adminScheduler.autoUnbanHint")
-                      : t("adminScheduler.enableAutoCleanupHint")}
+                      ? t("adminScheduler.autoUnbanLabel")
+                      : t("adminScheduler.enableAutoCleanupLabel")}
+                    <span className="block text-xs text-muted-foreground">
+                      {"hasAutoEnableRejoined" in cleanupConfig && cleanupConfig.hasAutoEnableRejoined
+                        ? t("adminScheduler.autoUnbanHint")
+                        : t("adminScheduler.enableAutoCleanupHint")}
+                    </span>
                   </span>
-                </span>
-              </label>
+                </label>
+              )}
             </div>
           )}
         </div>
@@ -555,7 +601,7 @@ function jobIsRunning(job: SchedulerJobItem, running: Record<string, boolean>) {
 }
 
 // 哪些任务在手动触发时支持参数面板
-const PARAMETERIZED_JOBS = new Set(["cleanup_no_emby", "cleanup_pending_emby_entitlements", "cleanup_audit_logs", "kick_unknown_group_members"]);
+const PARAMETERIZED_JOBS = new Set(["cleanup_no_emby", "cleanup_pending_emby_entitlements", "cleanup_audit_logs", "kick_unknown_group_members", "cleanup_unlinked_emby"]);
 
 export default function AdminSchedulerPage() {
   const { toast } = useToast();
