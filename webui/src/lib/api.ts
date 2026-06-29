@@ -1519,7 +1519,7 @@ class ApiClient {
   }
 
   async kickAllEmbySessions() {
-    return this.request<{ kicked_count: number; deleted_devices: number }>(
+    return this.request<{ deleted_devices: number }>(
       "/admin/emby/sessions/kick-all",
       { method: "POST" },
     );

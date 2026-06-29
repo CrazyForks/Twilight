@@ -541,7 +541,7 @@ export default function AdminDeviceAuditPanel({ embedded = false }: { embedded?:
             try {
               const res = await api.kickAllEmbySessions();
               if (res.success) {
-                toast({ title: t("deviceAudit.kickAllDone", { count: res.data?.kicked_count ?? 0 }), variant: "success" });
+                toast({ title: t("deviceAudit.kickAllDone", { count: res.data?.deleted_devices ?? 0 }), variant: "success" });
                 void reload(true);
               } else {
                 toast({ title: t("deviceAudit.actionFailed"), description: res.message, variant: "destructive" });
@@ -1016,24 +1016,21 @@ function DeviceTableView({
   t: TFunc;
   locale: string;
 }) {
-  // 按 device_name + app_name 聚合，相同设备/客户端合并为一行
-  const aggregated = useMemo(() => {
-    const groups = new Map<string, { user: EmbyAuditUser; device: EmbyAuditDevice; rowKey: string; count: number; latest: string }>();
-    for (const row of rows) {
-      const key = (row.device.device_name || "") + "||" + (row.device.app_name || "");
-      const existing = groups.get(key);
-      if (existing) {
-        existing.count++;
-        if (row.device.last_activity && row.device.last_activity > existing.latest) {
-          existing.latest = row.device.last_activity;
-          existing.device = row.device;
-        }
-      } else {
-        groups.set(key, { ...row, count: 1, latest: row.device.last_activity || "" });
+  // 按 device_name + app_name + user 聚合
+  const groups = new Map<string, { user: EmbyAuditUser; device: EmbyAuditDevice; rowKey: string; count: number }>();
+  for (const row of rows) {
+    const key = row.rowKey.split("::")[0] + "::" + (row.device.device_name || "") + "::" + (row.device.app_name || "");
+    const existing = groups.get(key);
+    if (existing) {
+      existing.count++;
+      if ((row.device.last_activity || "") > (existing.device.last_activity || "")) {
+        existing.device = row.device;
       }
+    } else {
+      groups.set(key, { ...row, count: 1 });
     }
-    return Array.from(groups.values());
-  }, [rows]);
+  }
+  const aggregated = Array.from(groups.values());
 
   if (rows.length === 0) {
     return (
@@ -1047,9 +1044,11 @@ function DeviceTableView({
   return (
     <Card>
       <CardContent className="p-0">
-        <div className="border-b px-4 py-2 text-xs text-muted-foreground">
-          {t("deviceAudit.deviceMatchCount", { count: aggregated.length })}（原 {rows.length} 条）
-        </div>
+        {aggregated.length < rows.length && (
+          <div className="border-b px-4 py-2 text-xs text-muted-foreground">
+            {t("deviceAudit.deviceMatchCount", { count: aggregated.length })}（原始 {rows.length} 条）
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead className="bg-muted/50">
