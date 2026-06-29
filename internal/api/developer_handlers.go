@@ -84,7 +84,8 @@ func (a *App) handleDeveloperJSSandbox(w http.ResponseWriter, r *http.Request, _
 }
 
 func (a *App) handleDeveloperJSDocs(w http.ResponseWriter, r *http.Request, _ Params) {
-	if requireAdmin(w, r) {
+	if !a.store().DeveloperModeEnabled() {
+		failWithCode(w, http.StatusForbidden, ErrForbidden, "开发者模式未开启")
 		return
 	}
 	ok(w, "OK", developerJSDocs())
@@ -95,11 +96,19 @@ func (a *App) handleDeveloperJSPresets(w http.ResponseWriter, r *http.Request, _
 		return
 	}
 	presets := a.store().ListDeveloperJSPresets()
+	if !a.store().DeveloperModeEnabled() {
+		ok(w, "OK", map[string]any{"presets": presets, "total": len(presets), "developer_mode_enabled": false})
+		return
+	}
 	ok(w, "OK", map[string]any{"presets": presets, "total": len(presets), "developer_mode_enabled": a.store().DeveloperModeEnabled()})
 }
 
 func (a *App) handleCreateDeveloperJSPreset(w http.ResponseWriter, r *http.Request, _ Params) {
 	if requireAdmin(w, r) {
+		return
+	}
+	if !a.store().DeveloperModeEnabled() {
+		failWithCode(w, http.StatusForbidden, ErrForbidden, "开发者模式未开启")
 		return
 	}
 	payload := decodeMap(r)
@@ -123,6 +132,10 @@ func (a *App) handleCreateDeveloperJSPreset(w http.ResponseWriter, r *http.Reque
 
 func (a *App) handleUpdateDeveloperJSPreset(w http.ResponseWriter, r *http.Request, params Params) {
 	if requireAdmin(w, r) {
+		return
+	}
+	if !a.store().DeveloperModeEnabled() {
+		failWithCode(w, http.StatusForbidden, ErrForbidden, "开发者模式未开启")
 		return
 	}
 	id, err := int64Param(params, "preset_id")
@@ -154,6 +167,10 @@ func (a *App) handleUpdateDeveloperJSPreset(w http.ResponseWriter, r *http.Reque
 
 func (a *App) handleDeleteDeveloperJSPreset(w http.ResponseWriter, r *http.Request, params Params) {
 	if requireAdmin(w, r) {
+		return
+	}
+	if !a.store().DeveloperModeEnabled() {
+		failWithCode(w, http.StatusForbidden, ErrForbidden, "开发者模式未开启")
 		return
 	}
 	id, err := int64Param(params, "preset_id")

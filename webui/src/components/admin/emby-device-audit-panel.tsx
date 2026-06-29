@@ -518,15 +518,123 @@ export default function AdminDeviceAuditPanel({ embedded = false }: { embedded?:
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">{t("deviceAudit.description")}</p>
         </div>
-        <Button variant="outline" size="sm" onClick={() => void reload(true)} disabled={loading}>
-          {loading ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="mr-2 h-4 w-4" />
-          )}
-          {t("common.refresh")}
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="destructive" size="sm" onClick={async () => {
+            const ok = await confirmAction({
+              title: t("deviceAudit.kickAllTitle"),
+              description: t("deviceAudit.kickAllDesc"),
+              tone: "danger",
+              confirmLabel: t("deviceAudit.kickAllConfirm"),
+            });
+            if (!ok) return;
+            try {
+              const res = await api.kickAllEmbySessions();
+              if (res.success) {
+                toast({ title: t("deviceAudit.kickAllDone", { count: res.data?.kicked_count ?? 0 }), variant: "success" });
+                void reload(true);
+              } else {
+                toast({ title: t("deviceAudit.actionFailed"), description: res.message, variant: "destructive" });
+              }
+            } catch (err) {
+              toast({ title: t("deviceAudit.actionFailed"), description: err instanceof Error ? err.message : String(err), variant: "destructive" });
+            }
+          }}>
+            <LogOut className="mr-1.5 h-4 w-4" />
+            {t("deviceAudit.kickAll")}
+          </Button>
+          <Button variant="outline" size="sm" onClick={() => void reload(true)} disabled={loading}>
+            {loading ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="mr-2 h-4 w-4" />
+            )}
+            {t("common.refresh")}
+          </Button>
+        </div>
       </div>
+
+      {/* 分布统计 */}
+      {summary && (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          <Card>
+            <CardContent className="p-3 space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">{t("deviceAudit.chartClients")}</p>
+              <div className="space-y-1">
+                {summary.clients.slice(0, 8).map((c) => {
+                  const pct = summary.total_devices > 0 ? Math.round(c.devices / summary.total_devices * 100) : 0;
+                  return (
+                    <div key={c.name} className="flex items-center gap-2 text-xs">
+                      <span className="w-24 truncate shrink-0">{c.name || t("deviceAudit.clientUnknown")}</span>
+                      <div className="flex-1 h-3 rounded-full bg-muted overflow-hidden">
+                        <div className="h-full rounded-full bg-primary/60" style={{ width: pct + "%" }} />
+                      </div>
+                      <span className="w-8 text-right text-muted-foreground shrink-0">{pct}%</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3 space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">{t("deviceAudit.chartStatus")}</p>
+              <div className="space-y-1">
+                {(() => {
+                  const online = summary.online_devices;
+                  const offline = Math.max(0, summary.total_devices - online);
+                  const total = online + offline;
+                  const bars = [
+                    { label: t("deviceAudit.statusOnline"), value: online, color: "bg-emerald-500" },
+                    { label: t("deviceAudit.statusOffline"), value: offline, color: "bg-muted-foreground/40" },
+                  ];
+                  return bars.map((b) => {
+                    const pct = total > 0 ? Math.round(b.value / total * 100) : 0;
+                    return (
+                      <div key={b.label} className="flex items-center gap-2 text-xs">
+                        <span className="w-24 truncate shrink-0">{b.label}</span>
+                        <div className="flex-1 h-3 rounded-full bg-muted overflow-hidden">
+                          <div className={`h-full rounded-full ${b.color}`} style={{ width: pct + "%" }} />
+                        </div>
+                        <span className="w-8 text-right text-muted-foreground shrink-0">{b.value}</span>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-3 space-y-2">
+              <p className="text-xs font-medium text-muted-foreground">{t("deviceAudit.chartDevices")}</p>
+              <div className="space-y-1">
+                {(() => {
+                  const modelCounts: Record<string, number> = {};
+                  for (const u of data?.users ?? []) {
+                    for (const d of safeDevices(u)) {
+                      const model = d.device_name?.trim() || t("deviceAudit.unknownDevice");
+                      modelCounts[model] = (modelCounts[model] || 0) + 1;
+                    }
+                  }
+                  const sorted = Object.entries(modelCounts).sort((a, b) => b[1] - a[1]).slice(0, 8);
+                  const totalDevices = sorted.reduce((s, [, c]) => s + c, 0);
+                  return sorted.map(([model, count]) => {
+                    const pct = totalDevices > 0 ? Math.round(count / totalDevices * 100) : 0;
+                    return (
+                      <div key={model} className="flex items-center gap-2 text-xs">
+                        <span className="w-24 truncate shrink-0">{model}</span>
+                        <div className="flex-1 h-3 rounded-full bg-muted overflow-hidden">
+                          <div className="h-full rounded-full bg-info/60" style={{ width: pct + "%" }} />
+                        </div>
+                        <span className="w-8 text-right text-muted-foreground shrink-0">{count}</span>
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {renderToolbar()}
 

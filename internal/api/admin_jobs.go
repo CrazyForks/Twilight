@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -318,6 +319,18 @@ func (a *App) cleanupUnusedUploadAssets(maxAge time.Duration) map[string]any {
 }
 
 func addUploadReference(refs map[string]bool, raw string) {
+	// 如果 Background 是 JSON 对象（用户背景配置），提取所有 url(...) 值
+	if trimmed := strings.TrimSpace(raw); strings.HasPrefix(trimmed, "{") {
+		var cfg map[string]any
+		if err := json.Unmarshal([]byte(trimmed), &cfg); err == nil {
+			for _, value := range cfg {
+				if str, ok := value.(string); ok {
+					addUploadReference(refs, str)
+				}
+			}
+		}
+		return
+	}
 	kind, filename, ok := extractUploadReference(raw)
 	if !ok {
 		return

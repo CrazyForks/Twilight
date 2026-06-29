@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { useI18n } from "@/lib/i18n";
+import { useSystemStore } from "@/store/system";
 import type { LucideIcon } from "lucide-react";
 
 interface AdminNavEntry {
@@ -61,6 +62,13 @@ const item = {
 
 export default function AdminIndexPage() {
   const { t } = useI18n();
+  const { info: systemInfo } = useSystemStore();
+  const devModeEnabled = Boolean(systemInfo?.features?.developer_mode);
+
+  const filteredPages = adminPages.filter((p) => {
+    if (p.href === "/admin/developer" && !devModeEnabled) return false;
+    return true;
+  });
 
   return (
     <motion.div variants={container} initial="hidden" animate="show" className="space-y-8">
@@ -70,7 +78,7 @@ export default function AdminIndexPage() {
       </div>
 
       {Object.entries(categoryConfig).map(([catKey, config]) => {
-        const pages = adminPages.filter((p) => p.category === catKey);
+        const pages = filteredPages.filter((p) => p.category === catKey);
         if (pages.length === 0) return null;
         const Icon = config.icon;
         return (

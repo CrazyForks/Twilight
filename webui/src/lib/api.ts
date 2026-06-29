@@ -1518,6 +1518,13 @@ class ApiClient {
     );
   }
 
+  async kickAllEmbySessions() {
+    return this.request<{ total: number; kicked_count: number }>(
+      "/admin/emby/sessions/kick-all",
+      { method: "POST" },
+    );
+  }
+
   async cleanupOrphanEmbyIds() {
     return this.request<{
       cleaned: Array<{ uid: number; username: string; old_emby_id: string }>;

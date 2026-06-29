@@ -115,6 +115,9 @@ export function filterNavItems(
     if (features?.ticket_system === false && (item.href === "/tickets" || item.href === "/admin/tickets")) {
       return false;
     }
+    if (features?.developer_mode === false && item.href === "/admin/developer") {
+      return false;
+    }
     return true;
   });
 }

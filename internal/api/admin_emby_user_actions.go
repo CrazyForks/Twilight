@@ -97,3 +97,28 @@ func (a *App) handleAdminEmbyUserKick(w http.ResponseWriter, r *http.Request, pa
 	kicked := a.kickEmbySessions(r.Context(), embyID)
 	ok(w, "会话踢出完成", map[string]any{"emby_user_id": embyID, "kicked_count": kicked})
 }
+
+// handleAdminEmbyKickAll 踢出所有 Emby 用户的当前在线会话。
+func (a *App) handleAdminEmbyKickAll(w http.ResponseWriter, r *http.Request, _ Params) {
+	if !a.embyConfigured() {
+		ok(w, "Emby 未配置", map[string]any{"kicked_count": 0})
+		return
+	}
+	var sessions []map[string]any
+	if err := a.embyGet(r.Context(), "/Sessions", &sessions); err != nil {
+		failWithCode(w, http.StatusBadGateway, ErrEmbyRemoteSessionsFail, "获取 Emby 会话失败")
+		return
+	}
+	total := len(sessions)
+	kicked := 0
+	for _, session := range sessions {
+		if sid := asString(session["Id"]); sid != "" {
+			var ignored map[string]any
+			if err := a.embyPost(r.Context(), "/Sessions/"+urlPathEscape(sid)+"/Logout", nil, &ignored); err == nil {
+				kicked++
+			}
+		}
+	}
+	a.audit(r, "emby_kick_all_sessions", "admin", 0, map[string]any{"total": total, "kicked": kicked})
+	ok(w, "全部会话已踢出", map[string]any{"total": total, "kicked_count": kicked})
+}

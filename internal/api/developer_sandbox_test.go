@@ -24,6 +24,9 @@ func TestDeveloperJSDocsEndpointRequiresAdminAndDescribesGoja(t *testing.T) {
 	}
 
 	cookies := registerAndLogin(t, app, "admin", "Password123!")
+	if err := app.store().SetDeveloperModeEnabled(true); err != nil {
+		t.Fatal(err)
+	}
 	resp := doJSON(app, http.MethodGet, "/api/v1/admin/developer/js-docs", "", cookies)
 	if resp.Code != http.StatusOK {
 		t.Fatalf("docs status = %d body=%s", resp.Code, resp.Body.String())

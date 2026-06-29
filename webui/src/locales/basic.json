@@ -2002,7 +2002,18 @@
     "devColUser": "用户",
     "clientFilterActiveHint": "已按客户端「{name}」筛选，仅显示匹配设备",
     "deviceMatchCount": "匹配 {count} 台设备",
-    "emptyDevices": "无匹配设备"
+    "emptyDevices": "无匹配设备",
+    "kickAll": "踢出全部会话",
+    "kickAllTitle": "确认踢出全部会话",
+    "kickAllDesc": "将踢出所有 Emby 用户的当前在线登录会话，操作不可撤销。",
+    "kickAllConfirm": "踢出全部",
+    "kickAllDone": "已踢出 {count} 个会话",
+    "chartClients": "客户端分布",
+    "chartStatus": "在线状态",
+    "chartDevices": "设备型号分布",
+    "statusOnline": "在线",
+    "statusOffline": "离线",
+    "unknownDevice": "未知设备"
   },
   "adminEmby": {
     "title": "Emby 管理",
